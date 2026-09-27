@@ -68,11 +68,22 @@ Latest readings: violin 0.47-0.74 as violin; choir organ 0.11; guitar 0.38 as gu
 - The downloads allowlist excludes .wav and .ogg; audio is Opus in .webm (WebCodecs), with MediaRecorder as the real-time fallback.
 - A standalone build needs a server or proxy for the Anthropic API (never ship a key in a page). With the API, name the model explicitly: `claude-opus-5-5`, or `claude-fable-5-1` for the Mythos tier.
 
+## Rust engine
+
+The Rust workspace (`crates/*`) is the long-lived engine; the JS page is its reference. Crates: `sfcore` (JS number rules, V8-exact math, seeded streams, tuning), `compose`, `dsp`, `voice`, `arrange`, `engine` (render_song, threaded path), `songwriter` (styles, prompt, `trait Claude` with `ClaudeCli` and `ClaudeApi`), `sunflower` (CLI: `demo`, `render`, `write`, `styles`).
+
+- Parity: `tests/parity/gen.sh` writes JS reference data to `ref/parity/`; each crate's `tests/parity_*.rs` compares against it. The demo at seed 1234 matches `tests/mt.js` in all but 383 of 16.4M 16-bit samples, each off by 1 LSB. Voice audio differs by up to 6e-9 of peak on long renders; cause not found.
+- Math goes through `sfcore::js`. V8 exactness serves only to verify the port; once a change is judged by the ear tools, faster math may replace it.
+- JS bugs are ported as they are, marked `JS parity:`; the duplicate `shapeFor` (the per-section contour is dead) is one. Fixes where the JS gives NaN are marked `Deviation from JS:`.
+- `ClaudeCli` runs `claude -p` in an empty directory with `--strict-mcp-config`, `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and no tools; not `--bare`, which disables the logged-in account.
+- Build offline here (`cargo build --offline`); crates.io is blocked from this machine.
+- Timing, demo song: 6.0 s threaded, 18.2 s on one core (12-core machine); about 1.3 GB peak.
+
 ## Open issues
 
 1. Alto and soprano intelligibility trails the baritone. Next: vowel modification at high pitch (open the vowels upward, as trained sopranos do).
 2. The first word of a phrase is the least reliable; no mechanism found yet.
 3. The choir scores low as "Choir" in the bridge. The choir sings vowels only; call-and-response lyrics (shanty crew, gospel response) are not supported.
-4. Render time: about 17-24 s in Node on one core, and about 28-38 s in a headless browser. Memory is roughly 0.5 GB for a 3-minute song; older phones may fail.
-5. The real-model writing path has only been tested with a mock. Verify that styles, forms and registers are followed with real songs.
+4. Render time in the page: about 17-24 s in Node on one core, and about 28-38 s in a headless browser. Memory is roughly 0.5 GB for a 3-minute song; older phones may fail. The Rust engine renders the demo in 6 s.
+5. The real-model writing path has one live test (`sunflower write`, cowboy style, strophic form): the reply parsed and the form plan was followed. Registers and more styles are unverified.
 6. No key changes, no rubato beyond the final ritard, no melismas; the harp has no reference validation.
