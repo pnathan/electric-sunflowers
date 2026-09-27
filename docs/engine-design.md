@@ -19,7 +19,7 @@ Non-goals
 - Sample parity with the JS or with the current Rust output. Every random draw moves (new generator, per-event streams); each song becomes a different take from the same distribution.
 - Real-time operation. The renderer is offline. Real-time idioms (denormal hygiene, smoothing, block processing, no allocation in inner loops) are used where they make offline code faster or cleaner, not to meet a deadline.
 - New instruments, key changes, melismas, rubato. Out of scope (CLAUDE.md open issue 6).
-- New crates beyond the local cache (rayon, serde, serde_json, clap, anyhow, libm, vorbis_rs, flacenc, hound, ureq, tempfile). `realfft`/`rustfft` would replace the hand-written FFT with less code; that needs the owner's approval for a network fetch and is listed under later work.
+- New crates are allowed: the workspace is vendored (vendor/). The FFT uses `realfft`/`rustfft`.
 
 ## 2. Crate layout
 
