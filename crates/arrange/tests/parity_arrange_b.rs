@@ -85,15 +85,25 @@ fn check_notes(label: &str, got: &[arrange::lines::Note], rf: &Value) {
     }
 }
 
-fn check_drum_buf(label: &str, got: &[f32], rf: &Value) {
-    let head = rf["head"].as_array().unwrap();
-    for (i, (v, r)) in got.iter().zip(head).enumerate() {
+fn check_window(label: &str, got: &[f32], rf: &Value) {
+    let start = rf["start"].as_u64().unwrap() as usize;
+    let data = rf["data"].as_array().unwrap();
+    for (i, (v, r)) in got[start..start + data.len()].iter().zip(data).enumerate() {
         let want = r.as_f64().unwrap();
-        assert_eq!(
-            *v as f64, want,
-            "{label} head[{i}]: {v} vs {want}"
-        );
+        // relf, not assert_eq: a bit-exact f32 buffer round-tripped through
+        // JSON (f64 text) and reparsed can differ from the original f32-cast
+        // value in the last bit or two of the f64 mantissa: same measured
+        // 1e-9-scale slop as the note timings below, not a real divergence.
+        relf(&format!("{label}[{}]", start + i), *v as f64, want);
     }
+}
+
+fn check_drum_buf(label: &str, got: &[f32], rf: &Value) {
+    // The exact head of a drum buffer is silence (see arrange_b.js); these
+    // two windows land on samples the drums actually play, one near the
+    // start (the first bar with intensity>=1) and one at the tail.
+    check_window(&format!("{label}.win1"), got, &rf["win1"]);
+    check_window(&format!("{label}.win2"), got, &rf["win2"]);
     let full = &rf["full"];
     assert_eq!(got.len() as i64, full["len"].as_i64().unwrap(), "{label}: len");
     let mut sum = 0.0f64;

@@ -61,19 +61,19 @@ fn rec(
             }
             n
         };
-        let have: std::collections::HashSet<i32> = notes.iter().filter_map(|x| x.map(|v| v.rem_euclid(12))).collect();
+        let have: u16 = notes.iter().filter_map(|x| x.map(|v| 1u16 << v.rem_euclid(12))).fold(0, |a, b| a | b);
         let mut sc = 0.0f64;
         for &e in &ch.ess {
-            if !have.contains(&e) {
+            if have & (1 << e) == 0 {
                 sc -= 6.0;
             }
         }
         if let Some(fifth) = ch.fifth {
-            if !have.contains(&fifth) {
+            if have & (1 << fifth) == 0 {
                 sc -= 0.6;
             }
         }
-        if ch.bass != ch.root && !have.contains(&ch.root) {
+        if ch.bass != ch.root && have & (1 << ch.root) == 0 {
             sc -= 6.0;
         }
         sc -= 0.3 * pos as f64;
@@ -193,6 +193,13 @@ pub fn gen_guitar(song: &Song, form: &Form, tl: &Timeline, seed: u32, tuning: &T
     let sub = form.mi.sub;
     let mut ev: [Vec<GEvent>; 6] = Default::default();
     let nbars = form.bars.len();
+    // JS parity: JS caches guitarVoicing results by chord name; guitar_voicing
+    // itself is deterministic and side-effect free, so this is a plain
+    // memoization for speed, not needed for output parity.
+    let mut voicing_cache: std::collections::HashMap<String, [Option<i32>; 6]> = std::collections::HashMap::new();
+    let voicing_of = |ch: &Chord, cache: &mut std::collections::HashMap<String, [Option<i32>; 6]>| -> [Option<i32>; 6] {
+        *cache.entry(ch.name.clone()).or_insert_with(|| guitar_voicing(ch))
+    };
 
     for bi in 0..nbars {
         let bar = &form.bars[bi];
@@ -223,7 +230,7 @@ pub fn gen_guitar(song: &Song, form: &Form, tl: &Timeline, seed: u32, tuning: &T
         for (slot, kind, vel) in events {
             let beat = bi as f64 * bpb as f64 + slot / sub as f64;
             let ch = tl.chord_at(form, beat + 0.01);
-            let v = guitar_voicing(ch);
+            let v = voicing_of(ch, &mut voicing_cache);
             let t = tl.to_time(beat) + (r.next() - 0.5) * 0.012;
             let vv = vel * vel_s * (0.92 + r.next() * 0.16);
             let bass_str: i32 = v.iter().position(|x| x.is_some()).map(|x| x as i32).unwrap_or(-1);
@@ -283,7 +290,7 @@ pub fn gen_guitar(song: &Song, form: &Form, tl: &Timeline, seed: u32, tuning: &T
     // chord-change stops: a fretted string stops when the chord changes and
     // its note is not in the new voicing.
     for sg in &tl.segs {
-        let v = guitar_voicing(&sg.chord);
+        let v = voicing_of(&sg.chord, &mut voicing_cache);
         let t = tl.to_time(sg.b0) - 0.015;
         for s in 0..6 {
             ev[s].push(GEvent { t, m: v[s], v: 0.0, stop: true });
@@ -353,7 +360,9 @@ pub fn gen_guitar(song: &Song, form: &Form, tl: &Timeline, seed: u32, tuning: &T
                 lp = 0.5 * d + 0.5 * lp;
                 let v = out[i] as f64 * 0.012 * tuning.gt.symp + g * lp;
                 buf[(q + l) % (l + 2)] = v as f32;
-                y[i] += d as f32;
+                // JS parity: `y[i]+=d` on a Float32Array is one rounding of
+                // the f64 sum (y[i] as f64 + d), not f32(d) added to y[i].
+                y[i] = (y[i] as f64 + d) as f32;
                 q = (q + 1) % (l + 2);
             }
         }

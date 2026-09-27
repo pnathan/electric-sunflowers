@@ -114,5 +114,38 @@ for (const vk of ['baritone', 'alto']) {
   dump('choir', ctl, nF);
 }
 
+// ---------------- (e) VF.legacy=0 (non-legacy stop branch) ----------------
+{
+  const notes = [
+    { t0: 0.5, t1: 0.9, midi: 55, ph: ['p', 'ae', 't'], nu: null, amp: 1, phraseStart: true, phraseEnd: false, grace: null, stress: false },
+    { t0: 0.95, t1: 1.35, midi: 57, ph: ['t', 'aa', 'k'], nu: null, amp: 1, phraseStart: false, phraseEnd: false, grace: null, stress: false },
+    { t0: 1.4, t1: 1.9, midi: 55, ph: ['d', 'ih', 'g'], nu: null, amp: 1, phraseStart: false, phraseEnd: true, grace: null, stress: false },
+  ];
+  const P = VOICES.baritone;
+  const len = Math.ceil((notes[notes.length - 1].t1 + 1) * SR);
+  const nF = Math.ceil(len / HOP) + 2;
+  const opts = { seed: 42, rng: rngFor(42, 'v') };
+  const prevLegacy = VF.legacy;
+  VF.legacy = 0;
+  const ctl = voiceControls(notes, P, nF, opts);
+  VF.legacy = prevLegacy;
+  dump('legacy0_stops', ctl, nF);
+}
+
+// ---------------- (f) explicit grace notes ----------------
+{
+  const notes = [
+    { t0: 0.5, t1: 1.0, midi: 60, ph: ['m', 'ae'], nu: null, amp: 1, phraseStart: true, phraseEnd: false, grace: 58, stress: false },
+    { t0: 1.05, t1: 1.6, midi: 63, ph: ['l', 'ey'], nu: null, amp: 1, phraseStart: false, phraseEnd: false, grace: 61, stress: false },
+    { t0: 1.65, t1: 2.3, midi: 60, ph: ['n', 'ow'], nu: null, amp: 1, phraseStart: false, phraseEnd: true, grace: null, stress: false },
+  ];
+  const P = VOICES.alto;
+  const len = Math.ceil((notes[notes.length - 1].t1 + 1) * SR);
+  const nF = Math.ceil(len / HOP) + 2;
+  const opts = { seed: 55, rng: rngFor(55, 'v') };
+  const ctl = voiceControls(notes, P, nF, opts);
+  dump('grace_notes', ctl, nF);
+}
+
 fs.writeFileSync(path.join(OUT, 'index.json'), JSON.stringify(index, null, 1));
 console.log('voice_controls.js: wrote', index.cases.length, 'cases to', OUT);

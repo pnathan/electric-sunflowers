@@ -184,6 +184,17 @@ pub fn fills_for(
             continue;
         }
         let n = line.syls.len();
+        if n == 0 {
+            // JS parity: JS indexes `rh.onsets[n-1]` with `n===0`, giving
+            // `onsets[-1]` (undefined); NaN then propagates through w0/cnt so
+            // the `for(k=0;k<cnt;k++)` loop never runs (`k<NaN` is always
+            // false) and no notes are emitted, but the `r()<0.4` draw just
+            // before that loop still executes unconditionally. Reproduce the
+            // same rng draw and no-notes outcome without indexing an empty
+            // onsets list (which would panic in Rust).
+            let _ = r.next() < 0.4;
+            continue;
+        }
         let rh = line
             .rh
             .as_ref()

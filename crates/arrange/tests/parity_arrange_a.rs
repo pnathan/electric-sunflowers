@@ -3,12 +3,15 @@
 //!
 //! Guitar, bass and harp all draw from the same `Rng` stream JS uses
 //! (`rngFor(seed,'gtr'|'bass'|'harp')`) and route every draw through
-//! `sfcore::js`. Measured: bass and harp are bit-exact (err 0) on every
-//! case; guitar sits at 4e-8 to 1e-7 (head and full-duration strided
-//! samples alike), from `sfcore::js`'s transcendentals being up to 1 ulp
-//! off V8 and the sympathetic-string feedback loop (`GT.symp`) carrying
-//! that forward. Tolerance is set to 1e-6, an order of magnitude above the
-//! measured worst case. Each buffer is checked two ways: the first 20 s in
+//! `sfcore::js`. Measured: guitar is bit-exact (err 0) on every case, now
+//! that the sympathetic-string accumulator rounds the f64 sum once instead
+//! of twice; harp is bit-exact too. Bass sits at up to 8.2e-8 (head and
+//! full-duration strided samples alike), from `sfcore::js`'s sin/exp being
+//! up to 1 ulp off V8's. `TOL` (1e-6, an order of magnitude above the
+//! measured bass/harp worst case) covers bass and harp; `TOL_GUITAR` (1e-9)
+//! covers guitar, tight enough to catch a regression back to double
+//! rounding but not so tight that harmless fp reordering fails the build.
+//! Each buffer is checked two ways: the first 20 s in
 //! full, plus every 97th sample (a prime stride, so it cannot alias any of
 //! the engine's periodic structure) across the whole buffer, so a real
 //! divergence anywhere in a multi-minute render would still be caught
@@ -74,6 +77,16 @@ fn err_metric(rust: &[f32], reference: &[f32]) -> f64 {
 }
 
 const SEED: u32 = 1234;
+// Guitar is now bit-exact (measured 0 on every case, both head and the
+// full-duration strided sample) after fixing the sympathetic-string
+// accumulator's double rounding (`y[i]+=d as f32` rounded twice; JS rounds
+// the f64 sum once). Kept as a small nonzero bound rather than requiring
+// exact equality so a future genuinely negligible fp reordering does not
+// fail the build over noise, but any measured error here is a regression.
+const TOL_GUITAR: f64 = 1e-9;
+// Bass and harp route through sfcore::js's sin/exp, which are up to 1 ulp
+// off V8's; measured worst case here is 8.2e-8 (bass). TOL is an order of
+// magnitude above that.
 const TOL: f64 = 1e-6;
 
 /// Loads the exact song literal tests/parity/arrange_a.js dumped
@@ -88,6 +101,10 @@ fn load_song_json(name: &str) -> Value {
 
 fn blues_song() -> Value {
     load_song_json("blues_song")
+}
+
+fn sixeight_song() -> Value {
+    load_song_json("sixeight_song")
 }
 
 fn demo_song() -> Value {
@@ -111,6 +128,7 @@ fn check_song(case_name: &str, raw: &Value) {
     let h = gen_harp(&song, &form, &tl, SEED);
 
     for (label, rust, info_key) in [("guitar", &g, "guitar_info"), ("bass", &b, "bass_info"), ("harp", &h, "harp_info")] {
+        let tol = if label == "guitar" { TOL_GUITAR } else { TOL };
         let info = &c[info_key];
         let full_len = info["full_len"].as_u64().unwrap() as usize;
         let dumped_len = info["dumped_len"].as_u64().unwrap() as usize;
@@ -120,13 +138,13 @@ fn check_song(case_name: &str, raw: &Value) {
         let bin_name = format!("{case_name}_{label}");
         let head = read_bin(&bin_name);
         let err = err_metric(&rust[..dumped_len], &head);
-        assert!(err < TOL, "{case_name}/{label}: head err {err} >= {TOL}");
+        assert!(err < tol, "{case_name}/{label}: head err {err} >= {tol}");
 
         let stride_bin = format!("{case_name}_{label}_stride");
         let ref_strided = read_bin(&stride_bin);
         let rust_strided = strided(rust, stride);
         let err2 = err_metric(&rust_strided, &ref_strided);
-        assert!(err2 < TOL, "{case_name}/{label}: strided full-duration err {err2} >= {TOL}");
+        assert!(err2 < tol, "{case_name}/{label}: strided full-duration err {err2} >= {tol}");
     }
 }
 
@@ -166,6 +184,11 @@ fn demo_arpeggio_matches_js() {
 #[test]
 fn blues_matches_js() {
     check_song("blues", &blues_song());
+}
+
+#[test]
+fn sixeight_matches_js() {
+    check_song("sixeight", &sixeight_song());
 }
 
 #[test]

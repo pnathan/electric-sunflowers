@@ -12,7 +12,7 @@ use dsp::filter::{bq, BqCoeffs, FilterType};
 
 use compose::voices::VoiceParams;
 
-use crate::controls::{or_falsy, voice_controls, VoiceControls, VoiceNote, VoiceOpts};
+use crate::controls::{or_falsy, resolve_rng, voice_controls, VoiceControls, VoiceNote, VoiceOpts};
 
 /// `mtof(m)` from engine.js: MIDI-ish note number to frequency.
 fn mtof(m: f64) -> f64 {
@@ -161,7 +161,7 @@ pub fn synth_voice(ctl: &VoiceControls, p: &VoiceParams, len: usize, opts: &mut 
         (seed as f64 / 2147483648.0) - 1.0
     };
 
-    let jr = &mut opts.rng;
+    let jr = opts.rng.as_mut().expect("synth_voice: opts.rng must be resolved (see resolve_rng)");
     let mut ph = 0.0f64;
     let mut jit = 0.0f64;
     let mut shim = 1.0f64;
@@ -312,13 +312,27 @@ pub fn synth_voice(ctl: &VoiceControls, p: &VoiceParams, len: usize, opts: &mut 
             let af = af0 + (af1 - af0) * t;
             let f = f0 + (f0b - f0) * t;
             ph += f / sfcore::SR_F * (1.0 + jit);
-            if ph >= 1.0 {
+            // JS checks `if(ph>=1)` once per sample (a single subtraction),
+            // never guards ph<0, and then indexes DA/DT/GA/GT at `ph*TL|0`
+            // and `+1` with no bounds check: at extreme pitch (one hop's f
+            // large enough that ph overshoots 1 by more than 1) or a large
+            // negative jitter driving `1+jit` negative, ph can land outside
+            // [0,1) and JS reads `undefined` (silently propagating NaN into
+            // the sample) where Rust would index out of bounds and panic.
+            // Deviation from JS: wrap ph fully (not just once) so it always
+            // lands in [0,1), and clamp `ii` so `ii+1` stays in range. This
+            // does not change any in-range case: the loop runs 0 or 1 times
+            // exactly like the JS `if` whenever ph was already in range.
+            while ph >= 1.0 {
                 ph -= 1.0;
                 jit = jr.gauss() * p.jitter;
                 shim = 1.0 + jr.gauss() * p.shimmer;
             }
+            while ph < 0.0 {
+                ph += 1.0;
+            }
             let xi = ph * TL as f64;
-            let ii = xi as usize;
+            let ii = (xi as usize).min(TL - 1);
             let frac = xi - ii as f64;
             let wt = clamp((av - 0.42) / 0.6, 0.0, 1.0);
             let d_a = da[ii] as f64 + (da[ii + 1] as f64 - da[ii] as f64) * frac;
@@ -378,9 +392,8 @@ pub fn synth_voice(ctl: &VoiceControls, p: &VoiceParams, len: usize, opts: &mut 
 /// `renderVoice(notes,P,len,opts)`.
 pub fn render_voice(notes: &[VoiceNote], p: &VoiceParams, len: usize, opts: &mut VoiceOpts, tuning: &Tuning) -> Vec<f32> {
     let n_f = (len as f64 / HOP as f64).ceil() as usize + 2;
-    // JS: `opts.rng=opts.rng||rngFor(opts.seed||1,'v')`. `VoiceOpts::rng` is
-    // not optional in the Rust port (see its doc comment), so the caller is
-    // required to have already set it the same way; nothing to redo here.
+    // JS: `opts.rng=opts.rng||rngFor(opts.seed||1,'v')`.
+    resolve_rng(opts);
     let ctl = voice_controls(notes, p, n_f, opts, tuning);
     synth_voice(&ctl, p, len, opts, tuning)
 }

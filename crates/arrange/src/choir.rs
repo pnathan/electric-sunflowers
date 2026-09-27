@@ -62,15 +62,14 @@ pub fn choir_voicings(form: &Form, tl: &Timeline, filter: impl Fn(&Sec) -> bool)
                         if a - t > 9 || s - a > 9 {
                             continue;
                         }
-                        let set: std::collections::HashSet<i32> =
-                            [b, t, a, s].iter().map(|x| x.rem_euclid(12)).collect();
+                        let set: u16 = [b, t, a, s].iter().map(|x| 1u16 << x.rem_euclid(12)).fold(0, |acc, m| acc | m);
                         let mut sc = (b - prev[0]).abs() as f64 * 0.6
                             + (t - prev[1]).abs() as f64
                             + (a - prev[2]).abs() as f64
                             + (s - prev[3]).abs() as f64;
-                        sc -= set.len() as f64 * 2.0;
+                        sc -= set.count_ones() as f64 * 2.0;
                         if let Some(third) = sg.chord.third {
-                            if !set.contains(&third) {
+                            if set & (1 << third) == 0 {
                                 sc += 5.0;
                             }
                         }

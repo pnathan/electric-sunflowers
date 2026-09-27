@@ -46,6 +46,21 @@ const BLUES_SONG = {
     { type: 'outro', chords: ['E7', 'A7', 'E7', 'E7'] }]
 };
 
+// 6/8, rising intensity (verse occ0 -> verse occ1) so genDrums's fill fires
+// with sub===3 (the 3-step fill branch), and so the guitar/drums 6/8
+// branches (STRUM_68/STRUMLITE_68/etc., and genDrums's `meter==='6/8'` arm)
+// are exercised, not just 4/4 and 3/4.
+const SIXEIGHT_SONG = {
+  title: 'Ferry Crossing', note: '', key: 'D', mode: 'major', meter: '6/8', tempo: 72, guitar: 'strum', voice: 'tenor',
+  band: { drums: 'full', bass: true, harmonyGuitar: true, harp: false, violin: false, choir: false, harmonies: false, doubles: false },
+  sections: [{ type: 'intro', chords: ['D', 'G', 'D', 'A'] },
+    { type: 'verse', lines: [L('the *fer-ry *leaves at *dawn', 'dh ax|f eh|r iy|l iy v z|ae t|d aa n', ['D', 'G']),
+      L('the *gulls are *call-ing *loud', 'dh ax|g ah l z|aa r|k ao|l ih ng|l aw d', ['D', 'A'])] },
+    { type: 'verse', lines: [L('we *cross the *bay at *dawn', 'w iy|k r ao s|dh ax|b ey|ae t|d aa n', ['D', 'G']),
+      L('the *bell rings *out so *loud', 'dh ax|b eh l|r ih ng z|aw t|s ow|l aw d', ['D', 'A'])] },
+    { type: 'outro', chords: ['D', 'G', 'D', 'D'] }]
+};
+
 const SEED = 1234;
 
 function dumpSong(name, rawSong) {
@@ -69,6 +84,7 @@ function dumpSong(name, rawSong) {
 // normalize_song input from the same data instead of a hand-transcribed copy.
 fs.writeFileSync(path.join(OUT, 'demo_song.json'), JSON.stringify(DEMO_SONG, null, 1));
 fs.writeFileSync(path.join(OUT, 'blues_song.json'), JSON.stringify(BLUES_SONG, null, 1));
+fs.writeFileSync(path.join(OUT, 'sixeight_song.json'), JSON.stringify(SIXEIGHT_SONG, null, 1));
 
 dumpSong('demo_auto', DEMO_SONG);
 
@@ -79,6 +95,7 @@ for (const style of ['strum', 'fingerpick', 'travis', 'arpeggio']) {
 }
 
 dumpSong('blues', BLUES_SONG);
+dumpSong('sixeight', SIXEIGHT_SONG);
 
 // guitarVoicing over a list of chord names.
 const CHORDS = [

@@ -2,13 +2,40 @@
 //! ref/parity/voice/. Run tests/parity/gen.sh first.
 //!
 //! Each case's audio is compared sample by sample and reported as max abs
-//! error / peak reference amplitude. Target below 1e-6, matching
-//! crates/dsp/tests/parity_dsp.rs's convention: sfcore::js's transcendentals
-//! are still up to 1 ulp off V8 on a small fraction of inputs, and
-//! synthVoice's per-sample IIR recurrences (the formant resonators, the DC
-//! blocker) amplify that over long renders, so a handful of cases show a
-//! tiny nonzero error rather than exact 0. This is reported honestly, not
-//! chased or loosened further than what is measured.
+//! error / peak reference amplitude.
+//!
+//! Investigation of the sub-ulp differences (worst measured: 6.15e-9 rel on
+//! `doubles`, 3.02e-9 on `sing2_alto_2`, both at a sample deep into a long
+//! render; short cases like `vowels` and `choir` are exact, rel 0):
+//!  - `voice_controls` (parity_controls.rs) is bit-exact (tolerance 0) for
+//!    every case, including the long `demo_lead_30` one, so the mismatch is
+//!    not in the control tracks (F1/F2/F3/AV/AH/AF/M/...) fed into
+//!    synthVoice, nor in any `Rng`/`gauss` draw (those are shared with
+//!    voiceControls's vibrato/drift pass, already proven exact).
+//!  - Every per-sample synthVoice operation was checked against engine.js
+//!    line by line for matching operand order (the resonator recurrence,
+//!    the DC blocker, the tilt/formant mix) and all match; f32-vs-f64
+//!    rounding is not a candidate either, since ry1/ry2/vbl1/vbl2/fy1/fy2/
+//!    tiltY/tiltY2/etc. are f64 (Float64Array in JS, `f64` locals here) for
+//!    the whole per-sample recurrence, with the single f32 store
+//!    (`f32r(d)`) only at the very end, on both sides.
+//!  - That leaves sfcore::js's transcendentals (`sin`/`cos`/`exp` inside the
+//!    per-hop `res()` resonator-coefficient calls, and `exp`/`sin` in
+//!    lfTable): crates/core/tests/parity_math.rs checks these against node
+//!    on 200k inputs plus hard cases, not exhaustively, so an input outside
+//!    that sample landing on a genuine (rare) 1-ulp difference from V8's
+//!    algorithm remains possible and was not ruled out further at this
+//!    effort level. A long render's per-sample IIR recurrences (the
+//!    resonator bank, the DC blocker) compound one such ulp over hundreds
+//!    of thousands of samples, which matches both which cases show the
+//!    error (the long ones) and its size (still far below audible or
+//!    visible-on-a-waveform magnitude). Not chased further; TOL_REL below
+//!    is set from the measured worst case with headroom, not loosened
+//!    blindly.
+//! `TOL_REL` is 1e-7: about 16x the worst measured relative error above
+//! (6.151103e-9 on `doubles`), matching crates/dsp/tests/parity_dsp.rs's
+//! convention of reporting the tightest passing bound rather than 1e-6
+//! (which was a much looser catch-all placeholder).
 
 use serde_json::Value;
 use sfcore::rng::rng_for;
@@ -52,7 +79,7 @@ fn read_case(name: &str, len: usize) -> Vec<f32> {
 /// Compares one case, reporting max abs error and max abs error / peak.
 /// Target below `TOL_REL`; see the module doc comment for why exact 0
 /// sometimes is not reached.
-const TOL_REL: f32 = 1e-6;
+const TOL_REL: f32 = 1e-7;
 
 fn assert_case_exact(name: &str, got: &[f32], index: &Value) {
     let len = case_len(index, name);
@@ -109,7 +136,7 @@ fn vowels_match_js() {
     }
     let len = len_for(t + 1.0);
     let p = voice_params(Voice::Baritone);
-    let mut opts = VoiceOpts { seed: Some(3), rng: rng_for(3, "v"), vib_scale: Some(0.0), no_scoop: true, ..Default::default() };
+    let mut opts = VoiceOpts { seed: Some(3), rng: Some(rng_for(3, "v")), vib_scale: Some(0.0), no_scoop: true, ..Default::default() };
     let tuning = Tuning::default();
     let audio = render_voice(&sp, &p, len, &mut opts, &tuning);
     assert_case_exact("vowels", &audio, &index);
@@ -173,7 +200,7 @@ fn sing2_first_4_lines_match_js() {
             notes[last].t1 += 0.4;
             let len = len_for(t + 1.0);
             let seed = 7 + li as u32;
-            let mut opts = VoiceOpts { seed: Some(seed), rng: rng_for(seed, "s"), ..Default::default() };
+            let mut opts = VoiceOpts { seed: Some(seed), rng: Some(rng_for(seed, "s")), ..Default::default() };
             let audio = render_voice(&notes, &p, len, &mut opts, &tuning);
             assert_case_exact(&format!("sing2_{vk}_{li}"), &audio, &index);
         }
@@ -211,7 +238,7 @@ fn demo_lead_30_matches_js() {
     let (notes, vp, _voice) = demo_lead_30_notes();
     let seed = 1234u32;
     let len = len_for(notes.last().unwrap().t1 + 1.0);
-    let mut opts = VoiceOpts { seed: Some(seed ^ 11), rng: rng_for(seed, "lead"), ..Default::default() };
+    let mut opts = VoiceOpts { seed: Some(seed ^ 11), rng: Some(rng_for(seed, "lead")), ..Default::default() };
     let tuning = Tuning::default();
     let audio = render_voice(&notes, &vp, len, &mut opts, &tuning);
     assert_case_exact("demo_lead_30", &audio, &index);
@@ -229,7 +256,7 @@ fn harmony_voice_matches_js() {
     let len = len_for(notes.last().unwrap().t1 + 1.0);
     let mut opts = VoiceOpts {
         seed: Some(seed ^ 23),
-        rng: rng_for(seed, "harm"),
+        rng: Some(rng_for(seed, "harm")),
         vib_scale: Some(0.8),
         breath_scale: Some(1.2),
         ..Default::default()
@@ -252,7 +279,7 @@ fn doubles_match_js() {
     let len = len_for(notes.last().unwrap().t1 + 1.0);
     let mut opts = VoiceOpts {
         seed: Some(seed ^ 32),
-        rng: rng_for(seed, "dbl1"),
+        rng: Some(rng_for(seed, "dbl1")),
         detune: Some(-0.06),
         vib_scale: Some(0.7),
         rate_scale: Some(1.07),
@@ -280,7 +307,7 @@ fn choir_style_notes_match_js() {
     let len = len_for(notes.last().unwrap().t1 + 1.0);
     let mut opts = VoiceOpts {
         seed: Some(999),
-        rng: rng_for(999, "ch00"),
+        rng: Some(rng_for(999, "ch00")),
         rd_scale: Some(1.15),
         hf_gain: Some(0.0),
         n_high: Some(2.0), // CHH default
@@ -298,6 +325,43 @@ fn choir_style_notes_match_js() {
     assert_case_exact("choir", &audio, &index);
 }
 
+/// VF.legacy=0: the non-legacy stop branch, audio-level parity.
+#[test]
+fn legacy0_stops_match_js() {
+    let index = read_index();
+    let notes = vec![
+        note(0.5, 0.9, 55, Some(&["p", "ae", "t"]), None, 1.0, true, false),
+        note(0.95, 1.35, 57, Some(&["t", "aa", "k"]), None, 1.0, false, false),
+        note(1.4, 1.9, 55, Some(&["d", "ih", "g"]), None, 1.0, false, true),
+    ];
+    let p = voice_params(Voice::Baritone);
+    let len = len_for(notes.last().unwrap().t1 + 1.0);
+    let mut opts = VoiceOpts { seed: Some(42), rng: Some(rng_for(42, "v")), ..Default::default() };
+    let mut tuning = Tuning::default();
+    tuning.vf.legacy = 0.0;
+    let audio = render_voice(&notes, &p, len, &mut opts, &tuning);
+    assert_case_exact("legacy0_stops", &audio, &index);
+}
+
+/// Explicit grace notes, audio-level parity.
+#[test]
+fn grace_notes_match_js() {
+    let index = read_index();
+    let mut notes = vec![
+        note(0.5, 1.0, 60, Some(&["m", "ae"]), None, 1.0, true, false),
+        note(1.05, 1.6, 63, Some(&["l", "ey"]), None, 1.0, false, false),
+        note(1.65, 2.3, 60, Some(&["n", "ow"]), None, 1.0, false, true),
+    ];
+    notes[0].grace = Some(58);
+    notes[1].grace = Some(61);
+    let p = voice_params(Voice::Alto);
+    let len = len_for(notes.last().unwrap().t1 + 1.0);
+    let mut opts = VoiceOpts { seed: Some(55), rng: Some(rng_for(55, "v")), ..Default::default() };
+    let tuning = Tuning::default();
+    let audio = render_voice(&notes, &p, len, &mut opts, &tuning);
+    assert_case_exact("grace_notes", &audio, &index);
+}
+
 /// synthVoice is 24% of render time (CLAUDE.md); this is not a strict
 /// benchmark (no criterion here) but records ns/sample so a regression shows
 /// up in `cargo test -- --nocapture`.
@@ -307,7 +371,7 @@ fn timing_ns_per_sample() {
     let seed = 1234u32;
     let len = len_for(notes.last().unwrap().t1 + 1.0);
     let tuning = Tuning::default();
-    let mut opts = VoiceOpts { seed: Some(seed ^ 11), rng: rng_for(seed, "lead"), ..Default::default() };
+    let mut opts = VoiceOpts { seed: Some(seed ^ 11), rng: Some(rng_for(seed, "lead")), ..Default::default() };
     let start = std::time::Instant::now();
     let audio = render_voice(&notes, &vp, len, &mut opts, &tuning);
     let elapsed = start.elapsed();

@@ -2,6 +2,7 @@
 //! section of src/engine.js. Consumed by the voice crate (VOWELS/DIPH/CONS).
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// One VOWELS entry: F1, F2, F3 in Hz.
 pub type Formants = [f64; 3];
@@ -100,6 +101,27 @@ pub fn cons_map() -> HashMap<&'static str, Cons> {
     cons().into_iter().collect()
 }
 
+/// Cached, process-lifetime `vowel_map()`. The tables are fixed data (no
+/// per-call state), so callers on a hot path (voiceControls builds these
+/// per consonant and per note in the JS port) can use this instead of
+/// rebuilding the HashMap every call.
+pub fn vowel_map_cached() -> &'static HashMap<&'static str, Formants> {
+    static MAP: OnceLock<HashMap<&'static str, Formants>> = OnceLock::new();
+    MAP.get_or_init(vowel_map)
+}
+
+/// Cached, process-lifetime `diph_map()`. See `vowel_map_cached`.
+pub fn diph_map_cached() -> &'static HashMap<&'static str, [&'static str; 2]> {
+    static MAP: OnceLock<HashMap<&'static str, [&'static str; 2]>> = OnceLock::new();
+    MAP.get_or_init(diph_map)
+}
+
+/// Cached, process-lifetime `cons_map()`. See `vowel_map_cached`.
+pub fn cons_map_cached() -> &'static HashMap<&'static str, Cons> {
+    static MAP: OnceLock<HashMap<&'static str, Cons>> = OnceLock::new();
+    MAP.get_or_init(cons_map)
+}
+
 /// PH_OK: every known phoneme symbol (vowels + diphthongs + consonants).
 pub fn ph_ok() -> std::collections::HashSet<&'static str> {
     let mut s = std::collections::HashSet::new();
@@ -117,7 +139,7 @@ pub fn ph_ok() -> std::collections::HashSet<&'static str> {
 
 /// isVowel(p)
 pub fn is_vowel(p: &str) -> bool {
-    vowel_map().contains_key(p) || diph_map().contains_key(p)
+    vowel_map_cached().contains_key(p) || diph_map_cached().contains_key(p)
 }
 
 /// PH_ALIAS

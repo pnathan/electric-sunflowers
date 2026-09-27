@@ -216,7 +216,7 @@ pub fn gen_drums(song: &Song, form: &Form, tl: &Timeline, seed: u32) -> [Vec<f32
             hit(&mut l, &mut rbuf, tl, &mut r, ty, b0, 0.5, 0.35, Some(1.2));
             continue;
         }
-        let sec_end = bi == sec.start_bar + sec.n_bars - 1;
+        let sec_end = bi + 1 == sec.start_bar + sec.n_bars;
         let fill = sec_end
             && sec
                 .next

@@ -33,6 +33,21 @@ const BLUES_SONG = {
     { type: 'outro', chords: ['E7', 'A7', 'E7', 'E7'] }]
 };
 
+// 6/8, rising intensity (verse occ0 -> verse occ1), same song as
+// tests/parity/arrange_a.js's SIXEIGHT_SONG: exercises genDrums's 6/8 branch
+// and its sub===3 fill (steps=3), which the 4/4 and 3/4 cases above never
+// reach.
+const SIXEIGHT_SONG = {
+  title: 'Ferry Crossing', note: '', key: 'D', mode: 'major', meter: '6/8', tempo: 72, guitar: 'strum', voice: 'tenor',
+  band: { drums: 'full', bass: true, harmonyGuitar: true, harp: false, violin: false, choir: false, harmonies: false, doubles: false },
+  sections: [{ type: 'intro', chords: ['D', 'G', 'D', 'A'] },
+    { type: 'verse', lines: [L('the *fer-ry *leaves at *dawn', 'dh ax|f eh|r iy|l iy v z|ae t|d aa n', ['D', 'G']),
+      L('the *gulls are *call-ing *loud', 'dh ax|g ah l z|aa r|k ao|l ih ng|l aw d', ['D', 'A'])] },
+    { type: 'verse', lines: [L('we *cross the *bay at *dawn', 'w iy|k r ao s|dh ax|b ey|ae t|d aa n', ['D', 'G']),
+      L('the *bell rings *out so *loud', 'dh ax|b eh l|r ih ng z|aw t|s ow|l aw d', ['D', 'A'])] },
+    { type: 'outro', chords: ['D', 'G', 'D', 'D'] }]
+};
+
 function dumpNotes(notes) {
   return notes.map(n => ({ t0: n.t0, t1: n.t1, m: n.m, v: n.v }));
 }
@@ -53,10 +68,31 @@ function checksum(buf) {
   return { len: buf.length, sum, sumsq, weighted };
 }
 
-const HEAD_N = 2 * 44100; // first 2s of audio, exact
+const WIN_N = 2 * 44100; // 2s window, exact
+
+// The exact 2s head of every drum buffer is silence (drums do not start on
+// beat 0's very first sample in any of these songs), so dumping the head
+// alone never actually compares a played sample. Instead dump one window
+// starting at the first nonzero sample (a bar with intensity>=1 starts
+// playing here) and one later window (the tail of the buffer), so both ends
+// of the render are checked sample-for-sample.
+function firstNonZero(buf) {
+  for (let i = 0; i < buf.length; i++) if (buf[i] !== 0) return i;
+  return 0;
+}
+
+function window(buf, start) {
+  const len = Math.min(WIN_N, buf.length);
+  const s = Math.max(0, Math.min(start, buf.length - len));
+  return { start: s, data: Array.from(buf.slice(s, s + len)) };
+}
 
 function dumpBuf(buf) {
-  return { head: Array.from(buf.slice(0, Math.min(HEAD_N, buf.length))), full: checksum(buf) };
+  return {
+    win1: window(buf, firstNonZero(buf)),
+    win2: window(buf, buf.length - WIN_N),
+    full: checksum(buf),
+  };
 }
 
 function dumpSong(name, songRaw, seed) {
@@ -99,6 +135,7 @@ function dumpSong(name, songRaw, seed) {
 const out = {
   demo: dumpSong('demo', DEMO_SONG, 1234),
   blues: dumpSong('blues', BLUES_SONG, 1234),
+  sixeight: dumpSong('sixeight', SIXEIGHT_SONG, 1234),
 };
 
 fs.writeFileSync(path.join(OUT_DIR, 'arrange_b.json'), JSON.stringify(out));

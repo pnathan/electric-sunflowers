@@ -1,11 +1,11 @@
 //! splitPh, nucTargets, consDur, voiceControls.
 //! Ports engine.js lines ~425-537.
 
-use sfcore::js::{clamp, f32r};
+use sfcore::js::{self, clamp, f32r};
 use sfcore::rng::Rng;
 use sfcore::tuning::Tuning;
 
-use compose::phonetics::{cons_map, diph_map, is_vowel, vowel_map, Cons};
+use compose::phonetics::{cons_map_cached, diph_map_cached, is_vowel, vowel_map_cached, Cons};
 use compose::prepare::VocalNote;
 
 /// renderVoice's / voiceControls's per-note input. JS: `{t0,t1,midi,ph,nu,amp,
@@ -52,11 +52,18 @@ impl From<&VocalNote> for VoiceNote {
 /// `rng` must already be set.
 pub struct VoiceOpts {
     /// opts.seed. `||1` default (renderVoice), separately `>>>0||12345`
-    /// inside synthVoice's own local LCG (not read here).
+    /// inside synthVoice's own local LCG (not read here). This carries the
+    /// bits of the JS value after `ToUint32`/`ToInt32`; a value that was
+    /// negative in JS arrives here as the same bit pattern reinterpreted as
+    /// `u32` (e.g. JS `-1` is `u32::MAX`), matching `>>>0`.
     pub seed: Option<u32>,
-    /// opts.rng: the shared draw stream. Always present by the time
-    /// `voice_controls` runs.
-    pub rng: Rng,
+    /// opts.rng: the shared draw stream. `None` until resolved. JS:
+    /// `renderVoice` does `opts.rng = opts.rng || rngFor(opts.seed||1,'v')`
+    /// before calling `voiceControls`/`synthVoice`; `render_voice` here does
+    /// the same via `resolve_rng`. `voice_controls` and `synth_voice` both
+    /// require it already resolved (`.expect(...)`), matching that JS never
+    /// calls them with `opts.rng` unset.
+    pub rng: Option<Rng>,
     /// opts.vibScale. `==null?1:` default: only None means 1.0.
     pub vib_scale: Option<f64>,
     /// opts.breathScale. Read by synthVoice, not voiceControls; kept here
@@ -91,7 +98,7 @@ impl Default for VoiceOpts {
     fn default() -> Self {
         VoiceOpts {
             seed: None,
-            rng: sfcore::rng::rng_for(1, "v"),
+            rng: None,
             vib_scale: None,
             breath_scale: None,
             detune: None,
@@ -120,6 +127,24 @@ pub(crate) fn or_falsy(x: Option<f64>, d: f64) -> f64 {
 /// `o.x==null?d:o.x`: only None (null/undefined) means "use default".
 pub(crate) fn or_null(x: Option<f64>, d: f64) -> f64 {
     x.unwrap_or(d)
+}
+
+/// `opts.seed||1` (JS falsy: 0 counts as unset, same as None).
+fn resolved_seed(seed: Option<u32>) -> u32 {
+    match seed {
+        Some(s) if s != 0 => s,
+        _ => 1,
+    }
+}
+
+/// `opts.rng = opts.rng||rngFor(opts.seed||1,'v')`. Idempotent: leaves an
+/// already-set `rng` untouched. Called by `render_voice`; a caller of
+/// `voice_controls`/`synth_voice` directly (as the parity tests do) must set
+/// `opts.rng = Some(..)` itself first.
+pub fn resolve_rng(opts: &mut VoiceOpts) {
+    if opts.rng.is_none() {
+        opts.rng = Some(sfcore::rng::rng_for(resolved_seed(opts.seed), "v"));
+    }
 }
 
 /// splitPh(ph) result.
@@ -167,9 +192,9 @@ pub struct NucTarget {
 /// targets, splitting any diphthong into its two vowel halves and allowing a
 /// nasal/sonorant coda-ish phoneme embedded in the nucleus run through.
 pub fn nuc_targets(nu: &[String]) -> Vec<NucTarget> {
-    let vowels = vowel_map();
-    let diphs = diph_map();
-    let conses = cons_map();
+    let vowels = vowel_map_cached();
+    let diphs = diph_map_cached();
+    let conses = cons_map_cached();
     let mut out = Vec::new();
     for p in nu {
         if let Some(pair) = diphs.get(p.as_str()) {
@@ -200,7 +225,7 @@ fn cons_kind(t: &str) -> &'static str {
 
 /// consDur(p,coda): a consonant's nominal duration.
 pub fn cons_dur(p: &str, coda: bool) -> f64 {
-    let conses = cons_map();
+    let conses = cons_map_cached();
     let c = match conses.get(p) {
         Some(c) => c,
         None => return 0.0,
@@ -406,8 +431,8 @@ pub fn voice_controls(
 
         // onset consonants
         let mut t = info[k].on_start;
-        let on_ph = info[k].sp.on.clone();
-        let on_dur = info[k].on.clone();
+        let on_ph = &info[k].sp.on;
+        let on_dur = &info[k].on;
         let on_s = info[k].on_s;
         for (j, ph) in on_ph.iter().enumerate() {
             let d = on_dur[j] * on_s;
@@ -415,7 +440,7 @@ pub fn voice_controls(
             t += d;
         }
         let last_on = info[k].sp.on.last().cloned();
-        let conses = cons_map();
+        let conses = cons_map_cached();
         let lc = last_on.as_ref().and_then(|ph| conses.get(ph.as_str()));
         let loc_f: Option<[f64; 3]> = lc.filter(|c| c.t == "stop" || c.t == "aff").map(|c| match &c.loc {
             Some(Some(loc)) => sc(*loc),
@@ -447,7 +472,7 @@ pub fn voice_controls(
                     let s = 5;
                     for j in 0..s {
                         let a = (j as f64 + 0.5) / s as f64;
-                        let e = 1.0 - (1.0 - a).powf(1.6);
+                        let e = 1.0 - js::pow(1.0 - a, 1.6);
                         let f: [f64; 3] = [0, 1, 2].map(|q| loc_f[q] + (vf0[q] - loc_f[q]) * e);
                         put(
                             &mut segs,
@@ -495,8 +520,8 @@ pub fn voice_controls(
             }
         }
         t = coda_start;
-        let co_ph = info[k].sp.co.clone();
-        let co_dur = info[k].co.clone();
+        let co_ph = &info[k].sp.co;
+        let co_dur = &info[k].co;
         for (j, ph) in co_ph.iter().enumerate() {
             let d = co_dur[j] * s2;
             emit_cons(&mut segs, &put, ph, t, t + d, vfl, n.amp, true, p, tuning, &sc);
@@ -528,8 +553,8 @@ pub fn voice_controls(
 
     segs.sort_by(|a, b| a.t0.partial_cmp(&b.t0).unwrap());
     for s in &segs {
-        let i0 = ((s.t0 * fr).round() as isize).max(0) as usize;
-        let i1 = (((s.t1 * fr).round() as isize).max(0) as usize).min(n_f);
+        let i0 = (js::round(s.t0 * fr) as isize).max(0) as usize;
+        let i1 = ((js::round(s.t1 * fr) as isize).max(0) as usize).min(n_f);
         for i in i0..i1 {
             f1[i] = f32r(s.f[0]) as f32;
             f2[i] = f32r(s.f[1]) as f32;
@@ -571,38 +596,38 @@ pub fn voice_controls(
     // dynamics per note: swell and phrase-end fade; pitch track
     for k in 0..notes.len() {
         let n = &notes[k];
-        let i0 = (n.t0 * fr).round() as isize;
-        let i1 = (n.t1 * fr).round() as isize;
+        let i0 = js::round(n.t0 * fr) as isize;
+        let i1 = js::round(n.t1 * fr) as isize;
         let len = (1isize).max(i1 - i0) as f64;
         let dur = n.t1 - n.t0;
         let i0u = i0.max(0) as usize;
         let i1u = i1.max(0) as usize;
         for i in i0u..i1u.min(n_f) {
             let x = (i as f64 - i0 as f64) / len;
-            let mut e = if dur > 0.5 { 0.9 + 0.16 * (std::f64::consts::PI * (x * 1.1).min(1.0)).sin() } else { 1.0 };
+            let mut e = if dur > 0.5 { 0.9 + 0.16 * js::sin(std::f64::consts::PI * (x * 1.1).min(1.0)) } else { 1.0 };
             if n.phrase_end {
                 e *= 1.0 - 0.4 * smoothstep(0.55, 1.0, x);
             }
             av[i] = f32r(av[i] as f64 * e) as f32;
         }
-        let s0 = ((info[k].on_start * fr).round() as isize).max(0) as usize;
+        let s0 = (js::round(info[k].on_start * fr) as isize).max(0) as usize;
         let e0 = if let Some(_nx) = notes.get(k + 1) {
-            (info[k + 1].on_start * fr).round() as isize
+            js::round(info[k + 1].on_start * fr) as isize
         } else {
-            (n_f as isize).min(i1 + (0.3 * fr).round() as isize)
+            (n_f as isize).min(i1 + js::round(0.3 * fr) as isize)
         };
         let e0 = e0.max(0) as usize;
         for i in s0..e0.min(n_f) {
             m[i] = n.midi as f32;
         }
         if n.phrase_start && !opts.no_scoop {
-            let s_end = (n_f).min(i0u + (0.07 * fr).round() as usize);
+            let s_end = (n_f).min(i0u + js::round(0.07 * fr) as usize);
             for i in s0..s_end {
                 m[i] = (n.midi as f64 - 1.1) as f32;
             }
         }
         if let Some(grace) = n.grace {
-            let g_end = n_f.min(i0u + ((0.11f64).min(dur * 0.25) * fr).round() as usize);
+            let g_end = n_f.min(i0u + js::round((0.11f64).min(dur * 0.25) * fr) as usize);
             for i in i0u..g_end {
                 m[i] = grace as f32;
             }
@@ -627,7 +652,7 @@ pub fn voice_controls(
     }
 
     let smooth = |a: &mut [f32], tau: f64| {
-        let al = 1.0 - (-1.0 / (fr * tau)).exp();
+        let al = 1.0 - js::exp(-1.0 / (fr * tau));
         if a.is_empty() {
             return;
         }
@@ -656,7 +681,7 @@ pub fn voice_controls(
 
     // pitch glide (one-sided so the note arrives, then settles)
     {
-        let al = 1.0 - (-1.0 / (fr * or_falsy(opts.glide, 0.028))).exp();
+        let al = 1.0 - js::exp(-1.0 / (fr * or_falsy(opts.glide, 0.028)));
         if !m.is_empty() {
             let mut y = m[0] as f64;
             for v in m.iter_mut() {
@@ -667,7 +692,7 @@ pub fn voice_controls(
     }
 
     // vibrato + drift
-    let r = &mut opts.rng;
+    let r = opts.rng.as_mut().expect("voice_controls: opts.rng must be resolved (see resolve_rng)");
     let mut vph = r.next() * 6.28;
     let mut drift = 0.0f64;
     let mut dv = 0.0f64;
@@ -679,8 +704,8 @@ pub fn voice_controls(
         if dur < 0.4 {
             continue;
         }
-        let a = ((n.t0 + 0.22) * fr).round() as isize;
-        let b = (n_f as isize).min((n.t1 * fr).round() as isize);
+        let a = js::round((n.t0 + 0.22) * fr) as isize;
+        let b = (n_f as isize).min(js::round(n.t1 * fr) as isize);
         let au = a.max(0) as usize;
         let bu = b.max(0) as usize;
         for i in au..bu.min(n_f) {
@@ -690,12 +715,12 @@ pub fn voice_controls(
     smooth(&mut vib, 0.05);
     let rate = p.vib_rate * or_falsy(opts.rate_scale, 1.0);
     for i in 0..n_f {
-        vph += 2.0 * std::f64::consts::PI * rate * (1.0 + 0.06 * (i as f64 / fr * 0.7).sin()) / fr;
+        vph += 2.0 * std::f64::consts::PI * rate * (1.0 + 0.06 * js::sin(i as f64 / fr * 0.7)) / fr;
         dv += gauss(r) * 0.004;
         dv *= 0.985;
         drift += dv;
         drift *= 0.998;
-        let v = m[i] as f64 + vib[i] as f64 * vph.sin() + clamp(drift, -0.12, 0.12) + or_falsy(opts.detune, 0.0);
+        let v = m[i] as f64 + vib[i] as f64 * js::sin(vph) + clamp(drift, -0.12, 0.12) + or_falsy(opts.detune, 0.0);
         m[i] = f32r(v) as f32;
     }
 
@@ -716,7 +741,7 @@ fn emit_cons(
     tuning: &Tuning,
     sc: &dyn Fn([f64; 3]) -> [f64; 3],
 ) {
-    let conses = cons_map();
+    let conses = cons_map_cached();
     let c: &Cons = match conses.get(ph) {
         Some(c) => c,
         None => return,
@@ -966,7 +991,7 @@ mod tests {
     fn nuc_targets_empty_falls_back_to_ah() {
         let t = nuc_targets(&[]);
         assert_eq!(t.len(), 1);
-        assert_eq!(t[0].f, vowel_map()["ah"]);
+        assert_eq!(t[0].f, vowel_map_cached()["ah"]);
     }
 
     #[test]

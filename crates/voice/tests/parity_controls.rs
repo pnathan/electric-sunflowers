@@ -127,7 +127,7 @@ fn vowels_match_js() {
     }
     let n_f = n_f_for(t + 1.0);
     let p = voice_params(Voice::Baritone);
-    let mut opts = VoiceOpts { rng: rng_for(3, "v"), vib_scale: Some(0.0), no_scoop: true, ..Default::default() };
+    let mut opts = VoiceOpts { rng: Some(rng_for(3, "v")), vib_scale: Some(0.0), no_scoop: true, ..Default::default() };
     let tuning = Tuning::default();
     let ctl = voice_controls(&sp, &p, n_f, &mut opts, &tuning);
     assert_case_exact("vowels", &ctl, &index);
@@ -207,7 +207,7 @@ fn sing2_first_4_lines_match_js() {
             notes[last].phrase_end = true;
             notes[last].t1 += 0.4;
             let n_f = n_f_for(t + 1.0);
-            let mut opts = VoiceOpts { rng: rng_for(7 + li as u32, "s"), ..Default::default() };
+            let mut opts = VoiceOpts { rng: Some(rng_for(7 + li as u32, "s")), ..Default::default() };
             let ctl = voice_controls(&notes, &p, n_f, &mut opts, &tuning);
             assert_case_exact(&format!("sing2_{vk}_{li}"), &ctl, &index);
         }
@@ -239,7 +239,7 @@ fn demo_lead_30_matches_js() {
     let notes: Vec<VoiceNote> = vnotes.iter().map(VoiceNote::from).collect();
     let vp: VoiceParams = voice_params(prepared.voice);
     let n_f = n_f_for(notes.last().unwrap().t1 + 1.0);
-    let mut opts = VoiceOpts { rng: rng_for(seed, "lead"), ..Default::default() };
+    let mut opts = VoiceOpts { rng: Some(rng_for(seed, "lead")), ..Default::default() };
     let tuning = Tuning::default();
     let ctl = voice_controls(&notes, &vp, n_f, &mut opts, &tuning);
     assert_case_exact("demo_lead_30", &ctl, &index);
@@ -260,7 +260,7 @@ fn choir_style_notes_match_js() {
     p.shimmer *= 1.4;
     let n_f = n_f_for(notes.last().unwrap().t1 + 1.0);
     let mut opts = VoiceOpts {
-        rng: rng_for(999, "ch00"),
+        rng: Some(rng_for(999, "ch00")),
         rd_scale: Some(1.15),
         hf_gain: Some(0.0),
         n_high: Some(2.0), // CHH default
@@ -276,4 +276,44 @@ fn choir_style_notes_match_js() {
     let tuning = Tuning::default();
     let ctl = voice_controls(&notes, &p, n_f, &mut opts, &tuning);
     assert_case_exact("choir", &ctl, &index);
+}
+
+/// VF.legacy=0: the non-legacy stop branch in emit_cons (voiced/voiceless
+/// stops going through the vb/burst/aspr path instead of clos/burst/aspr
+/// with VF.burst/VF.asp gains).
+#[test]
+fn legacy0_stops_match_js() {
+    let index = read_index();
+    let notes = vec![
+        note(0.5, 0.9, 55, Some(&["p", "ae", "t"]), None, 1.0, true, false),
+        note(0.95, 1.35, 57, Some(&["t", "aa", "k"]), None, 1.0, false, false),
+        note(1.4, 1.9, 55, Some(&["d", "ih", "g"]), None, 1.0, false, true),
+    ];
+    let p = voice_params(Voice::Baritone);
+    let n_f = n_f_for(notes.last().unwrap().t1 + 1.0);
+    let mut opts = VoiceOpts { rng: Some(rng_for(42, "v")), ..Default::default() };
+    let mut tuning = Tuning::default();
+    tuning.vf.legacy = 0.0;
+    let ctl = voice_controls(&notes, &p, n_f, &mut opts, &tuning);
+    assert_case_exact("legacy0_stops", &ctl, &index);
+}
+
+/// Explicit grace notes (`n.grace = Some(midi)`), driving voiceControls's
+/// `M[i]=n.grace` backfill for the first part of the note.
+#[test]
+fn grace_notes_match_js() {
+    let index = read_index();
+    let mut notes = vec![
+        note(0.5, 1.0, 60, Some(&["m", "ae"]), None, 1.0, true, false),
+        note(1.05, 1.6, 63, Some(&["l", "ey"]), None, 1.0, false, false),
+        note(1.65, 2.3, 60, Some(&["n", "ow"]), None, 1.0, false, true),
+    ];
+    notes[0].grace = Some(58);
+    notes[1].grace = Some(61);
+    let p = voice_params(Voice::Alto);
+    let n_f = n_f_for(notes.last().unwrap().t1 + 1.0);
+    let mut opts = VoiceOpts { rng: Some(rng_for(55, "v")), ..Default::default() };
+    let tuning = Tuning::default();
+    let ctl = voice_controls(&notes, &p, n_f, &mut opts, &tuning);
+    assert_case_exact("grace_notes", &ctl, &index);
 }

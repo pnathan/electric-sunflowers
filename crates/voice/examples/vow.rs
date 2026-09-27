@@ -48,7 +48,7 @@ fn main() {
     }
     let len = ((t + 1.0) * SR_F).ceil() as usize;
     let p = voice_params(Voice::Baritone);
-    let mut opts = VoiceOpts { seed: Some(3), rng: rng_for(3, "v"), vib_scale: Some(0.0), no_scoop: true, ..Default::default() };
+    let mut opts = VoiceOpts { seed: Some(3), rng: Some(rng_for(3, "v")), vib_scale: Some(0.0), no_scoop: true, ..Default::default() };
     let tuning = Tuning::default();
 
     let start = std::time::Instant::now();
