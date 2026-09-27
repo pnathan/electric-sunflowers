@@ -1,0 +1,7 @@
+label	commit	status	runs	load1	threaded_wall_s	threaded_rss_mb	one_wall_s	one_rss_mb	sha_equal
+base-29c5c08	6a973e7+dirty	1run	1	-	4.61	873	13.37	699	yes
+base-check	6a973e7+dirty	1run	1	-	4.63	882	13.46	699	yes
+w0	6a973e7+dirty	1run	1	-	4.62	874	14.77	698	yes
+w0	6a973e7+dirty	pass	3	3.90	4.58	878	13.85	699	yes
+w0-run	6a973e7+dirty	pass	3	1.38	4.56	878	13.88	699	yes
+w0-verify	6a973e7+dirty	pass	3	1.89	4.73	877	14.21	699	yes

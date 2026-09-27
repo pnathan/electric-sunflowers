@@ -551,6 +551,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "instruments"
+version = "0.1.0"
+dependencies = [
+ "dsp",
+ "rayon",
+ "sfcore",
+ "song",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -852,6 +862,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 
 [[package]]
+name = "song"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "songwriter"
 version = "0.1.0"
 dependencies = [
@@ -859,6 +877,16 @@ dependencies = [
  "serde_json",
  "sfcore",
  "ureq",
+]
+
+[[package]]
+name = "soundgate"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "hound",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

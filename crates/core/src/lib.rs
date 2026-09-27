@@ -6,6 +6,11 @@ pub mod rng;
 pub mod tuning;
 pub mod v8math;
 
+pub mod fp;
+pub mod math;
+pub mod random;
+pub mod time;
+
 pub const SR: usize = 44100;
 pub const SR_F: f64 = 44100.0;
 pub const HOP: usize = 64;

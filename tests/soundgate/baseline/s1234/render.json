@@ -1,0 +1,19 @@
+{
+  "mix_s": 1.434717768,
+  "render_s": 2.996009313,
+  "samples": 8192076,
+  "seed": 1234,
+  "stems": [
+    "lead",
+    "harmony",
+    "doubles",
+    "choir",
+    "guitar",
+    "harmony_guitar",
+    "bass",
+    "drums",
+    "harp",
+    "violin"
+  ],
+  "strip_s": 3.845517713
+}

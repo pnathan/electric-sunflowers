@@ -4,3 +4,4 @@ __pycache__/
 *.wav
 node_modules/
 target/
+out/

@@ -11,6 +11,14 @@ pub mod pluck;
 pub mod reverb;
 pub mod violin;
 
+pub mod biquad;
+pub mod conv;
+pub mod delay;
+pub mod onepole;
+pub mod resonator;
+pub mod smoother;
+pub mod stochastic;
+
 /// JS `v||default`: 0, NaN and (by construction, since Rust has no
 /// undefined) any other non-finite-zero falsy value all fall back to
 /// `default`; any other value passes through unchanged.

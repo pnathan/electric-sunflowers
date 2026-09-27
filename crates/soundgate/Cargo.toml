@@ -1,0 +1,17 @@
+[package]
+name = "soundgate"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+description = "Sound gate: LTAS, gated level and YIN pitch probes over rendered stems. Depends on no engine crate."
+
+[[bin]]
+name = "soundgate"
+path = "src/main.rs"
+
+[dependencies]
+hound = "3.5"
+serde.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }
