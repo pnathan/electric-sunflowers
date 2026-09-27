@@ -349,6 +349,28 @@
    ],
    "brief": "Common rules. Repository /home/pnathan/src/electric-sunflowers, branch rust-cleanup. Read CLAUDE.md and docs/engine-design.md (all) first. You own the whole tree for this wave. Never run git switch, checkout, stash, rebase or force-push; never commit to main. Check `git diff --cached --stat` before each commit. Commit messages: ASD-STE100 Simplified Technical English plus Conventional Commits (e.g. `chore(core): remove the JS number emulation`), ending with `Assisted-by: LLM claude-fable-5-1` and `Claude-Session: https://claude.ai/code/session_01WpM1JEASKvtGic1RU5URP8`. Plain ASCII; never the words seams, load bearing, belt and braces, shape of. CLAUDE.md prose: erudite, laconic, exact; no filler..\n\nTask.\n1. Delete: crates/core/src/{js.rs, v8math.rs, rng.rs, tuning.rs}, crates/core/examples/{mathprobe,wideprobe,mathbench}.rs, crates/core/tests/parity_math.rs, the v8 feature, V8_EXACT, the libm dependency if nothing uses it (check with cargo tree); every `shim: deleted in wave 5` item (dsp filter.rs bq/run_bq/run_bq_into/FilterType if unused, fft.rs make_fft/Fft::run f64 shim/conv_stereo, dynamics compress/stereo_compress/db_of, pan add_pan, noise.rs, reverb fdn_reverb, export write_audio/ExportOpts, voice render_voice); dsp/src/{pluck,body,violin}.rs and dsp/examples/helmholtz.rs (replaced by instruments); dsp/src/lib.rs or_default/truthy; every remaining crates/*/tests/parity_*.rs; tests/parity/ (tracked) and ref/parity/ (untracked; delete the directory from disk); any remaining 'JS parity' or 'Deviation from JS' comments. Update scripts/gate.sh only if it still refers to a deleted example path.\n2. `grep -rn 'sfcore::js\\|sfcore::rng\\|v8math\\|f32r\\|JS parity\\|Deviation from JS\\|capture_raw\\|engine.js' crates` must return nothing (doc references to the JS prototype as a separate product are allowed only in CLAUDE.md).\n3. `cargo build --release --workspace --all-targets`, `cargo test --release --workspace`, `cargo clippy --release --workspace` (fix warnings in touched code).\n4. Gate: `scripts/gate.sh --strict --against out/gate/w4-engine w5-final` (compare with the end of wave 4; must pass strict) and report section 10 targets.\n5. CLAUDE.md: rewrite the '## Rust engine' section: crates and responsibilities (design section 2), how to render (sunflower demo/render/write, RAYON_NUM_THREADS), the sound gate (scripts/gate.sh, thresholds, baseline rule), measured timing and memory from w5-final, the deliberate changes that landed (band-limited LF source, violin Lagrange reads and retuned loss, PolyBLEP ride, new RNG streams). Remove statements about parity, sfcore::js, V8 math, node timing comparisons. In the voice model bullets, correct the aspiration sentence: breath noise is low-passed at 2.6 kHz; aspiration is not (low-passing it is open work). Update 'Latest readings' only with numbers you measured (vowel distance, helmholtz); leave the PANNs/Whisper numbers marked as from the JS engine. Update docs/engine-design.md status line to 'implemented' with any deviations listed.",
    "acceptance": "The grep in step 2 is empty; workspace builds, tests and clippy pass; scripts/gate.sh --strict --against out/gate/w4-engine passes; perf.tsv row meets section 10 targets (threaded <= 2.5 s, one thread <= 9 s, RSS <= 0.50/0.40 GB) or the gap is reported with a profile; CLAUDE.md Rust section rewritten with measured numbers only."
+  },
+  {
+   "id": "carry1",
+   "wave": 2,
+   "title": "Carry-over: wave-1 review minors in song, dsp and the perf log",
+   "owns": [
+    "crates/song/src/wire.rs",
+    "crates/song/tests/",
+    "crates/dsp/src/onepole.rs",
+    "crates/dsp/src/dynamics.rs",
+    "crates/dsp/src/delay.rs",
+    "tests/soundgate/perf.tsv",
+    "crates/dsp/tests/filters.rs",
+    "crates/dsp/tests/delay.rs"
+   ],
+   "depends_on": [
+    "song",
+    "dsp-filters",
+    "dsp-delay"
+   ],
+   "brief": "Fix these wave-1 review findings, each with a unit test where it applies:\n1. crates/dsp/src/onepole.rs:17 and dynamics.rs:27: tau_coef and time_coef duplicate sfcore::math::one_pole_coeff_tau (and any dB helper duplicates sfcore::math::db_to_gain/gain_to_db). Use the sfcore functions and delete the duplicates.\n2. crates/song/src/wire.rs:630: tempo is rounded with the JS formula floor(x+0.5). Use f64::round (design section 4: no JS emulation).\n3. crates/song/src/wire.rs:491: a word part with no letter or digit (a lone \"-\" or \"...\") is dropped with no Repair. Record a Repair for it (design section 7: nothing is dropped silently).\n4. crates/dsp/src/delay.rs:56: read_linear and read_lagrange3 cast the delay to usize with saturation and then add 1 or 2, which overflows for a non-finite or huge delay. Clamp the delay to the valid range [0, capacity - 3] (and treat NaN as 0) before indexing; document it.\n5. tests/soundgate/perf.tsv: delete the stray row named w1 with status fail (a --targets run), keep all pass rows.",
+   "acceptance": "cargo test --release -p song -p dsp passes with the new tests; no duplicated coefficient helpers remain in dsp (grep); perf.tsv has no w1 fail row."
   }
  ]
 }
