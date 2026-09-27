@@ -2,9 +2,11 @@
 //!
 //! JS computes in f64 and rounds to f32 only when it stores into a Float32Array.
 //! Transcendental functions must go through this module, never `f64::sin` and friends
-//! directly. Measured against node 24 on 200k inputs (examples/mathprobe.rs):
-//! exp, atan, sqrt (libm) and pow (glibc via std) are bit-exact; sin, cos, log (libm)
-//! and log10, tanh (glibc) differ by 1 ulp on about 1-15% of inputs.
+//! directly. Measured against node 24 on 200k inputs plus hard cases
+//! (crates/core/tests/parity_math.rs, data from tests/parity/math.js): sin, cos, log,
+//! log2, log10, atan2 are bit-exact via the ported fdlibm/V8 algorithm in v8math.rs;
+//! exp and sqrt (libm) are bit-exact as-is; pow needed one JS-spec special case
+//! (see `pow` below) and is then bit-exact.
 
 /// `Math.round`: halves round toward +infinity.
 #[inline]
@@ -50,11 +52,11 @@ pub fn f32r(x: f64) -> f64 {
 
 #[inline]
 pub fn sin(x: f64) -> f64 {
-    libm::sin(x)
+    crate::v8math::sin(x)
 }
 #[inline]
 pub fn cos(x: f64) -> f64 {
-    libm::cos(x)
+    crate::v8math::cos(x)
 }
 #[inline]
 pub fn tan(x: f64) -> f64 {
@@ -74,18 +76,24 @@ pub fn exp(x: f64) -> f64 {
 }
 #[inline]
 pub fn log(x: f64) -> f64 {
-    libm::log(x)
+    crate::v8math::log(x)
 }
 #[inline]
 pub fn log2(x: f64) -> f64 {
-    libm::log2(x)
+    crate::v8math::log2(x)
 }
 #[inline]
 pub fn log10(x: f64) -> f64 {
-    x.log10()
+    crate::v8math::log10(x)
 }
+/// `Math.pow`. JS parity: the ECMAScript spec (Number::exponentiate) special-
+/// cases base +-1 raised to an infinite exponent to NaN; IEEE 754 `pow` (and
+/// so Rust's `f64::powf`) returns 1.0 there instead.
 #[inline]
 pub fn pow(x: f64, y: f64) -> f64 {
+    if (x == 1.0 || x == -1.0) && y.is_infinite() {
+        return f64::NAN;
+    }
     x.powf(y)
 }
 #[inline]
