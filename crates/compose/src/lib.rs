@@ -1,11 +1,14 @@
 //! Composition: theory, phonetics, song normalization, form, timeline, rhythm,
-//! pitch, melody, and the voice-range transposition (engine.js lines 18-430,
-//! 843-866).
-//!
-//! JS parity: only theory, phonetics and song normalization are ported so
-//! far in this pass. form/timeline/rhythm/pitch/melody/voices/prepare remain
-//! stubs; see the crate README / task notes for status.
+//! pitch, melody, voices, and full-render preparation (engine.js lines
+//! 18-430, 843-866).
 
+pub mod form;
+pub mod melody;
 pub mod phonetics;
+pub mod pitch;
+pub mod prepare;
+pub mod rhythm;
 pub mod song;
 pub mod theory;
+pub mod timeline;
+pub mod voices;
