@@ -8,6 +8,7 @@
 //! is ported faithfully so behavior matches in distribution.
 
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 /// One step of a form's plan, ports a `FORMS[k].steps` entry (`['type', {opts}]`).
 #[derive(Clone, Debug)]
@@ -66,10 +67,22 @@ macro_rules! form {
     };
 }
 
-/// Ports FORMS. Keys match the JS object's keys exactly.
-pub fn forms() -> BTreeMap<&'static str, Form> {
-    let mut m = BTreeMap::new();
-    m.insert(
+/// Ports FORMS. Keys match the JS object's keys exactly, and entries are kept in JS
+/// declaration order (a Vec, not a sorted map) so a random pick over `Object.keys(FORMS)`
+/// (there is none today, but `styleDirection`'s STYLES pick relies on the same ordering
+/// discipline) matches JS insertion order rather than alphabetical order.
+pub fn forms() -> &'static Vec<(&'static str, Form)> {
+    static FORMS: LazyLock<Vec<(&'static str, Form)>> = LazyLock::new(build_forms);
+    &FORMS
+}
+
+fn forms_get(fk: &str) -> Option<&'static Form> {
+    forms().iter().find(|(k, _)| *k == fk).map(|(_, f)| f)
+}
+
+fn build_forms() -> Vec<(&'static str, Form)> {
+    let mut m: Vec<(&'static str, Form)> = Vec::new();
+    m.push((
         "vc",
         form!(
             "verse and chorus",
@@ -86,8 +99,8 @@ pub fn forms() -> BTreeMap<&'static str, Form> {
                 FormStep::new("outro").inst(3),
             ]
         ),
-    );
-    m.insert(
+    ));
+    m.push((
         "vcBreaks",
         form!(
             "verse and chorus with instrumental breaks",
@@ -105,8 +118,8 @@ pub fn forms() -> BTreeMap<&'static str, Form> {
                 FormStep::new("outro").n("1 to 2").tag(),
             ]
         ),
-    );
-    m.insert(
+    ));
+    m.push((
         "strophic",
         form!(
             "strophic ballad",
@@ -123,8 +136,8 @@ pub fn forms() -> BTreeMap<&'static str, Form> {
                 FormStep::new("outro").inst(2),
             ]
         ),
-    );
-    m.insert(
+    ));
+    m.push((
         "refrain",
         form!(
             "verses with a refrain line",
@@ -140,8 +153,8 @@ pub fn forms() -> BTreeMap<&'static str, Form> {
                 FormStep::new("outro").inst(2),
             ]
         ),
-    );
-    m.insert(
+    ));
+    m.push((
         "aaba",
         form!(
             "AABA (32-bar song form)",
@@ -159,8 +172,8 @@ pub fn forms() -> BTreeMap<&'static str, Form> {
                 FormStep::new("outro").inst(2),
             ]
         ),
-    );
-    m.insert(
+    ));
+    m.push((
         "chorusFirst",
         form!(
             "chorus first",
@@ -176,8 +189,8 @@ pub fn forms() -> BTreeMap<&'static str, Form> {
                 FormStep::new("outro").inst(3),
             ]
         ),
-    );
-    m.insert(
+    ));
+    m.push((
         "prechorus",
         form!(
             "verse, pre-chorus, chorus",
@@ -196,8 +209,8 @@ pub fn forms() -> BTreeMap<&'static str, Form> {
                 FormStep::new("outro").inst(3),
             ]
         ),
-    );
-    m.insert(
+    ));
+    m.push((
         "waltzBreaks",
         form!(
             "verse and chorus with a break",
@@ -214,8 +227,8 @@ pub fn forms() -> BTreeMap<&'static str, Form> {
                 FormStep::new("outro").inst(3),
             ]
         ),
-    );
-    m.insert(
+    ));
+    m.push((
         "blues12",
         form!(
             "12-bar blues",
@@ -231,8 +244,8 @@ pub fn forms() -> BTreeMap<&'static str, Form> {
                 FormStep::new("outro").inst(4),
             ]
         ),
-    );
-    m.insert(
+    ));
+    m.push((
         "hymn",
         form!(
             "hymn stanzas",
@@ -248,7 +261,7 @@ pub fn forms() -> BTreeMap<&'static str, Form> {
                 FormStep::new("outro").n("1").tag(),
             ]
         ),
-    );
+    ));
     m
 }
 
@@ -302,8 +315,17 @@ impl Style {
 }
 
 /// Ports STYLES. Keys match the JS object's keys exactly.
-pub fn styles() -> BTreeMap<&'static str, Style> {
-    let mut m = BTreeMap::new();
+pub fn styles() -> &'static Vec<(&'static str, Style)> {
+    static STYLES: LazyLock<Vec<(&'static str, Style)>> = LazyLock::new(build_styles);
+    &STYLES
+}
+
+fn styles_get(k: &str) -> Option<&'static Style> {
+    styles().iter().find(|(sk, _)| *sk == k).map(|(_, s)| s)
+}
+
+fn build_styles() -> Vec<(&'static str, Style)> {
+    let mut m: Vec<(&'static str, Style)> = Vec::new();
     macro_rules! b {
         () => {
             Band::default()
@@ -314,7 +336,7 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             band
         }};
     }
-    m.insert(
+    m.push((
         "appalachian",
         Style {
             label: "Appalachian ballad",
@@ -328,8 +350,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["strophic", "refrain"],
             lead: "violin",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "oldtime",
         Style {
             label: "Old-time string band",
@@ -343,8 +365,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["vcBreaks", "refrain"],
             lead: "violin",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "bluegrass",
         Style {
             label: "Bluegrass",
@@ -358,8 +380,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["vcBreaks"],
             lead: "both",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "cowboy",
         Style {
             label: "Western and cowboy song",
@@ -373,8 +395,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["vc", "waltzBreaks", "strophic"],
             lead: "violin",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "bakersfield",
         Style {
             label: "Bakersfield country",
@@ -388,8 +410,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["vcBreaks", "vc", "chorusFirst"],
             lead: "guitar",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "texas",
         Style {
             label: "Texas songwriter",
@@ -403,8 +425,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["refrain", "strophic", "aaba"],
             lead: "guitar",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "cajun",
         Style {
             label: "Cajun waltz",
@@ -418,8 +440,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["waltzBreaks"],
             lead: "violin",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "zydeco",
         Style {
             label: "Creole and zydeco two-step",
@@ -433,8 +455,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["chorusFirst", "vcBreaks"],
             lead: "both",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "acadian",
         Style {
             label: "Acadian fiddle song",
@@ -448,8 +470,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["vcBreaks", "refrain"],
             lead: "violin",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "broadside",
         Style {
             label: "English broadside ballad",
@@ -463,8 +485,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["strophic", "refrain"],
             lead: "violin",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "scottish",
         Style {
             label: "Scottish ballad",
@@ -478,8 +500,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["strophic", "refrain", "aaba"],
             lead: "violin",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "irishair",
         Style {
             label: "Irish air",
@@ -493,8 +515,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["strophic", "aaba"],
             lead: "violin",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "irishpub",
         Style {
             label: "Irish drinking song",
@@ -508,8 +530,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["vc", "chorusFirst", "vcBreaks"],
             lead: "violin",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "welsh",
         Style {
             label: "Welsh hymn tune",
@@ -523,8 +545,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["hymn"],
             lead: "guitar",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "breton",
         Style {
             label: "Breton dance song",
@@ -538,8 +560,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["refrain", "vcBreaks"],
             lead: "violin",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "blues",
         Style {
             label: "Delta and Piedmont blues",
@@ -553,8 +575,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["blues12"],
             lead: "guitar",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "gospel",
         Style {
             label: "Gospel",
@@ -568,8 +590,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["chorusFirst", "vc", "prechorus"],
             lead: "guitar",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "revival",
         Style {
             label: "1960s folk revival",
@@ -583,8 +605,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["refrain", "vc", "strophic"],
             lead: "guitar",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "laurel",
         Style {
             label: "Laurel Canyon",
@@ -598,8 +620,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["vc", "prechorus", "aaba"],
             lead: "guitar",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "nashville",
         Style {
             label: "Nashville country waltz",
@@ -613,8 +635,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["waltzBreaks", "vc"],
             lead: "violin",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "americana",
         Style {
             label: "Present-day Americana",
@@ -628,8 +650,8 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["vc", "prechorus", "chorusFirst", "aaba"],
             lead: "both",
         },
-    );
-    m.insert(
+    ));
+    m.push((
         "shanty",
         Style {
             label: "Sea shanty",
@@ -643,14 +665,13 @@ pub fn styles() -> BTreeMap<&'static str, Style> {
             forms: &["refrain", "chorusFirst"],
             lead: "violin",
         },
-    );
+    ));
     m
 }
 
 /// Ports `formText(fk)`: renders a numbered plan for a form key.
 pub fn form_text(fk: &str) -> FormTextResult {
-    let forms_map = forms();
-    let f = forms_map.get(fk).unwrap_or_else(|| panic!("unknown form: {}", fk));
+    let f = forms_get(fk).unwrap_or_else(|| panic!("unknown form: {}", fk));
     let bars = f.bars;
     let mut cnt: BTreeMap<&str, u32> = BTreeMap::new();
     let mut lines = Vec::new();
@@ -700,16 +721,18 @@ pub struct FormTextResult {
 /// key picked at random from `Object.keys(STYLES)` -- ported the same way (one extra `rand()` call
 /// in that fallback path only, matching `p(Object.keys(STYLES))`).
 pub fn style_direction(key: Option<&str>, rand: &mut dyn FnMut() -> f64) -> Direction {
-    let styles_map = styles();
     let k: String = match key {
-        Some(k) if styles_map.contains_key(k) => k.to_string(),
+        Some(k) if styles_get(k).is_some() => k.to_string(),
         _ => {
-            let keys: Vec<&&str> = styles_map.keys().collect();
+            // JS: `p(Object.keys(STYLES))` -- Object.keys on an object literal with
+            // string keys yields insertion (declaration) order, matched here by
+            // picking over `styles()`'s Vec in that same order.
+            let keys: Vec<&str> = styles().iter().map(|(k, _)| *k).collect();
             let idx = (rand() * keys.len() as f64).floor() as usize;
             keys[idx.min(keys.len() - 1)].to_string()
         }
     };
-    let s = &styles_map[k.as_str()];
+    let s = styles_get(k.as_str()).expect("style key resolved above must exist");
     let meter = pick(s.meters, rand);
     let (lo, hi) = s.tempo_for(meter).expect("style tempo missing for meter");
     let form = pick(s.forms, rand);
@@ -789,8 +812,7 @@ pub struct StyleArrangement {
 /// and the tempo clamp bounds for `meter`. JS parity: `applyStyle` returns `song`
 /// unchanged (not this struct) when `key` is not a known style; here that is `None`.
 pub fn apply_style(key: &str, meter: &str) -> Option<StyleArrangement> {
-    let styles_map = styles();
-    let s = styles_map.get(key)?;
+    let s = styles_get(key)?;
     let tempo_clamp = s.tempo_for(meter).map(|(lo, hi)| (lo as f64 * 0.9, hi as f64 * 1.1));
     Some(StyleArrangement {
         guitar: s.guitar,

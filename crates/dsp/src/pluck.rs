@@ -2,6 +2,7 @@
 //! polarisations, shaped excitation run in the velocity domain, frequency-dependent
 //! loss (a Karplus-Strong loop with a tuned all-pass for fractional delay).
 
+use crate::{or_default, truthy};
 use sfcore::js;
 use sfcore::rng::Rng;
 use sfcore::SR_F;
@@ -62,8 +63,8 @@ pub fn pluck(out: &mut [f32], start: i64, f: f64, len: i64, o: &PluckOpts, r: &m
     let beta = js::clamp(o.pick.unwrap_or(0.15), 0.04, 0.5);
     let noise = o.noise.unwrap_or(0.08);
     let det = o.detune.unwrap_or(1.4);
-    let rel = if o.rel != 0.0 { o.rel } else { 0.03 };
-    let rel_t = if o.rel_t != 0.0 { o.rel_t } else { 0.09 };
+    let rel = or_default(o.rel, 0.03);
+    let rel_t = or_default(o.rel_t, 0.09);
     let rel_n = js::round(rel * SR_F) as i64;
     let rel_start = len - rel_n;
 
@@ -102,6 +103,9 @@ pub fn pluck(out: &mut [f32], start: i64, f: f64, len: i64, o: &PluckOpts, r: &m
         }
         let w = (1usize).max(js::round(l as f64 * 0.008 * (1.0 + 2.0 * (1.0 - bright))) as usize);
         if w > 1 {
+            // Not de-duplicated: JS itself takes `Float32Array.from(buf)` here
+            // (a read-only snapshot while buf is overwritten in the same pass), so
+            // this clone mirrors the reference exactly; removing it risks parity.
             let tmp = buf.clone();
             let mut acc = 0.0f64;
             let li = l as i64;
@@ -118,6 +122,8 @@ pub fn pluck(out: &mut [f32], start: i64, f: f64, len: i64, o: &PluckOpts, r: &m
         // run the loop in the velocity domain (bridge force ~ string slope): load
         // the derivative of the shape
         {
+            // Same as above: JS snapshots with `Float32Array.from(buf)` before
+            // taking the derivative in place.
             let sh = buf.clone();
             for i in 0..l {
                 let prev = sh[(i + l - 1) % l] as f64;
@@ -154,7 +160,7 @@ pub fn pluck(out: &mut [f32], start: i64, f: f64, len: i64, o: &PluckOpts, r: &m
             }
         }
         let gain = o.amp * (if pol != 0 { 0.42 } else { 1.0 }) / vpk * js::min(1.0, l as f64 / 60.0);
-        if o.atk_noise != 0.0 && pol == 0 {
+        if truthy(o.atk_noise) && pol == 0 {
             let an = js::round(0.004 * SR_F) as i64;
             let mut hpz = 0.0f64;
             let mut i = 0i64;
@@ -201,7 +207,7 @@ pub fn pluck(out: &mut [f32], start: i64, f: f64, len: i64, o: &PluckOpts, r: &m
                 gg = js::pow(10.0, -3.0 / (rel_t * fp));
                 pp = js::min(0.7, p + 0.3);
             }
-            if gl != 0.0 && (nn & 31) == 0 {
+            if truthy(gl) && (nn & 31) == 0 {
                 let e = gl * js::exp(-(nn as f64) / (0.07 * SR_F));
                 let n_n = SR_F / (fp * js::pow(2.0, e / 1200.0));
                 let dd = n_n - tau - l as f64;

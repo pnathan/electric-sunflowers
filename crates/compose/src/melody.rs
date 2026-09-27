@@ -380,14 +380,23 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
                 let cad = cadence_for(&sec_type, li, nl);
                 let ts = prof.tess.get(&sec_type);
 
+                // JS parity: `if(sec.occ>0&&firstOcc[t]&&firstOcc[t][li])ref=firstOcc[t][li];
+                // else if(li>=2&&sec.lines[li-2].pitches)ref=sec.lines[li-2].pitches;` -- the
+                // else-if is reached whenever the first branch's condition is false, which
+                // includes an occ>0 section whose line li has no first-occurrence entry yet
+                // (a later verse with more lines than the first). Do not nest the li>=2 check
+                // inside the occ==0 case.
                 let mut reference: Option<Vec<i32>> = None;
+                let mut have_first_occ = false;
                 if sec_occ > 0 {
                     if let Some(v) = first_occ.get(&sec_type) {
                         if let Some(Some(p)) = v.get(li) {
                             reference = Some(p.clone());
+                            have_first_occ = true;
                         }
                     }
-                } else if li >= 2 {
+                }
+                if !have_first_occ && li >= 2 {
                     let prev_line_idx = form.sections[sec_idx].lines[li - 2];
                     if let Some(p) = &form.lines[prev_line_idx].pitches {
                         reference = Some(p.clone());

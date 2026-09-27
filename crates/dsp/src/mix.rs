@@ -2,12 +2,22 @@
 //! lines ~1179-1216): the per-track EQ/gain/compression cache and the final mix
 //! (pan, sends, reverb, bus compression, peak normalisation).
 
+use crate::body::Body;
 use crate::dynamics::{compress, db_of, stereo_compress};
 use crate::filter::{bq, run_bq, FilterType};
 use crate::reverb::fdn_reverb;
 use sfcore::js;
 use sfcore::{SR, SR_F};
-use std::collections::HashMap;
+
+/// Number of `TRACKS` entries; also the length of `Render`'s fixed arrays.
+const N_TRACKS: usize = 10;
+
+/// Position of a track key in `TRACKS`, used to index `Render`'s fixed
+/// arrays instead of a string-keyed map (every key is known at compile
+/// time, so this never allocates or hashes).
+fn track_index(key: &str) -> usize {
+    TRACKS.iter().position(|t| t.key == key).unwrap_or_else(|| panic!("unknown track {key}"))
+}
 
 /// One entry of `TRACKS` in engine.js.
 #[derive(Clone, Copy, Debug)]
@@ -59,12 +69,12 @@ pub fn eq_for(key: &str) -> &'static [EqBand] {
 
 /// `BODY_OF` in engine.js: `[bodyCurveName, seedOffset, refPeak]` per track key
 /// that gets convolved with a measured body impulse response.
-pub fn body_of(key: &str) -> Option<(&'static str, f64, f64)> {
+pub fn body_of(key: &str) -> Option<(Body, f64, f64)> {
     match key {
-        "guitar" => Some(("guitar", 0.0, 5.4)),
-        "hg" => Some(("guitar", 17.0, 5.4)),
-        "harp" => Some(("harp", 0.0, 7.3)),
-        "violin" => Some(("violin", 0.0, 2.4)),
+        "guitar" => Some((Body::Guitar, 0.0, 5.4)),
+        "hg" => Some((Body::Guitar, 17.0, 5.4)),
+        "harp" => Some((Body::Harp, 0.0, 7.3)),
+        "violin" => Some((Body::Violin, 0.0, 2.4)),
         _ => None,
     }
 }
@@ -97,40 +107,64 @@ pub fn active_rms(a: &[f32]) -> f64 {
     (act.iter().map(|v| v * v).sum::<f64>() / act.len() as f64).sqrt()
 }
 
-/// The render state `processTrack`/`mixSong` operate on: raw tracks (freed as
-/// each is processed), the per-track processed cache, and the lead slapback
-/// delay computed once when the lead track is processed.
+/// A cache slot for a processed track: not yet computed, computed and
+/// silent (dropped, like JS's `render.proc[key]=null`), or computed and
+/// present.
+#[derive(Default)]
+enum ProcSlot {
+    #[default]
+    Empty,
+    Silent,
+    Ready(Vec<Vec<f32>>),
+}
+
+impl ProcSlot {
+    fn as_ready(&self) -> Option<&Vec<Vec<f32>>> {
+        match self {
+            ProcSlot::Ready(chs) => Some(chs),
+            _ => None,
+        }
+    }
+}
+
+/// The render state `processTrack`/`mixSong` operate on: raw tracks (taken
+/// out of the array as each is processed, so nothing is ever copied), the
+/// per-track processed cache (indexed the same way, by position in
+/// `TRACKS`), and the lead slapback delay computed once when the lead
+/// track is processed. A re-mix with a different `enabled` set reads the
+/// same cache, so it costs no extra copies either.
 #[derive(Default)]
 pub struct Render {
     pub len: usize,
-    pub tracks: HashMap<String, Option<Vec<Vec<f32>>>>,
-    pub proc: HashMap<String, Option<Vec<Vec<f32>>>>,
+    tracks: [Option<Vec<Vec<f32>>>; N_TRACKS],
+    proc: [ProcSlot; N_TRACKS],
     pub lead_delay: Option<Vec<f32>>,
 }
 
 impl Render {
     pub fn new(len: usize) -> Self {
-        Render { len, tracks: HashMap::new(), proc: HashMap::new(), lead_delay: None }
+        Render { len, tracks: Default::default(), proc: Default::default(), lead_delay: None }
     }
 
     /// Sets a raw track's channels (1 or 2, as the real tracks have).
     pub fn set_track(&mut self, key: &str, chs: Vec<Vec<f32>>) {
-        self.tracks.insert(key.to_string(), Some(chs));
+        self.tracks[track_index(key)] = Some(chs);
     }
 }
 
 /// `processTrack(render,T)`: per-track EQ, gain-to-target and (lead/harmony)
-/// compression, cached on `render.proc`; the raw track is freed after.
-pub fn process_track(render: &mut Render, t: &TrackSpec) -> Option<Vec<Vec<f32>>> {
-    if let Some(cached) = render.proc.get(t.key) {
-        return cached.clone();
+/// compression, cached on `render.proc`; the raw track is taken (removed)
+/// from `render.tracks` and processed in place, never copied.
+pub fn process_track(render: &mut Render, t: &TrackSpec) {
+    let idx = track_index(t.key);
+    if !matches!(render.proc[idx], ProcSlot::Empty) {
+        return;
     }
-    let src = render.tracks.get(t.key).cloned().flatten();
-    let mut chs = match src {
+    let mut chs = match render.tracks[idx].take() {
         Some(c) => c,
         None => {
-            render.proc.insert(t.key.to_string(), None);
-            return None;
+            render.proc[idx] = ProcSlot::Silent;
+            return;
         }
     };
 
@@ -146,8 +180,8 @@ pub fn process_track(render: &mut Render, t: &TrackSpec) -> Option<Vec<Vec<f32>>
         rms = js::max(rms, active_rms(c));
     }
     if rms < 1e-6 {
-        render.proc.insert(t.key.to_string(), None);
-        return None;
+        render.proc[idx] = ProcSlot::Silent;
+        return;
     }
     let g0 = 0.1 / rms;
     for c in chs.iter_mut() {
@@ -164,7 +198,7 @@ pub fn process_track(render: &mut Render, t: &TrackSpec) -> Option<Vec<Vec<f32>>
 
     if t.key == "lead" {
         // slapback into the reverb and bus, computed once
-        let x = chs[0].clone();
+        let x = &chs[0];
         let dl = js::round(0.34 * SR_F) as usize;
         let mut o = vec![0.0f32; x.len()];
         let lp = bq(FilterType::Lp, 3200.0, 0.7, 0.0);
@@ -186,9 +220,7 @@ pub fn process_track(render: &mut Render, t: &TrackSpec) -> Option<Vec<Vec<f32>>
         render.lead_delay = Some(o);
     }
 
-    render.proc.insert(t.key.to_string(), Some(chs.clone()));
-    render.tracks.insert(t.key.to_string(), None);
-    Some(chs)
+    render.proc[idx] = ProcSlot::Ready(chs);
 }
 
 /// `panInto(bL,bR,chs,pan,gain,sL,sR,send)`.
@@ -257,15 +289,16 @@ pub fn mix_song(render: &mut Render, enabled: impl Fn(&TrackSpec) -> bool, seed:
         if !enabled(t) {
             continue;
         }
-        let chs = process_track(render, t);
+        process_track(render, t);
         k += 1;
         if let Some(p) = progress.as_deref_mut() {
             p("Mixing", 0.95 + 0.03 * k as f64 / TRACKS.len() as f64);
         }
-        let Some(chs) = chs else { continue };
-        pan_into(&mut l, &mut r, &chs, t.pan, t.gain, &mut s_l, &mut s_r, t.send);
+        let idx = track_index(t.key);
+        let Some(chs) = render.proc[idx].as_ready() else { continue };
+        pan_into(&mut l, &mut r, chs, t.pan, t.gain, &mut s_l, &mut s_r, t.send);
         if t.key == "lead" {
-            if let Some(o) = render.lead_delay.clone() {
+            if let Some(o) = render.lead_delay.as_deref() {
                 for i in 0..len {
                     l[i] = js::f32r(l[i] as f64 + o[i] as f64) as f32;
                     r[i] = js::f32r(r[i] as f64 + o[i] as f64) as f32;

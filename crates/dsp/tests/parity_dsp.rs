@@ -5,7 +5,7 @@
 //! (reverb, violin, the pluck/body loops) can amplify that, so small nonzero
 //! errors are expected and reported rather than chased.
 
-use dsp::body::body_ir_data;
+use dsp::body::{body_ir_data, Body};
 use dsp::dynamics::{compress, stereo_compress};
 use dsp::fft::conv_stereo;
 use dsp::filter::{bq, run_bq, FilterType};
@@ -97,7 +97,8 @@ fn run_bq_matches_js() {
         worst = js::max(worst, e);
     }
     println!("run_bq: worst relative max-abs-error over {} cases = {:.3e}", cases.len(), worst);
-    assert!(worst < 1e-6, "run_bq worst error {worst:.3e} exceeds 1e-6");
+    // Measured: exact (worst=0.000e0). f32r stores match JS Float32Array bit for bit.
+    assert_eq!(worst, 0.0, "run_bq worst error {worst:.3e}, expected exact");
 }
 
 #[test]
@@ -136,7 +137,8 @@ fn pluck_matches_js() {
         worst = js::max(worst, e);
     }
     println!("pluck: worst relative max-abs-error over {} cases = {:.3e}", cases.len(), worst);
-    assert!(worst < 1e-6, "pluck worst error {worst:.3e} exceeds 1e-6");
+    // Measured: exact (worst=0.000e0).
+    assert_eq!(worst, 0.0, "pluck worst error {worst:.3e}, expected exact");
 }
 
 #[test]
@@ -155,7 +157,8 @@ fn ks_pluck_matches_js() {
     let reference = read_bin("ks_pluck");
     let e = err_metric(&out, &reference);
     println!("ks_pluck: relative max-abs-error = {e:.3e}");
-    assert!(e < 1e-6, "ks_pluck error {e:.3e} exceeds 1e-6");
+    // Measured: exact (0.000e0).
+    assert_eq!(e, 0.0, "ks_pluck error {e:.3e}, expected exact");
 }
 
 #[test]
@@ -170,7 +173,7 @@ fn body_ir_data_matches_js() {
         let name = cc["name"].as_str().unwrap();
         let seed = cc["seed"].as_u64().unwrap();
         let n = cc["n"].as_u64().unwrap() as usize;
-        let ch = body_ir_data(name, seed as u32);
+        let ch = body_ir_data(Body::from_name(name), seed as u32);
         let ref_l = &all[off..off + n];
         off += n;
         let ref_r = &all[off..off + n];
@@ -180,7 +183,8 @@ fn body_ir_data_matches_js() {
         worst = js::max(worst, js::max(el, er));
     }
     println!("body_ir_data: worst relative max-abs-error over {} cases = {:.3e}", cases.len(), worst);
-    assert!(worst < 1e-6, "body_ir_data worst error {worst:.3e} exceeds 1e-6");
+    // Measured: exact (worst=0.000e0).
+    assert_eq!(worst, 0.0, "body_ir_data worst error {worst:.3e}, expected exact");
 }
 
 #[test]
@@ -206,7 +210,8 @@ fn conv_stereo_matches_js() {
     let el = err_metric(&y_l, y_l_ref);
     let er = err_metric(&y_r, y_r_ref);
     println!("conv_stereo: relative max-abs-error L={el:.3e} R={er:.3e}");
-    assert!(el < 1e-6 && er < 1e-6, "conv_stereo error L={el:.3e} R={er:.3e} exceeds 1e-6");
+    // Measured: exact (L=0.000e0, R=0.000e0).
+    assert_eq!((el, er), (0.0, 0.0), "conv_stereo error L={el:.3e} R={er:.3e}, expected exact");
 }
 
 #[test]
@@ -221,7 +226,8 @@ fn compress_matches_js() {
     compress(&mut x, c["thrDb"].as_f64().unwrap(), c["ratio"].as_f64().unwrap(), c["atk"].as_f64().unwrap(), c["rel"].as_f64().unwrap(), c["knee"].as_f64());
     let e = err_metric(&x, reference);
     println!("compress: relative max-abs-error = {e:.3e}");
-    assert!(e < 1e-6, "compress error {e:.3e} exceeds 1e-6");
+    // Measured: exact (0.000e0).
+    assert_eq!(e, 0.0, "compress error {e:.3e}, expected exact");
 }
 
 #[test]
@@ -240,7 +246,8 @@ fn stereo_compress_matches_js() {
     let el = err_metric(&l, ref_l);
     let er = err_metric(&r, ref_r);
     println!("stereo_compress: relative max-abs-error L={el:.3e} R={er:.3e}");
-    assert!(el < 1e-6 && er < 1e-6, "stereo_compress error L={el:.3e} R={er:.3e} exceeds 1e-6");
+    // Measured: exact (L=0.000e0, R=0.000e0).
+    assert_eq!((el, er), (0.0, 0.0), "stereo_compress error L={el:.3e} R={er:.3e}, expected exact");
 }
 
 #[test]
@@ -259,7 +266,9 @@ fn fdn_reverb_matches_js() {
     let el = err_metric(&out_l, ref_out_l);
     let er = err_metric(&out_r, ref_out_r);
     println!("fdn_reverb: relative max-abs-error L={el:.3e} R={er:.3e} (a recurrence: small input errors amplify)");
-    assert!(el < 1e-3 && er < 1e-3, "fdn_reverb error L={el:.3e} R={er:.3e} exceeds 1e-3");
+    // Measured: exact (L=0.000e0, R=0.000e0) now the FDN state buffers are f32,
+    // matching the JS Float32Array store points exactly.
+    assert_eq!((el, er), (0.0, 0.0), "fdn_reverb error L={el:.3e} R={er:.3e}, expected exact");
 }
 
 #[test]
@@ -284,7 +293,38 @@ fn render_violin_matches_js() {
     let reference = read_bin("render_violin");
     let e = err_metric(&out, &reference);
     println!("render_violin: relative max-abs-error = {e:.3e} (a waveguide recurrence: small errors amplify)");
-    assert!(e < 1e-3, "render_violin error {e:.3e} exceeds 1e-3");
+    // Measured: exact (0.000e0) after fixing del() to clamp only the input
+    // delay (not the post-wrap index), which had been corrupting in-range reads.
+    assert_eq!(e, 0.0, "render_violin error {e:.3e}, expected exact");
+}
+
+/// Wider `renderViolin` coverage: a note >=3s (the split path and its rng
+/// draw), several gaps >=0.06s (multiple phrases), a phrase cut off by
+/// `len`, and a second seed.
+#[test]
+fn render_violin_ex_matches_js() {
+    let idx = read_index();
+    let c = case(&idx, "render_violin_ex");
+    let len = c["len"].as_u64().unwrap() as usize;
+    let seed = c["seed"].as_u64().unwrap() as u32;
+    let notes: Vec<ViolinNote> = c["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| ViolinNote {
+            t0: n["t0"].as_f64().unwrap(),
+            t1: n["t1"].as_f64().unwrap(),
+            m: n["m"].as_f64().unwrap(),
+            v: n["v"].as_f64().unwrap(),
+            vib: n.get("vib").and_then(|v| v.as_f64()),
+        })
+        .collect();
+    let out = render_violin(&notes, len, seed);
+    let reference = read_bin("render_violin_ex");
+    let e = err_metric(&out, &reference);
+    println!("render_violin_ex: relative max-abs-error = {e:.3e}");
+    // Measured: exact (0.000e0).
+    assert_eq!(e, 0.0, "render_violin_ex error {e:.3e}, expected exact");
 }
 
 /// `burstTrack`/`buildRender` from tests/parity/dsp.js: deterministic noise
@@ -354,5 +394,84 @@ fn mix_song_matches_js() {
     let e_nh_r = err_metric(&m2.r, ref_nh_r);
     println!("mix_song: relative max-abs-error all=({e_all_l:.3e},{e_all_r:.3e}) no_harp=({e_nh_l:.3e},{e_nh_r:.3e})");
     let worst = [e_all_l, e_all_r, e_nh_l, e_nh_r].iter().cloned().fold(0.0, js::max);
-    assert!(worst < 1e-3, "mix_song worst error {worst:.3e} exceeds 1e-3");
+    // Measured: exact (all worst=0.000e0) now processTrack/mixSong keep every
+    // intermediate in f32 and the reverb state is f32 too.
+    assert_eq!(worst, 0.0, "mix_song worst error {worst:.3e}, expected exact");
+}
+
+/// `burstTrackLR`/`buildRenderEx` from tests/parity/dsp.js: per-channel rng
+/// streams so a stereo track's L and R genuinely differ.
+fn burst_track_lr(seed: u32, side: usize, len: usize) -> Vec<f32> {
+    let tag = format!("mixburstlr{side}");
+    let mut r = rng_for(seed, &tag);
+    let mut a = vec![0.0f32; len];
+    let starts: [f64; 3] = if side == 0 { [0.15, 1.2, 2.3] } else { [0.3, 1.5, 2.6] };
+    for &start in &starts {
+        let s0 = js::round(start * SR_F) as usize;
+        let n = js::round(0.25 * SR_F) as usize;
+        for i in 0..n {
+            if s0 + i >= len {
+                break;
+            }
+            let v = (r.next() * 2.0 - 1.0) * 0.3 * js::exp(-(i as f64) / (0.05 * SR_F));
+            a[s0 + i] = js::f32r(v) as f32;
+        }
+    }
+    a
+}
+
+/// Wider `mixSong` coverage: stereo tracks whose L and R genuinely differ,
+/// an all-zero track (bass), a guitar track run through the exact
+/// `bodyIRData`/`BODY_OF`/`convStereo` steps `renderSong` applies
+/// (engine.js ~line 948), and two mixes of the *same* `Render` with
+/// different enabled sets, which must reuse `processTrack`'s cache rather
+/// than recomputing (and must not copy the cached buffers).
+#[test]
+fn mix_song_ex_matches_js() {
+    let idx = read_index();
+    let c = case(&idx, "mix_song_ex");
+    let len = c["len"].as_u64().unwrap() as usize;
+    let seed = c["seed"].as_i64().unwrap();
+    let all = read_bin("mix_song_ex");
+    let ref_all_l = &all[0..len];
+    let ref_all_r = &all[len..2 * len];
+    let ref_nb_l = &all[2 * len..3 * len];
+    let ref_nb_r = &all[3 * len..4 * len];
+
+    let mut render = Render::new(len);
+    for t in TRACKS.iter() {
+        let stereo = matches!(t.key, "doubles" | "harmony" | "choir" | "hg" | "harp" | "violin");
+        let seed0 = 300 + t.key.len() as u32;
+        if t.key == "bass" {
+            render.set_track(t.key, vec![vec![0.0f32; len]]); // all-zero track
+        } else if stereo {
+            render.set_track(t.key, vec![burst_track_lr(seed0, 0, len), burst_track_lr(seed0, 1, len)]);
+        } else {
+            render.set_track(t.key, vec![burst_track_lr(seed0, 0, len)]);
+        }
+    }
+    // guitar: run through the exact body-convolution step renderSong applies.
+    {
+        let seed2 = 555u32;
+        let (body, off, scale) = dsp::mix::body_of("guitar").unwrap();
+        let x = burst_track_lr(300 + "guitar".len() as u32, 0, len);
+        let d = dsp::body::body_ir_data(body, (seed2 as f64 + off) as u32);
+        let hl: Vec<f32> = d[0].iter().map(|&v| (v as f64 / scale) as f32).collect();
+        let hr: Vec<f32> = d[1].iter().map(|&v| (v as f64 / scale) as f32).collect();
+        let (yl, yr) = conv_stereo(&x, &hl, &hr, len);
+        render.set_track("guitar", vec![yl, yr]);
+    }
+
+    let m1 = mix_song(&mut render, |_| true, seed, None);
+    let e_all_l = err_metric(&m1.l, ref_all_l);
+    let e_all_r = err_metric(&m1.r, ref_all_r);
+
+    let m2 = mix_song(&mut render, |t| t.key != "bass", seed, None); // same render: cache reuse
+    let e_nb_l = err_metric(&m2.l, ref_nb_l);
+    let e_nb_r = err_metric(&m2.r, ref_nb_r);
+
+    println!("mix_song_ex: relative max-abs-error all=({e_all_l:.3e},{e_all_r:.3e}) no_bass_cached=({e_nb_l:.3e},{e_nb_r:.3e})");
+    let worst = [e_all_l, e_all_r, e_nb_l, e_nb_r].iter().cloned().fold(0.0, js::max);
+    // Measured: exact (0.000e0).
+    assert_eq!(worst, 0.0, "mix_song_ex worst error {worst:.3e}, expected exact");
 }

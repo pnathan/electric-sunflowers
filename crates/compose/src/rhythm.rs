@@ -220,6 +220,28 @@ pub fn place_rhythm(stresses: &[bool], n_bars: usize, mi: &Meter, rng: &mut Rng,
         }
     }
 
+    // Deviation from JS: the JS backtrack has no guard here, so when no
+    // complete DP path is found (bestP stays -1) it reads bp[i][-1], which in
+    // JS is `undefined`, propagates as NaN through the arithmetic below, and
+    // reaches the renderer as NaN onsets/durs. Rust cannot index with -1, so
+    // fall back to the same even-spacing result the dense-line early return
+    // above already produces, rather than crash or propagate NaN.
+    if best_p < 0 {
+        let step = (s_total as f64 - beat_slots as f64 * 0.5) / n as f64;
+        let mut onsets = Vec::with_capacity(n);
+        let mut durs = Vec::with_capacity(n);
+        for i in 0..n {
+            onsets.push(i as f64 * step / beat_slots as f64);
+            durs.push(step / beat_slots as f64);
+        }
+        return RhythmResult {
+            onsets,
+            durs,
+            weights: vec![0.5; n],
+            line_beats: s_total as f64 / beat_slots as f64,
+        };
+    }
+
     let mut pos = vec![0i64; n];
     pos[n - 1] = best_p;
     for i in (1..n).rev() {
@@ -261,6 +283,28 @@ mod tests {
         assert_eq!(r.durs.len(), 8);
         assert_eq!(r.weights.len(), 8);
         // onsets non-decreasing
+        for i in 1..r.onsets.len() {
+            assert!(r.onsets[i] >= r.onsets[i - 1]);
+        }
+    }
+
+    #[test]
+    fn place_rhythm_no_complete_path_falls_back() {
+        // 4/4, 1 bar, 15 syllables (first unstressed, then alternating),
+        // dense enough to squeeze past the early-return threshold but leave
+        // the DP unable to complete a path to the last syllable: the JS
+        // would yield NaN onsets here. Must not panic, and must fall back
+        // to even spacing (weights all 0.5) as the dense-line branch does.
+        let mi = meter("4/4");
+        let mut stresses = vec![false];
+        for i in 0..14 {
+            stresses.push(i % 2 == 0);
+        }
+        let mut rng = rng_for(1, "test");
+        let r = place_rhythm(&stresses, 1, &mi, &mut rng, PrOpts::default());
+        assert_eq!(r.onsets.len(), 15);
+        assert_eq!(r.durs.len(), 15);
+        assert!(r.weights.iter().all(|&w| w == 0.5));
         for i in 1..r.onsets.len() {
             assert!(r.onsets[i] >= r.onsets[i - 1]);
         }

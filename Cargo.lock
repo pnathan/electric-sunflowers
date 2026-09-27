@@ -14,6 +14,7 @@ version = "0.1.0"
 dependencies = [
  "compose",
  "dsp",
+ "serde_json",
  "sfcore",
 ]
 
@@ -427,6 +428,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sfcore",
  "ureq",
 ]
 
@@ -537,6 +539,7 @@ version = "0.1.0"
 dependencies = [
  "compose",
  "dsp",
+ "serde_json",
  "sfcore",
 ]
 

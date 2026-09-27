@@ -83,4 +83,5 @@ fn v8math_bit_exact() {
     check_unary(&mut r, "log10", sfcore::js::log10);
     check_binary(&mut r, "pow", sfcore::js::pow);
     check_binary(&mut r, "atan2", sfcore::js::atan2);
+    check_unary(&mut r, "sign", sfcore::js::sign);
 }

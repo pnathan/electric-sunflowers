@@ -4,18 +4,33 @@
 //! Transcendental functions must go through this module, never `f64::sin` and friends
 //! directly. Measured against node 24 on 200k inputs plus hard cases
 //! (crates/core/tests/parity_math.rs, data from tests/parity/math.js): sin, cos, log,
-//! log2, log10, atan2 are bit-exact via the ported fdlibm/V8 algorithm in v8math.rs;
-//! exp and sqrt (libm) are bit-exact as-is; pow needed one JS-spec special case
-//! (see `pow` below) and is then bit-exact.
+//! log2, log10 are bit-exact via the ported fdlibm/V8 algorithm in v8math.rs; atan2
+//! (libm), exp and sqrt (libm) are bit-exact as-is; pow needed one JS-spec special
+//! case (see `pow` below) and is then bit-exact.
 
 /// `Math.round`: halves round toward +infinity.
+/// JS parity: Math.round preserves the sign of the input on a zero result
+/// (round(-0.4) is -0), so copy the sign onto the returned zero.
 #[inline]
 pub fn round(x: f64) -> f64 {
     let f = x.floor();
-    if x - f >= 0.5 {
-        f + 1.0
+    let r = if x - f >= 0.5 { f + 1.0 } else { f };
+    if r == 0.0 {
+        0.0_f64.copysign(x)
     } else {
-        f
+        r
+    }
+}
+
+/// `Math.sign`: NaN for NaN, x itself for +0/-0, else +-1.0.
+#[inline]
+pub fn sign(x: f64) -> f64 {
+    if x.is_nan() || x == 0.0 {
+        x
+    } else if x > 0.0 {
+        1.0
+    } else {
+        -1.0
     }
 }
 
@@ -59,14 +74,6 @@ pub fn cos(x: f64) -> f64 {
     crate::v8math::cos(x)
 }
 #[inline]
-pub fn tan(x: f64) -> f64 {
-    libm::tan(x)
-}
-#[inline]
-pub fn atan(x: f64) -> f64 {
-    libm::atan(x)
-}
-#[inline]
 pub fn atan2(y: f64, x: f64) -> f64 {
     libm::atan2(y, x)
 }
@@ -96,28 +103,19 @@ pub fn pow(x: f64, y: f64) -> f64 {
     }
     x.powf(y)
 }
-#[inline]
-pub fn tanh(x: f64) -> f64 {
-    x.tanh()
-}
-#[inline]
-pub fn sinh(x: f64) -> f64 {
-    libm::sinh(x)
-}
-#[inline]
-pub fn cosh(x: f64) -> f64 {
-    libm::cosh(x)
-}
-#[inline]
-pub fn expm1(x: f64) -> f64 {
-    libm::expm1(x)
-}
-
 /// `Math.max` over two values, with the JS NaN rule.
+/// JS parity: max(0, -0) is +0 (0 > -0 is false under IEEE, but Math.max
+/// special-cases +0 over -0), so a plain `a > b` comparison is not enough.
 #[inline]
 pub fn max(a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
         f64::NAN
+    } else if a == 0.0 && b == 0.0 {
+        if a.is_sign_negative() {
+            b
+        } else {
+            a
+        }
     } else if a > b {
         a
     } else {
@@ -126,10 +124,17 @@ pub fn max(a: f64, b: f64) -> f64 {
 }
 
 /// `Math.min` over two values, with the JS NaN rule.
+/// JS parity: min(0, -0) is -0.
 #[inline]
 pub fn min(a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
         f64::NAN
+    } else if a == 0.0 && b == 0.0 {
+        if a.is_sign_negative() {
+            a
+        } else {
+            b
+        }
     } else if a < b {
         a
     } else {
@@ -165,6 +170,30 @@ mod tests {
         assert_eq!(round(-2.5), -2.0);
         assert_eq!(round(0.49999999999999994), 0.0);
         assert_eq!(round(-0.4), 0.0);
+        assert!(round(-0.4).is_sign_negative());
+        assert!(round(-0.0).is_sign_negative());
+        assert!(!round(0.0).is_sign_negative());
+    }
+
+    #[test]
+    fn sign_matches_js() {
+        assert!(sign(f64::NAN).is_nan());
+        assert!(sign(0.0).is_sign_positive() && sign(0.0) == 0.0);
+        assert!(sign(-0.0).is_sign_negative() && sign(-0.0) == 0.0);
+        assert_eq!(sign(5.0), 1.0);
+        assert_eq!(sign(-5.0), -1.0);
+        assert_eq!(sign(f64::INFINITY), 1.0);
+        assert_eq!(sign(f64::NEG_INFINITY), -1.0);
+    }
+
+    #[test]
+    fn max_min_signed_zero_matches_js() {
+        assert!(max(0.0, -0.0).is_sign_positive());
+        assert!(max(-0.0, 0.0).is_sign_positive());
+        assert!(min(0.0, -0.0).is_sign_negative());
+        assert!(min(-0.0, 0.0).is_sign_negative());
+        assert!(max(f64::NAN, 1.0).is_nan());
+        assert!(min(1.0, f64::NAN).is_nan());
     }
 
     #[test]

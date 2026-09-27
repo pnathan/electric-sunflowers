@@ -114,8 +114,12 @@ pub fn song_prompt(
     let f = form_text(dir.form);
     let age = year - 1999;
 
+    // JS parity: `${voicePref&&voicePref!=='auto'?...:''}\n` -- the newline after the
+    // conditional is a literal part of the template, present even when the voice
+    // clause is empty, so it produces a blank line. `voice_line` holds only the
+    // conditional text; the trailing "\n" is added at the call site below.
     let voice_line = match voice_pref {
-        Some(v) if v != "auto" => format!("It will be sung by a {}.\n", v),
+        Some(v) if v != "auto" => format!("It will be sung by a {}.", v),
         _ => String::new(),
     };
     let world_line = match dir.world {
@@ -134,7 +138,8 @@ Folk song is work, courtship, dance, argument, praise and nonsense as often as i
 
 Write ONE complete, original folk song for this mood or prompt:
 """{mood}"""
-{voice_line}STYLE: {label}. Idiom: {idiom}.{world_line}
+{voice_line}
+STYLE: {label}. Idiom: {idiom}.{world_line}
 Write the whole song in this style: its form, meter, harmony and diction. Mode: {mode}. Meter: {meter}. Tempo: {tempo_lo} to {tempo_hi} bpm (the felt beat).
 
 EMOTIONAL REGISTER

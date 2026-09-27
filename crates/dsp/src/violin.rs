@@ -59,7 +59,7 @@ pub fn render_violin(notes: &[ViolinNote], len: usize, seed: u32) -> Vec<f32> {
     let mut out = vec![0.0f32; len];
 
     let mut src: Vec<ViolinNote> = notes.to_vec();
-    src.sort_by(|a, b| a.t0.partial_cmp(&b.t0).unwrap());
+    src.sort_by(|a, b| a.t0.total_cmp(&b.t0));
 
     let mut work: Vec<WNote> = Vec::new();
     for n in &src {
@@ -176,6 +176,14 @@ pub fn render_violin(notes: &[ViolinNote], len: usize, seed: u32) -> Vec<f32> {
         let ou_a = cr_f / SR_F;
         let ou = |x: f64, tau: f64, r: &mut Rng| -> f64 { x - x * ou_a / tau + (2.0 * ou_a / tau).sqrt() * r.gauss() };
         let del = |buf: &[f64], p: usize, d: f64| -> f64 {
+            // Deviation from JS: a delay `d` at or beyond MAXD makes `x` stay
+            // negative below (or land outside the buffer after wrap), which JS
+            // reads as `undefined` and turns into NaN through the whole render.
+            // Clamp `d` itself to MAXD-2 first, so the normal in-range math below
+            // is untouched (x still lands in [0,MAXD) exactly as JS computes it)
+            // and only a pathological note (below the delay line's frequency
+            // floor) gets a bounded, non-NaN read instead of one that ruins the mix.
+            let d = if d > maxd as f64 - 2.0 { maxd as f64 - 2.0 } else { d };
             let mut x = p as f64 - d;
             if x < 0.0 {
                 x += maxd as f64;

@@ -8,14 +8,14 @@ use crate::melody::{compose_melody, Comp, LeadNote};
 use crate::song::Song;
 use crate::theory::local_scale;
 use crate::timeline::Timeline;
-use crate::voices::choose_transpose;
+use crate::voices::{choose_transpose, Voice};
 
 /// prepare's return value: everything the renderer needs.
 pub struct Prepared {
     pub form: Form,
     pub timeline: Timeline,
     pub comp: Comp,
-    pub voice: String,
+    pub voice: Voice,
     pub key_shift: i32,
     pub tonic: i32,
 }
@@ -28,15 +28,15 @@ fn median_midi(notes: &[LeadNote]) -> i32 {
 
 /// prepare(song,seed,voiceKey): composes twice (original key, then
 /// transposed) and shifts octaves so the median lands where `chooseTranspose`
-/// wants it.
-pub fn prepare(song: &Song, seed: u32, voice_key: &str) -> Prepared {
+/// wants it. `voice_key` of `None` is JS's `'auto'`: use the song's own voice.
+pub fn prepare(song: &Song, seed: u32, voice_key: Option<Voice>) -> Prepared {
     // pass 1: compose in original key to decide transposition for this voice
     let mut form = build_form(song, 0);
     let mut tl = Timeline::new(&form, song.tempo);
     let mut comp = compose_melody(song, &mut form, &tl, seed);
 
-    let vk = if voice_key == "auto" { song.voice.clone() } else { voice_key.to_string() };
-    let tr = choose_transpose(&comp.lead, &vk);
+    let vk = voice_key.unwrap_or(song.voice);
+    let tr = choose_transpose(&comp.lead, vk);
     let semis = tr.rem_euclid(12);
     let key_shift = if semis > 6 { semis - 12 } else { semis };
 
@@ -176,8 +176,8 @@ mod tests {
     #[test]
     fn prepare_produces_ordered_note_times() {
         let s = song();
-        let p = prepare(&s, 99, "auto");
-        assert_eq!(p.voice, "baritone");
+        let p = prepare(&s, 99, None);
+        assert_eq!(p.voice, crate::voices::Voice::Baritone);
         assert!(!p.comp.lead.is_empty());
         for w in p.comp.lead.windows(2) {
             assert!(w[0].t0 <= w[0].t1 + 1e-9);
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn vocal_notes_applies_lift_and_stress_gain() {
         let s = song();
-        let p = prepare(&s, 99, "auto");
+        let p = prepare(&s, 99, None);
         let vn = vocal_notes(&p.comp.lead, 1.0);
         for (n, v) in p.comp.lead.iter().zip(vn.iter()) {
             let expect = (if n.stress { 1.0 } else { 0.86 }) * (if n.lift { 1.08 } else { 1.0 });
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn harmony_line_stays_in_scale() {
         let s = song();
-        let p = prepare(&s, 99, "auto");
+        let p = prepare(&s, 99, None);
         let hl = harmony_line(&p.comp.lead, &p.form, &p.timeline, &s, p.tonic, true);
         assert_eq!(hl.len(), p.comp.lead.len());
         for n in &hl {

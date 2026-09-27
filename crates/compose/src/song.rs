@@ -3,8 +3,10 @@
 
 use crate::phonetics::{is_vowel, ph_alias, ph_ok, g2p};
 use crate::theory::{meter, parse_pc, Meter};
+use crate::voices::Voice;
 use sfcore::js::clamp;
 use std::collections::HashSet;
+use std::str::FromStr;
 
 pub const SEC_TYPES: [&str; 7] = [
     "intro", "verse", "prechorus", "chorus", "bridge", "interlude", "outro",
@@ -33,6 +35,79 @@ pub struct Line {
     /// bars: each bar is up to 2 chord-name tokens
     pub bars: Vec<Vec<String>>,
     pub text: String,
+}
+
+/// JS parity: `str.slice(0,n)` counts UTF-16 code units, not bytes and not
+/// Unicode scalar values (a char outside the BMP is 2 code units). Rust
+/// `String::truncate` cuts by byte offset and panics off a char boundary, so
+/// walk chars, track UTF-16 width, and cut only at a char boundary.
+fn truncate_utf16(s: &str, max_units: usize) -> String {
+    let mut units = 0usize;
+    let mut end = s.len();
+    let mut found = false;
+    for (i, c) in s.char_indices() {
+        let w = c.len_utf16();
+        if units + w > max_units {
+            end = i;
+            found = true;
+            break;
+        }
+        units += w;
+    }
+    if !found {
+        end = s.len();
+    }
+    s[..end].to_string()
+}
+
+/// JS parity: `Number(x)` coercion, as needed for `Number(raw.tempo)||88`.
+/// undefined/missing -> NaN, null -> 0, booleans -> 1/0, numbers pass through,
+/// numeric strings (whitespace-trimmed) parse, empty string -> 0, anything
+/// else (other strings, arrays, objects) -> NaN. Good enough for the tempo
+/// field's realistic inputs; it does not replicate every ToPrimitive rule
+/// for exotic objects.
+fn js_number(v: &serde_json::Value) -> f64 {
+    match v {
+        serde_json::Value::Null => 0.0,
+        serde_json::Value::Bool(b) => if *b { 1.0 } else { 0.0 },
+        serde_json::Value::Number(n) => n.as_f64().unwrap_or(f64::NAN),
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                0.0
+            } else if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+                i64::from_str_radix(hex, 16).map(|v| v as f64).unwrap_or(f64::NAN)
+            } else {
+                match t {
+                    "Infinity" | "+Infinity" => f64::INFINITY,
+                    "-Infinity" => f64::NEG_INFINITY,
+                    _ => t.parse::<f64>().unwrap_or(f64::NAN),
+                }
+            }
+        }
+        _ => f64::NAN,
+    }
+}
+
+/// JS truthiness: false, null/undefined, 0, NaN and "" are falsy; every
+/// other value (including empty arrays/objects) is truthy.
+fn js_truthy(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Null => false,
+        serde_json::Value::Bool(b) => *b,
+        serde_json::Value::Number(n) => {
+            let f = n.as_f64().unwrap_or(f64::NAN);
+            f != 0.0 && !f.is_nan()
+        }
+        serde_json::Value::String(s) => !s.is_empty(),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => true,
+    }
+}
+
+/// JS parity: `x!==false` -- true for every value except the literal
+/// boolean `false` (missing/undefined included, since `undefined!==false`).
+fn js_not_false(v: &serde_json::Value) -> bool {
+    !matches!(v, serde_json::Value::Bool(false))
 }
 
 fn jval_str(v: &serde_json::Value) -> String {
@@ -178,7 +253,7 @@ pub struct Song {
     pub meter_name: String,
     pub tempo: f64,
     pub guitar: String,
-    pub voice: String,
+    pub voice: Voice,
     pub band: Band,
     pub sections: Vec<Section>,
 }
@@ -198,19 +273,34 @@ pub fn normalize_song(raw: &serde_json::Value) -> Result<Song, String> {
     if !raw.is_object() {
         return Err("bad_song".to_string());
     }
-    let mut title = jstr(raw, "title", "Untitled");
-    title.truncate(120);
-    let mut note = jstr(raw, "note", "");
-    note.truncate(400);
+    let title = truncate_utf16(&jstr(raw, "title", "Untitled"), 120);
+    let note = truncate_utf16(&jstr(raw, "note", ""), 400);
     let key_str = jstr(raw, "key", "C");
     let kp = parse_pc(&key_str);
     let key_pc = kp.map(|p| p.pc).unwrap_or(0);
     let mut mode = raw.get("mode").map(jval_str).unwrap_or_default().to_lowercase();
     let mode_valid = matches!(mode.as_str(), "major" | "minor" | "dorian" | "mixolydian");
     if !mode_valid {
+        // JS parity: `/m(?!aj)|minor/.test(String(raw.key||'').slice(kp?kp.len:0))`.
+        // Case-sensitive: matches a lowercase 'm' not immediately followed by
+        // "aj" (so "Dm" and "min" match, "maj" does not), or the literal
+        // "minor" (subsumed by the first alternative, since a "minor"'s 'm'
+        // is never followed by "aj"). No lowercasing of `rest`.
         let rest = &key_str[kp.map(|p| p.len).unwrap_or(0).min(key_str.len())..];
-        let re_minor = rest.to_lowercase();
-        let is_min = (re_minor.contains('m') && !re_minor.contains("maj")) || re_minor.contains("minor");
+        let bytes = rest.as_bytes();
+        let mut is_min = false;
+        for i in 0..bytes.len() {
+            if bytes[i] == b'm' {
+                let followed_by_aj = bytes.get(i + 1) == Some(&b'a') && bytes.get(i + 2) == Some(&b'j');
+                if !followed_by_aj {
+                    is_min = true;
+                    break;
+                }
+            }
+        }
+        if !is_min && rest.contains("minor") {
+            is_min = true;
+        }
         mode = if is_min { "minor".to_string() } else { "major".to_string() };
     }
     let meter_raw = raw.get("meter").map(jval_str).unwrap_or_default();
@@ -219,8 +309,11 @@ pub fn normalize_song(raw: &serde_json::Value) -> Result<Song, String> {
     } else {
         "4/4".to_string()
     };
-    let tempo_raw = raw.get("tempo").and_then(|v| v.as_f64()).unwrap_or(88.0);
-    let tempo_round = sfcore::js::round(if tempo_raw.is_finite() { tempo_raw } else { 88.0 });
+    // JS parity: `Math.round(Number(raw.tempo)||88)` -- `||` treats 0 and
+    // NaN (from missing/non-numeric input) as "use the default 88".
+    let tempo_num = raw.get("tempo").map(js_number).unwrap_or(f64::NAN);
+    let tempo_or_default = if tempo_num == 0.0 || tempo_num.is_nan() { 88.0 } else { tempo_num };
+    let tempo_round = sfcore::js::round(tempo_or_default);
     let (lo, hi) = if meter_name == "6/8" { (36.0, 84.0) } else { (52.0, 150.0) };
     let tempo = clamp(tempo_round, lo, hi);
     let guitar_raw = raw.get("guitar").map(jval_str).unwrap_or_default();
@@ -230,20 +323,12 @@ pub fn normalize_song(raw: &serde_json::Value) -> Result<Song, String> {
         "fingerpick".to_string()
     };
     let voice_raw = raw.get("voice").map(jval_str).unwrap_or_default();
-    let voice = if matches!(voice_raw.as_str(), "baritone" | "tenor" | "alto" | "soprano") {
-        voice_raw
-    } else {
-        "baritone".to_string()
+    let voice = match voice_raw.as_str() {
+        "baritone" | "tenor" | "alto" | "soprano" => Voice::from_str(&voice_raw).unwrap(),
+        _ => Voice::Baritone,
     };
     let bv = raw.get("band").cloned().unwrap_or(serde_json::Value::Null);
     let bget = |k: &str| bv.get(k).cloned().unwrap_or(serde_json::Value::Null);
-    let bbool = |k: &str, default: bool| -> bool {
-        match bget(k) {
-            serde_json::Value::Bool(b) => b,
-            serde_json::Value::Null => default,
-            _ => default,
-        }
-    };
     let drums_raw = bget("drums").as_str().unwrap_or("").to_string();
     let drums = if matches!(drums_raw.as_str(), "none" | "brushes" | "soft" | "full") {
         drums_raw
@@ -252,13 +337,13 @@ pub fn normalize_song(raw: &serde_json::Value) -> Result<Song, String> {
     };
     let band = Band {
         drums,
-        bass: bbool("bass", true),
-        harmony_guitar: bbool("harmonyGuitar", true),
-        harp: bbool("harp", false),
-        violin: bbool("violin", true),
-        choir: bbool("choir", true),
-        harmonies: bbool("harmonies", true),
-        doubles: bbool("doubles", true),
+        bass: js_not_false(&bget("bass")),
+        harmony_guitar: js_not_false(&bget("harmonyGuitar")),
+        harp: js_truthy(&bget("harp")),
+        violin: js_not_false(&bget("violin")),
+        choir: js_not_false(&bget("choir")),
+        harmonies: js_not_false(&bget("harmonies")),
+        doubles: js_not_false(&bget("doubles")),
     };
 
     let mut secs: Vec<Section> = Vec::new();
@@ -284,7 +369,7 @@ pub fn normalize_song(raw: &serde_json::Value) -> Result<Song, String> {
                 "verse".to_string()
             };
         }
-        let same = s.get("same").and_then(|v| v.as_bool()).unwrap_or(false);
+        let same = js_truthy(&s.get("same").cloned().unwrap_or(serde_json::Value::Null));
         if same {
             if let Some(&idx) = last_by_type.get(&type_) {
                 let (lines, bars) = (secs[idx].lines.clone(), secs[idx].bars.clone());
@@ -372,6 +457,60 @@ mod tests {
     fn normalize_rejects_no_lyrics() {
         let raw = json!({"sections":[{"type":"intro","chords":"C G"}]});
         assert!(normalize_song(&raw).is_err());
+    }
+
+    fn one_line_song(extra: serde_json::Value) -> serde_json::Value {
+        let mut v = json!({
+            "sections":[{"type":"verse","lines":[{"syl":"one *two *three *four","chords":"C"}]}]
+        });
+        for (k, val) in extra.as_object().unwrap() {
+            v.as_object_mut().unwrap().insert(k.clone(), val.clone());
+        }
+        v
+    }
+
+    #[test]
+    fn title_truncates_by_utf16_units_never_splits_a_char() {
+        // 119 ASCII 'a's (119 UTF-16 units) then one astral emoji (2 units):
+        // 121 units total. JS `slice(0,120)` would land inside the
+        // surrogate pair; the port must exclude that whole char instead.
+        let title = "a".repeat(119) + "\u{1F600}";
+        let raw = one_line_song(json!({"title": title}));
+        let s = normalize_song(&raw).unwrap();
+        assert_eq!(s.title, "a".repeat(119));
+        assert_eq!(s.title.encode_utf16().count(), 119);
+    }
+
+    #[test]
+    fn tempo_number_coercion_matches_js() {
+        let cases: [(serde_json::Value, f64); 5] = [
+            (json!("96"), 96.0),
+            (json!(0), 88.0),
+            (json!(true), 52.0), // Number(true)=1, clamped to the 4/4 floor 52
+            (json!(null), 88.0),
+            (json!("abc"), 88.0),
+        ];
+        for (tempo, want) in cases {
+            let raw = one_line_song(json!({"tempo": tempo}));
+            let s = normalize_song(&raw).unwrap();
+            assert_eq!(s.tempo, want, "tempo input {tempo:?}");
+        }
+    }
+
+    #[test]
+    fn mode_guess_regex_matches_js_cases() {
+        let cases = [
+            ("Dm", "minor"),
+            ("D Minor", "major"),      // capital M: no lowercase 'm' match
+            ("C Mixolydian", "major"), // no lowercase 'm' at all
+            ("C maj/min", "minor"),    // "maj" doesn't match, "min"'s m does
+            ("Bbm", "minor"),
+        ];
+        for (key, want) in cases {
+            let raw = one_line_song(json!({"key": key}));
+            let s = normalize_song(&raw).unwrap();
+            assert_eq!(s.mode, want, "key {key:?}");
+        }
     }
 
     #[test]

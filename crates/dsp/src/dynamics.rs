@@ -1,5 +1,6 @@
 //! `compress`, `stereoCompress`, `dbOf` (engine.js lines ~1154-1162).
 
+use crate::or_default;
 use sfcore::js;
 use sfcore::SR_F;
 
@@ -13,7 +14,9 @@ pub fn db_of(v: f64) -> f64 {
 pub fn compress(x: &mut [f32], thr_db: f64, ratio: f64, atk: f64, rel: f64, knee: Option<f64>) {
     let ga = js::exp(-1.0 / (atk * SR_F));
     let gr = js::exp(-1.0 / (rel * SR_F));
-    let kn = knee.unwrap_or(6.0);
+    // JS parity: `const kn=knee||6` — knee is a plain f64 falsy read, not an
+    // Option; `None` here plays the role of an absent/0/NaN JS argument.
+    let kn = or_default(knee.unwrap_or(0.0), 6.0);
     let mut env = 0.0f64;
     let mut g = 1.0f64;
     for i in 0..x.len() {

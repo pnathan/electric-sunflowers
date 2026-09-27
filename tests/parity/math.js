@@ -2,7 +2,7 @@
 // hard cases (tiny, huge, near multiples of pi/2, near 1 for log, negative/
 // zero/inf/nan) for every transcendental Math function src/engine.js uses
 // that is not already known bit-exact via libm/std (sin, cos, log, log2,
-// log10) plus pow and atan2 for completeness.
+// log10) plus pow, atan2 and sign for completeness.
 //
 // Binary format written to ref/parity/math.bin:
 //   for each function in FUNCS, in order:
@@ -70,6 +70,12 @@ const atan2Hard = [
   [-Infinity, Infinity], [NaN, 1], [1, NaN],
 ];
 
+const signHard = [
+  0, -0, 1, -1, NaN, Infinity, -Infinity, 1e-300, -1e-300, Number.MIN_VALUE,
+  -Number.MIN_VALUE, Number.MAX_VALUE, -Number.MAX_VALUE,
+];
+const signRanges = [[-1e6, 1e6], [-1, 1], [-1e300, 1e300]];
+
 function dumpUnary(buf, fn, xs) {
   const header = Buffer.alloc(4);
   header.writeUInt32LE(xs.length, 0);
@@ -109,6 +115,7 @@ dumpUnary(buf, Math.log2, buildUnaryInputs(logHard, logRanges));
 dumpUnary(buf, Math.log10, buildUnaryInputs(logHard, logRanges));
 dumpBinary(buf, Math.pow, powHard, [[[0.001, 100], [-10, 10]], [[1e-10, 1e10], [-2, 2]]]);
 dumpBinary(buf, Math.atan2, atan2Hard, [[[-100, 100], [-100, 100]], [[-1e10, 1e10], [-1e10, 1e10]]]);
+dumpUnary(buf, Math.sign, buildUnaryInputs(signHard, signRanges));
 
 const outDir = path.join(__dirname, '../../ref/parity');
 fs.mkdirSync(outDir, { recursive: true });

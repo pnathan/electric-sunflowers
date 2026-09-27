@@ -27,6 +27,26 @@ const BLUES_SONG = {
     { type: 'outro', chords: ['E7', 'A7', 'E7', 'E7'] }]
 };
 
+// Verse growth: verse 1 has 2 lines, verse 2 has 4 -- exercises the
+// reference-melody fallback for a later occurrence's line with no
+// first-occurrence entry at that line index.
+const VERSE_GROWTH_SONG = {
+  title: 'Verse Growth', note: '', key: 'C', mode: 'major', meter: '4/4', tempo: 96, guitar: 'fingerpick', voice: 'baritone',
+  band: { drums: 'brushes', bass: true, harmonyGuitar: true, harp: false, violin: false, choir: false, harmonies: false, doubles: false },
+  sections: [
+    { type: 'verse', lines: [
+      L('one *two *three *four', 'w ah n|t uw|th r iy|f ao r', ['C', 'G']),
+      L('five *six *seven *eight', 'f ay v|s ih k s|s eh v ax n|ey t', ['Am', 'F']),
+    ] },
+    { type: 'verse', lines: [
+      L('one *two *three *four', 'w ah n|t uw|th r iy|f ao r', ['C', 'G']),
+      L('five *six *seven *eight', 'f ay v|s ih k s|s eh v ax n|ey t', ['Am', 'F']),
+      L('nine *ten e*leven *twelve', 'n ay n|t eh n|ax|l eh v ax n|t w eh l v', ['C', 'G']),
+      L('thir*teen four*teen fif*teen', 'th er|t iy n|f ao r|t iy n|f ih f|t iy n', ['Am', 'F']),
+    ] },
+  ],
+};
+
 // Malformed / edge-case normalizeSong inputs.
 const MALFORMED = {
   missing_ph: {
@@ -64,6 +84,23 @@ const MALFORMED = {
     key: 'D', mode: 'major', meter: '6/8', tempo: 90,
     sections: [{ type: 'verse', lines: [{ syl: '*row row row your *boat', ph: 'r ow|r ow|r ow|y or|b ow t', chords: 'D A D' }] }],
   },
+  tempo_string: {
+    key: 'C', mode: 'major', meter: '4/4', tempo: '96',
+    sections: [{ type: 'verse', lines: [{ syl: 'one *two *three *four', ph: 'w ah n|t uw|th r iy|f ao r', chords: 'C G' }] }],
+  },
+  tempo_zero: {
+    key: 'C', mode: 'major', meter: '4/4', tempo: 0,
+    sections: [{ type: 'verse', lines: [{ syl: 'one *two *three *four', ph: 'w ah n|t uw|th r iy|f ao r', chords: 'C G' }] }],
+  },
+  // 119 ASCII 'a's (119 UTF-16 code units) then one astral emoji (2 code
+  // units, a surrogate pair): total 121 code units. slice(0,120) in JS lands
+  // inside that surrogate pair; the Rust port must not cut there, so this
+  // exercises the "exclude the whole character rather than split it" rule.
+  nonascii_title: {
+    title: 'a'.repeat(119) + '\uD83D\uDE00',
+    key: 'C', mode: 'major', meter: '4/4', tempo: 100,
+    sections: [{ type: 'verse', lines: [{ syl: 'one *two *three *four', ph: 'w ah n|t uw|th r iy|f ao r', chords: 'C G' }] }],
+  },
 };
 
 function dumpSections(form) {
@@ -98,7 +135,8 @@ function dumpPrepared(song, seed, voiceKey) {
   const p = prepare(song, seed, voiceKey);
   const { form, tl, comp, voice, keyShift, tonic } = p;
   const vn = vocalNotes(comp.lead, 1.0);
-  const hl = harmonyLine(comp.lead, tl, song, tonic, true);
+  const hlUp = harmonyLine(comp.lead, tl, song, tonic, true);
+  const hlDown = harmonyLine(comp.lead, tl, song, tonic, false);
   return {
     voice, keyShift, tonic,
     sections: dumpSections(form),
@@ -111,11 +149,12 @@ function dumpPrepared(song, seed, voiceKey) {
       phraseStart: v.phraseStart, phraseEnd: v.phraseEnd,
       grace: v.grace === null || v.grace === undefined ? null : v.grace, stress: v.stress,
     })),
-    harmonyLine: hl.map(n => ({ beat: n.beat, midi: n.midi, grace: n.grace })),
+    harmonyLine: hlUp.map(n => ({ beat: n.beat, midi: n.midi, grace: n.grace })),
+    harmonyLineDown: hlDown.map(n => ({ beat: n.beat, midi: n.midi, grace: n.grace })),
   };
 }
 
-const out = { demo: {}, blues: {}, malformed: {} };
+const out = { demo: {}, blues: {}, malformed: {}, verseGrowth: {} };
 
 const demoSong = normalizeSong(JSON.parse(JSON.stringify(DEMO_SONG)));
 for (const seed of [1234, 1, 777777, 4294967295]) {
@@ -127,6 +166,9 @@ for (const v of ['alto', 'soprano', 'tenor']) {
 
 const bluesSong = normalizeSong(JSON.parse(JSON.stringify(BLUES_SONG)));
 out.blues['auto|1234'] = dumpPrepared(bluesSong, 1234, 'auto');
+
+const verseGrowthSong = normalizeSong(JSON.parse(JSON.stringify(VERSE_GROWTH_SONG)));
+out.verseGrowth['auto|1234'] = dumpPrepared(verseGrowthSong, 1234, 'auto');
 
 for (const [name, raw] of Object.entries(MALFORMED)) {
   try {

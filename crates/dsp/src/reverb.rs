@@ -13,7 +13,7 @@ pub fn fdn_reverb(in_l: &[f32], in_r: &[f32], out_l: &mut [f32], out_r: &mut [f3
     let d: Vec<usize> = d_base.iter().map(|&x| (x + (seed.wrapping_mul(x % 7)) % 31) as usize).collect();
     let t60_lo = 2.2f64;
     let t60_hi = 0.8f64;
-    let mut lines: Vec<Vec<f64>> = d.iter().map(|&dd| vec![0.0f64; dd]).collect();
+    let mut lines: Vec<Vec<f32>> = d.iter().map(|&dd| vec![0.0f32; dd]).collect();
     let mut pos = vec![0usize; 8];
     let mut z = vec![0.0f64; 8];
     let a: Vec<(f64, f64)> = d
@@ -26,14 +26,14 @@ pub fn fdn_reverb(in_l: &[f32], in_r: &[f32], out_l: &mut [f32], out_r: &mut [f3
         })
         .collect();
 
-    let mut a0 = vec![0.0f64; 142];
-    let mut a1 = vec![0.0f64; 379];
-    let mut a2 = vec![0.0f64; 107];
-    let mut a3 = vec![0.0f64; 277];
+    let mut a0 = vec![0.0f32; 142];
+    let mut a1 = vec![0.0f32; 379];
+    let mut a2 = vec![0.0f32; 107];
+    let mut a3 = vec![0.0f32; 277];
     let (mut ia0, mut ia1, mut ia2, mut ia3) = (0usize, 0usize, 0usize, 0usize);
 
     let pre = js::round(0.016 * SR_F) as usize;
-    let mut pb = vec![0.0f64; pre.max(1)];
+    let mut pb = vec![0.0f32; pre.max(1)];
     let mut pp = 0usize;
     let hp = bq(FilterType::Hp, 220.0, 0.7, 0.0);
     let (mut hx1, mut hx2, mut hy1, mut hy2) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
@@ -48,8 +48,8 @@ pub fn fdn_reverb(in_l: &[f32], in_r: &[f32], out_l: &mut [f32], out_r: &mut [f3
         hy1 = y;
         x = y;
 
-        let dl = pb[pp];
-        pb[pp] = x;
+        let dl = pb[pp] as f64;
+        pb[pp] = js::f32r(x) as f32;
         pp += 1;
         if pp == pre.max(1) {
             pp = 0;
@@ -57,33 +57,33 @@ pub fn fdn_reverb(in_l: &[f32], in_r: &[f32], out_l: &mut [f32], out_r: &mut [f3
         x = dl;
 
         {
-            let v = a0[ia0];
+            let v = a0[ia0] as f64;
             let w = x + 0.65 * v;
-            a0[ia0] = w;
+            a0[ia0] = js::f32r(w) as f32;
             ia0 += 1;
             if ia0 == 142 {
                 ia0 = 0;
             }
             x = v - 0.65 * w;
-            let v = a1[ia1];
+            let v = a1[ia1] as f64;
             let w = x + 0.62 * v;
-            a1[ia1] = w;
+            a1[ia1] = js::f32r(w) as f32;
             ia1 += 1;
             if ia1 == 379 {
                 ia1 = 0;
             }
             x = v - 0.62 * w;
-            let v = a2[ia2];
+            let v = a2[ia2] as f64;
             let w = x + 0.6 * v;
-            a2[ia2] = w;
+            a2[ia2] = js::f32r(w) as f32;
             ia2 += 1;
             if ia2 == 107 {
                 ia2 = 0;
             }
             x = v - 0.6 * w;
-            let v = a3[ia3];
+            let v = a3[ia3] as f64;
             let w = x + 0.58 * v;
-            a3[ia3] = w;
+            a3[ia3] = js::f32r(w) as f32;
             ia3 += 1;
             if ia3 == 277 {
                 ia3 = 0;
@@ -93,7 +93,7 @@ pub fn fdn_reverb(in_l: &[f32], in_r: &[f32], out_l: &mut [f32], out_r: &mut [f3
 
         let mut sum = 0.0f64;
         for k in 0..8 {
-            let v = lines[k][pos[k]];
+            let v = lines[k][pos[k]] as f64;
             z[k] = a[k].0 * v + a[k].1 * z[k];
             o[k] = z[k];
             sum += z[k];
@@ -103,7 +103,7 @@ pub fn fdn_reverb(in_l: &[f32], in_r: &[f32], out_l: &mut [f32], out_r: &mut [f3
         for k in 0..8 {
             let ln = &mut lines[k];
             let val = o[k] - h + x * (if k & 1 != 0 { 0.5 } else { 0.5 }) + (if k & 2 != 0 { side } else { -side });
-            ln[pos[k]] = val;
+            ln[pos[k]] = js::f32r(val) as f32;
             pos[k] += 1;
             if pos[k] == ln.len() {
                 pos[k] = 0;

@@ -152,6 +152,23 @@ function noise(n, seed) {
   writeF32('render_violin', [out]);
   index.cases.push({ name: 'render_violin', kernel: 'violin::render_violin', notes, len, seed: 42 });
 }
+{
+  // Wider coverage: a note >=3s (exercises the k=ceil(d/(1.6+rng*.6)) split
+  // path and its rng draw), several gaps >=0.06s (multiple phrases), a
+  // phrase cut off by `len` (the last note's tail never gets to render),
+  // and a second seed.
+  const notes = [
+    { t0: 0.0, t1: 3.2, m: 57, v: 0.6 },       // >=3s: split path
+    { t0: 3.35, t1: 3.9, m: 62, v: 0.5 },      // gap 0.15 >= 0.06: new phrase
+    { t0: 4.05, t1: 4.5, m: 66, v: 0.7, vib: 0 }, // gap 0.15 >= 0.06: new phrase
+    { t0: 4.6, t1: 5.6, m: 71, v: 0.55 },      // gap 0.10 >= 0.06: new phrase, long
+    { t0: 5.7, t1: 6.6, m: 64, v: 0.6 },       // gap 0.10 >= 0.06: new phrase, cut off by len
+  ];
+  const len = Math.round(6.2 * SR); // shorter than notes[4].t1=6.6: phrase is cut off
+  const out = renderViolin(notes, len, 314);
+  writeF32('render_violin_ex', [out]);
+  index.cases.push({ name: 'render_violin_ex', kernel: 'violin::render_violin', notes, len, seed: 314 });
+}
 
 // ---------------- mixSong ----------------
 {
@@ -197,6 +214,57 @@ function noise(n, seed) {
       variants: [{ label: 'all', enabled: 'all tracks' }, { label: 'no_harp', enabled: 'all but harp' }],
       layout: 'all.L, all.R, no_harp.L, no_harp.R, each len samples',
     });
+
+    // ---------------- mixSong, extended coverage ----------------
+    // Stereo tracks whose L and R genuinely differ (not one channel scaled
+    // from the other), a track that is all zeros (activeRms silent path),
+    // a guitar track run through the exact bodyIRData/BODY_OF/convStereo
+    // steps renderSong applies (engine.js ~line 948), and two mixes of the
+    // *same* render with different enabled sets (exercises the processTrack
+    // cache: the second mix must reuse what the first computed).
+    const len2 = Math.round(3 * SR);
+    const seed2 = 555;
+    function burstTrackLR(seed, side) {
+      // side shifts the noise-burst timing per channel so L != R structurally,
+      // not just in level.
+      const a = new Float32Array(len2);
+      const r = rngFor(seed, 'mixburstlr' + side);
+      const starts = side === 0 ? [0.15, 1.2, 2.3] : [0.3, 1.5, 2.6];
+      for (const start of starts) {
+        const s0 = Math.round(start * SR), n = Math.round(0.25 * SR);
+        for (let i = 0; i < n && s0 + i < len2; i++) a[s0 + i] = (r() * 2 - 1) * 0.3 * Math.exp(-i / (0.05 * SR));
+      }
+      return a;
+    }
+    function buildRenderEx() {
+      const tracks = {};
+      for (const T of TRACKS) {
+        const stereo = T.key === 'doubles' || T.key === 'harmony' || T.key === 'choir' || T.key === 'hg' || T.key === 'harp' || T.key === 'violin';
+        if (T.key === 'bass') { tracks[T.key] = [new Float32Array(len2)]; continue; } // all-zero track
+        tracks[T.key] = stereo ? [burstTrackLR(300 + T.key.length, 0), burstTrackLR(300 + T.key.length, 1)] : [burstTrackLR(300 + T.key.length, 0)];
+      }
+      // guitar: run through the same body-convolution step renderSong applies.
+      {
+        const x = tracks.guitar[0];
+        const bk = BODY_OF.guitar;
+        const d = bodyIRData(bk[0], seed2 + bk[1]);
+        tracks.guitar = convStereo(x, d[0].map(v => v / bk[2]), d[1].map(v => v / bk[2]), len2);
+      }
+      return { tracks, len: len2 };
+    }
+
+    const renderEx = buildRenderEx();
+    const exAll = await mixSong(renderEx, allOn, seed2, null);
+    const exNoBass = await mixSong(renderEx, T => T.key !== 'bass', seed2, null); // reuses renderEx.proc cache
+    writeF32('mix_song_ex', [exAll.L, exAll.R, exNoBass.L, exNoBass.R]);
+    index.cases.push({
+      name: 'mix_song_ex', kernel: 'mix::mix_song', len: len2, seed: seed2,
+      track_keys: TRACKS.map(T => T.key),
+      variants: [{ label: 'all', enabled: 'all tracks, same render object' }, { label: 'no_bass_cached', enabled: 'all but bass (all-zero anyway), same render object as `all` (cache reuse)' }],
+      layout: 'all.L, all.R, no_bass_cached.L, no_bass_cached.R, each len samples',
+      notes: 'stereo tracks have distinct L/R content; bass is all-zero; guitar is body-convolved exactly as renderSong does',
+    });
+
     fs.writeFileSync(path.join(OUT, 'index.json'), JSON.stringify(index, null, 1));
     console.log('wrote', index.cases.length, 'dsp parity cases to', OUT);
   })();
