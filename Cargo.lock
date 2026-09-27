@@ -78,6 +78,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine"
+version = "0.1.0"
+dependencies = [
+ "arrange",
+ "compose",
+ "dsp",
+ "serde_json",
+ "sfcore",
+ "voice",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -448,6 +460,8 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 name = "sunflower"
 version = "0.1.0"
 dependencies = [
+ "compose",
+ "engine",
  "serde_json",
  "sfcore",
  "songwriter",

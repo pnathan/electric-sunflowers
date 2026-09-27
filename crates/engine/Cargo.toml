@@ -1,5 +1,5 @@
 [package]
-name = "sunflower"
+name = "engine"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 sfcore = { path = "../core" }
 compose = { path = "../compose" }
-engine = { path = "../engine" }
-songwriter = { path = "../songwriter" }
+dsp = { path = "../dsp" }
+voice = { path = "../voice" }
+arrange = { path = "../arrange" }
 serde_json.workspace = true
