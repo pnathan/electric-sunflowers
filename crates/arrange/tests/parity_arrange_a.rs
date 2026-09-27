@@ -3,14 +3,18 @@
 //!
 //! Guitar, bass and harp all draw from the same `Rng` stream JS uses
 //! (`rngFor(seed,'gtr'|'bass'|'harp')`) and route every draw through
-//! `sfcore::js`. Measured: guitar is bit-exact (err 0) on every case, now
-//! that the sympathetic-string accumulator rounds the f64 sum once instead
-//! of twice; harp is bit-exact too. Bass sits at up to 8.2e-8 (head and
-//! full-duration strided samples alike), from `sfcore::js`'s sin/exp being
-//! up to 1 ulp off V8's. `TOL` (1e-6, an order of magnitude above the
-//! measured bass/harp worst case) covers bass and harp; `TOL_GUITAR` (1e-9)
-//! covers guitar, tight enough to catch a regression back to double
-//! rounding but not so tight that harmless fp reordering fails the build.
+//! `sfcore::js`. Measured: guitar, bass and harp are all bit-exact (err 0)
+//! on every case. Bass's earlier 8.2e-8 was misdiagnosed as `sfcore::js`
+//! sin/exp being 1 ulp off V8 -- they are bit-exact with node on 300k
+//! probes (crates/core/examples/wideprobe.rs) -- the real cause was the
+//! sine-tail loop advancing `ph` and testing `idx<0` in the wrong order
+//! relative to JS's `for(i=0;i<L&&s+i<len;i++)`, plus a double f32
+//! rounding on the accumulate; both are fixed in bass.rs. `TOL` (1e-6)
+//! still covers harp's f64 transcendental chain against the f32 dump, and
+//! `TOL_GUITAR` (1e-9) covers guitar, tight enough to catch a regression
+//! back to double rounding but not so tight that harmless fp reordering
+//! fails the build. `TOL_BASS` is exact (0.0) now that the loop and the
+//! accumulate both match JS exactly.
 //! Each buffer is checked two ways: the first 20 s in
 //! full, plus every 97th sample (a prime stride, so it cannot alias any of
 //! the engine's periodic structure) across the whole buffer, so a real
@@ -84,10 +88,14 @@ const SEED: u32 = 1234;
 // exact equality so a future genuinely negligible fp reordering does not
 // fail the build over noise, but any measured error here is a regression.
 const TOL_GUITAR: f64 = 1e-9;
-// Bass and harp route through sfcore::js's sin/exp, which are up to 1 ulp
-// off V8's; measured worst case here is 8.2e-8 (bass). TOL is an order of
-// magnitude above that.
+// Harp routes through sfcore::js's sin/exp against an f32-dumped reference;
+// measured worst case here is far below this.
 const TOL: f64 = 1e-6;
+// Bass is bit-exact against the JS reference (measured 0 on every case,
+// head and full-duration strided samples alike) now that the sine-tail
+// loop's bounds check and phase advance are ordered like JS's
+// `for(i=0;i<L&&s+i<len;i++)` and the accumulate rounds once, not twice.
+const TOL_BASS: f64 = 0.0;
 
 /// Loads the exact song literal tests/parity/arrange_a.js dumped
 /// (`JSON.stringify`d verbatim from tests/formtest.js / src/demo.js), so the
@@ -128,7 +136,13 @@ fn check_song(case_name: &str, raw: &Value) {
     let h = gen_harp(&song, &form, &tl, SEED);
 
     for (label, rust, info_key) in [("guitar", &g, "guitar_info"), ("bass", &b, "bass_info"), ("harp", &h, "harp_info")] {
-        let tol = if label == "guitar" { TOL_GUITAR } else { TOL };
+        let tol = if label == "guitar" {
+            TOL_GUITAR
+        } else if label == "bass" {
+            TOL_BASS
+        } else {
+            TOL
+        };
         let info = &c[info_key];
         let full_len = info["full_len"].as_u64().unwrap() as usize;
         let dumped_len = info["dumped_len"].as_u64().unwrap() as usize;
@@ -138,13 +152,13 @@ fn check_song(case_name: &str, raw: &Value) {
         let bin_name = format!("{case_name}_{label}");
         let head = read_bin(&bin_name);
         let err = err_metric(&rust[..dumped_len], &head);
-        assert!(err < tol, "{case_name}/{label}: head err {err} >= {tol}");
+        assert!(err <= tol, "{case_name}/{label}: head err {err} > {tol}");
 
         let stride_bin = format!("{case_name}_{label}_stride");
         let ref_strided = read_bin(&stride_bin);
         let rust_strided = strided(rust, stride);
         let err2 = err_metric(&rust_strided, &ref_strided);
-        assert!(err2 < tol, "{case_name}/{label}: strided full-duration err {err2} >= {tol}");
+        assert!(err2 <= tol, "{case_name}/{label}: strided full-duration err {err2} > {tol}");
     }
 }
 

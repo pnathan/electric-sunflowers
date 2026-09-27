@@ -6,6 +6,7 @@ use crate::body::Body;
 use crate::dynamics::{compress, db_of, stereo_compress};
 use crate::filter::{bq, run_bq, FilterType};
 use crate::reverb::fdn_reverb;
+use rayon::prelude::*;
 use sfcore::js;
 use sfcore::{SR, SR_F};
 
@@ -152,23 +153,14 @@ impl Render {
     }
 }
 
-/// `processTrack(render,T)`: per-track EQ, gain-to-target and (lead/harmony)
-/// compression, cached on `render.proc`; the raw track is taken (removed)
-/// from `render.tracks` and processed in place, never copied.
-pub fn process_track(render: &mut Render, t: &TrackSpec) {
-    let idx = track_index(t.key);
-    if !matches!(render.proc[idx], ProcSlot::Empty) {
-        return;
-    }
-    let mut chs = match render.tracks[idx].take() {
-        Some(c) => c,
-        None => {
-            render.proc[idx] = ProcSlot::Silent;
-            return;
-        }
-    };
-
-    for &(ty, f, q, g) in eq_for(t.key) {
+/// The pure, per-track half of `processTrack`: EQ, gain-to-target and
+/// (lead/harmony) compression, plus the lead's slapback tail. Depends only
+/// on its own input channels, so this is what the threaded mix path runs
+/// in parallel; `process_track`/`process_tracks_threaded` below are the
+/// two ways of getting a track's raw channels into this function and its
+/// result back into `Render`'s cache.
+fn compute_track(key: &str, mut chs: Vec<Vec<f32>>) -> (ProcSlot, Option<Vec<f32>>) {
+    for &(ty, f, q, g) in eq_for(key) {
         let co = bq(ty, f, q, g);
         for c in chs.iter_mut() {
             run_bq(c, &co);
@@ -180,8 +172,7 @@ pub fn process_track(render: &mut Render, t: &TrackSpec) {
         rms = js::max(rms, active_rms(c));
     }
     if rms < 1e-6 {
-        render.proc[idx] = ProcSlot::Silent;
-        return;
+        return (ProcSlot::Silent, None);
     }
     let g0 = 0.1 / rms;
     for c in chs.iter_mut() {
@@ -190,13 +181,14 @@ pub fn process_track(render: &mut Render, t: &TrackSpec) {
         }
     }
 
-    if t.key == "lead" || t.key == "harmony" {
+    if key == "lead" || key == "harmony" {
         for c in chs.iter_mut() {
             compress(c, db_of(0.1) + 1.0, 3.0, 0.008, 0.15, Some(6.0));
         }
     }
 
-    if t.key == "lead" {
+    let mut lead_delay = None;
+    if key == "lead" {
         // slapback into the reverb and bus, computed once
         let x = &chs[0];
         let dl = js::round(0.34 * SR_F) as usize;
@@ -217,10 +209,72 @@ pub fn process_track(render: &mut Render, t: &TrackSpec) {
         for v in o.iter_mut() {
             *v = js::f32r(*v as f64 * 0.07) as f32;
         }
-        render.lead_delay = Some(o);
+        lead_delay = Some(o);
     }
 
-    render.proc[idx] = ProcSlot::Ready(chs);
+    (ProcSlot::Ready(chs), lead_delay)
+}
+
+/// `processTrack(render,T)`: per-track EQ, gain-to-target and (lead/harmony)
+/// compression, cached on `render.proc`; the raw track is taken (removed)
+/// from `render.tracks` and processed in place, never copied.
+pub fn process_track(render: &mut Render, t: &TrackSpec) {
+    let idx = track_index(t.key);
+    if !matches!(render.proc[idx], ProcSlot::Empty) {
+        return;
+    }
+    let chs = match render.tracks[idx].take() {
+        Some(c) => c,
+        None => {
+            render.proc[idx] = ProcSlot::Silent;
+            return;
+        }
+    };
+    let (slot, lead_delay) = compute_track(t.key, chs);
+    if let Some(ld) = lead_delay {
+        render.lead_delay = Some(ld);
+    }
+    render.proc[idx] = slot;
+}
+
+/// Runs `compute_track` for every one of `specs` whose slot is still
+/// `Empty`, in parallel (rayon), then writes each result back into
+/// `render`'s cache sequentially. `process_track`/`mix_song`'s later
+/// per-track loop then finds every slot already filled and does no
+/// further work, so this is purely an ordering change: which tracks get
+/// computed is identical to the sequential path, only when they run
+/// differs. Taking each raw track out of `render.tracks` (a plain `Vec`
+/// move, no computation) happens up front, sequentially, since `Render`'s
+/// fixed arrays cannot be indexed from multiple threads at once; only the
+/// EQ/gain/compression work itself — the expensive part — runs in
+/// parallel.
+fn process_tracks_threaded(render: &mut Render, specs: &[TrackSpec]) {
+    let mut work: Vec<(usize, &'static str, Vec<Vec<f32>>)> = Vec::new();
+    for t in specs {
+        let idx = track_index(t.key);
+        if !matches!(render.proc[idx], ProcSlot::Empty) {
+            continue;
+        }
+        match render.tracks[idx].take() {
+            Some(c) => work.push((idx, t.key, c)),
+            None => render.proc[idx] = ProcSlot::Silent,
+        }
+    }
+
+    let results: Vec<(usize, ProcSlot, Option<Vec<f32>>)> = work
+        .into_par_iter()
+        .map(|(idx, key, chs)| {
+            let (slot, ld) = compute_track(key, chs);
+            (idx, slot, ld)
+        })
+        .collect();
+
+    for (idx, slot, ld) in results {
+        if let Some(ld) = ld {
+            render.lead_delay = Some(ld);
+        }
+        render.proc[idx] = slot;
+    }
 }
 
 /// `panInto(bL,bR,chs,pan,gain,sL,sR,send)`.
@@ -276,13 +330,42 @@ pub struct MixResult {
 
 /// `mixSong(render,enabled,seed,progress)`. `enabled` decides which `TRACKS`
 /// entries mix in; `progress(label, frac)` replaces the JS async progress
-/// callback (there are no async ticks here).
-pub fn mix_song(render: &mut Render, enabled: impl Fn(&TrackSpec) -> bool, seed: i64, mut progress: Option<&mut dyn FnMut(&str, f64)>) -> MixResult {
+/// callback (there are no async ticks here). Sequential path: every
+/// enabled track is EQ'd/gained/compressed one at a time, in `TRACKS`
+/// order, exactly as `mix_song_threaded` sums them, so the two are
+/// bit-identical.
+pub fn mix_song(render: &mut Render, enabled: impl Fn(&TrackSpec) -> bool, seed: i64, progress: Option<&mut dyn FnMut(&str, f64)>) -> MixResult {
+    mix_song_impl(render, enabled, seed, progress, false)
+}
+
+/// Same as `mix_song`, but every enabled track's `process_track` work (EQ,
+/// gain, compression, the lead's slapback tail) runs in parallel first
+/// (`process_tracks_threaded`), since each track's processing depends only
+/// on its own raw channels. The pan/send accumulation and the lead-delay
+/// add-in afterwards are unchanged and still run in `TRACKS` order, so the
+/// summed mix is bit-identical to `mix_song`'s. No progress callback, for
+/// the same reason `render_song_threaded` drops one.
+pub fn mix_song_threaded(render: &mut Render, enabled: impl Fn(&TrackSpec) -> bool, seed: i64) -> MixResult {
+    mix_song_impl(render, enabled, seed, None, true)
+}
+
+fn mix_song_impl(
+    render: &mut Render,
+    enabled: impl Fn(&TrackSpec) -> bool,
+    seed: i64,
+    mut progress: Option<&mut dyn FnMut(&str, f64)>,
+    threaded: bool,
+) -> MixResult {
     let len = render.len;
     let mut l = vec![0.0f32; len];
     let mut r = vec![0.0f32; len];
     let mut s_l = vec![0.0f32; len];
     let mut s_r = vec![0.0f32; len];
+
+    if threaded {
+        let specs: Vec<TrackSpec> = TRACKS.iter().copied().filter(|t| enabled(t)).collect();
+        process_tracks_threaded(render, &specs);
+    }
 
     let mut k = 0usize;
     for t in TRACKS.iter() {

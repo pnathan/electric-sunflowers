@@ -11,3 +11,4 @@ dsp = { path = "../dsp" }
 voice = { path = "../voice" }
 arrange = { path = "../arrange" }
 serde_json.workspace = true
+rayon = "1.10"

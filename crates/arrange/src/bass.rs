@@ -5,7 +5,7 @@ use compose::form::Form;
 use compose::song::Song;
 use compose::timeline::Timeline;
 use dsp::pluck::{pluck, PluckOpts};
-use sfcore::js::{clamp, exp, round, sin};
+use sfcore::js::{clamp, exp, f32r, round, sin};
 use sfcore::rng::rng_for;
 use sfcore::SR_F;
 
@@ -105,21 +105,29 @@ pub fn gen_bass(_song: &Song, form: &Form, tl: &Timeline, seed: u32) -> Vec<f32>
         };
         pluck(&mut out, s, f, l, &o, &mut r);
         let mut ph = 0.0f64;
-        // JS parity: `for(i=0;i<L&&s+i<len;i++)` checks `s+i<len` as the loop
-        // condition, so once the index runs off the end the loop stops
-        // (break); it does not skip past out-of-range indices and keep
-        // going (continue). The phase is advanced every iteration the loop
-        // body runs, i.e. before this bounds check, exactly as in JS.
+        // JS parity: `for(i=0;i<L&&s+i<len;i++)` only bounds-checks the
+        // upper edge (`s+i<len`); a negative index still satisfies that
+        // condition, so the loop body runs (and `ph` still advances), but
+        // `out[s+i]+=...` with a negative index is a silent no-op on a JS
+        // typed array (continue past it). Once `s+i>=len` the loop
+        // condition itself is false, so the body -- including the phase
+        // advance -- never runs for that `i`: break before touching `ph`.
         for i in 0..l {
             let idx = s + i;
+            if idx >= len as i64 {
+                break;
+            }
             let tt = i as f64 / SR_F;
             ph += 2.0 * std::f64::consts::PI * f / SR_F;
-            if idx < 0 || idx as usize >= len {
-                break;
+            if idx < 0 {
+                continue;
             }
             let tail = if i > l - 2600 { (l - i) as f64 / 2600.0 } else { 1.0 };
             let env = (tt / 0.006).min(1.0) * exp(-tt / 0.7) * tail;
-            out[idx as usize] += (sin(ph) * 0.55 * n.v * env) as f32;
+            let idx = idx as usize;
+            // JS parity: `out[i]+=d` on a Float32Array is one rounding of
+            // f64(out[i])+d to f32, not two (round d, then round the sum).
+            out[idx] = f32r(out[idx] as f64 + sin(ph) * 0.55 * n.v * env) as f32;
         }
     }
     out
