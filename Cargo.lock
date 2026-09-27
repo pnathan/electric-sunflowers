@@ -328,6 +328,7 @@ version = "0.1.0"
 dependencies = [
  "flacenc",
  "hound",
+ "sfcore",
  "vorbis_rs",
 ]
 
@@ -887,6 +888,7 @@ dependencies = [
  "compose",
  "dsp",
  "engine",
+ "export",
  "serde_json",
  "sfcore",
  "songwriter",

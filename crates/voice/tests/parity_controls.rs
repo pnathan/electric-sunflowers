@@ -117,6 +117,10 @@ fn n_f_for(len_secs: f64) -> usize {
 
 #[test]
 fn vowels_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let vw = ["iy", "ih", "eh", "ae", "aa", "ao", "ow", "uw", "ah", "er"];
     let mut sp = Vec::new();
@@ -173,6 +177,10 @@ const LINES: [&[&str]; 4] = [
 
 #[test]
 fn sing2_first_4_lines_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let tuning = Tuning::default();
     for (vk, voice) in [("baritone", Voice::Baritone), ("alto", Voice::Alto)] {
@@ -229,6 +237,10 @@ fn demo_song_raw() -> Value {
 
 #[test]
 fn demo_lead_30_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let raw = demo_song_raw();
     let song = compose::song::normalize_song(&raw).expect("DEMO_SONG normalizes");
@@ -247,6 +259,10 @@ fn demo_lead_30_matches_js() {
 
 #[test]
 fn choir_style_notes_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let notes = vec![
         note(0.5, 1.3, 60, None, Some(&["aa"]), 0.8, true, false),
@@ -283,6 +299,10 @@ fn choir_style_notes_match_js() {
 /// with VF.burst/VF.asp gains).
 #[test]
 fn legacy0_stops_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let notes = vec![
         note(0.5, 0.9, 55, Some(&["p", "ae", "t"]), None, 1.0, true, false),
@@ -302,6 +322,10 @@ fn legacy0_stops_match_js() {
 /// `M[i]=n.grace` backfill for the first part of the note.
 #[test]
 fn grace_notes_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let mut notes = vec![
         note(0.5, 1.0, 60, Some(&["m", "ae"]), None, 1.0, true, false),

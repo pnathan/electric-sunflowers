@@ -67,6 +67,10 @@ fn worst_rel(name: &str, rust: &[f64], reference: &[f64]) {
 
 #[test]
 fn form_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let raw = demo_song_raw();
     let song = normalize_song(&raw).unwrap();
     let refdata = read_ref();
@@ -122,6 +126,10 @@ fn form_matches_js() {
 
 #[test]
 fn timeline_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let raw = demo_song_raw();
     let song = normalize_song(&raw).unwrap();
     let refdata = read_ref();
@@ -159,6 +167,10 @@ fn timeline_matches_js() {
 
 #[test]
 fn rhythm_and_pitch_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let raw = demo_song_raw();
     let song = normalize_song(&raw).unwrap();
     let refdata = read_ref();

@@ -227,6 +227,10 @@ fn run_case(name: &str, song_json: &Value, seed: u32, voice: Option<Voice>, styl
 
 #[test]
 fn demo_song_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     run_case("demo", &demo_song(), 1234, None, None);
 }
 
@@ -259,6 +263,10 @@ fn blues_literal() -> Value {
 
 #[test]
 fn blues_literal_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     run_case("blues", &blues_literal(), 7, Some(Voice::Alto), None);
 }
 
@@ -267,6 +275,10 @@ fn blues_literal_matches_js() {
 /// meter, 4/4, matches BLUES's own meter).
 #[test]
 fn blues_guitar_lead_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     run_case("blues_guitar_lead", &blues_literal(), 7, Some(Voice::Alto), Some("blues"));
 }
 
@@ -276,5 +288,9 @@ fn blues_guitar_lead_matches_js() {
 /// renders as non-silent.
 #[test]
 fn blues_violin_lead_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     run_case("blues_violin_lead", &blues_literal(), 7, Some(Voice::Alto), Some("oldtime"));
 }

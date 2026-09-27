@@ -189,6 +189,12 @@ fn render_song_impl(
         }
     }
 
+    // See the `capture_raw` feature doc in crates/engine/Cargo.toml: only
+    // tests read `raw_tracks`, so cloning every track (~0.5 GB at the demo's
+    // length) is dead weight in the real sunflower build and is skipped
+    // there. Output is unaffected either way; this only changes whether a
+    // second, unused copy of each track is briefly allocated.
+    #[cfg(feature = "capture_raw")]
     let raw_tracks: Vec<(&'static str, Vec<Vec<f32>>)> = vec![
         ("lead", lead.clone()),
         ("harmony", harmony.clone()),
@@ -201,6 +207,8 @@ fn render_song_impl(
         ("harp", harp.clone()),
         ("violin", violin_track.clone()),
     ];
+    #[cfg(not(feature = "capture_raw"))]
+    let raw_tracks: Vec<(&'static str, Vec<Vec<f32>>)> = Vec::new();
 
     let mut render = Render::new(len);
     render.set_track("lead", lead);

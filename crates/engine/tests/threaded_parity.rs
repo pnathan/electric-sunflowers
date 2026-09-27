@@ -48,10 +48,18 @@ fn check_seed(seed: u32) {
 
 #[test]
 fn demo_song_threaded_matches_sequential() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     check_seed(1234);
 }
 
 #[test]
 fn second_seed_threaded_matches_sequential() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     check_seed(4242);
 }

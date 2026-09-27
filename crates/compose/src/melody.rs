@@ -223,13 +223,12 @@ pub fn melody_profile(seed: u32, song: &Song) -> MelodyProfile {
     }
 }
 
-/// shapeFor(li,nl,cad,a,prof,type): engine.js's FIRST definition.
-/// JS parity: engine.js defines `shapeFor` twice at module scope; the second
-/// definition (see `shape_for` below) overwrites this one, so this behavior
-/// is dead in the JS and this per-section-contour path is never taken. Kept
-/// for documentation of the intended-but-unreachable behavior.
-#[allow(dead_code)]
-fn shape_for_dead(
+/// shapeFor(li,nl,cad,a,prof,type): the per-section-contour shape function.
+/// `prof` and `sec_type` select the contour from `melodyProfile`'s `shape`
+/// table; the instrumental-lead call site passes no profile, which falls
+/// back to the fixed arch/descent shape below (matches JS when prof/type
+/// are absent).
+pub fn shape_for(
     li: usize,
     _nl: usize,
     cad: &str,
@@ -253,19 +252,6 @@ fn shape_for_dead(
         } else {
             Box::new(move |x| k.apply(x, a))
         };
-    }
-    if li % 2 == 1 {
-        return Box::new(move |x| a * sin(PI * x) + 0.8 * x);
-    }
-    Box::new(move |x| a * sin(PI * x))
-}
-
-/// shapeFor(li,nl,cad,a): engine.js's SECOND (effective) definition. The
-/// `prof`/`type` args composeMelody still passes at the call site are simply
-/// not part of this function's parameter list in JS, and are ignored here too.
-pub fn shape_for(li: usize, _nl: usize, cad: &str, a: f64) -> Box<dyn Fn(f64) -> f64> {
-    if cad == "tonic" {
-        return Box::new(move |x| a * 0.8 * sin(PI * x * 0.7) - a * 1.2 * x);
     }
     if li % 2 == 1 {
         return Box::new(move |x| a * sin(PI * x) + 0.8 * x);
@@ -403,7 +389,7 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
                     }
                 }
 
-                let shape = shape_for(li, nl, cad, ts.a);
+                let shape = shape_for(li, nl, cad, ts.a, Some(&prof), &sec_type);
                 let hook = if sec_lift && sec_lift_idx == 0 && li == 0 && prof.hook != 0 {
                     prof.hook
                 } else {
@@ -532,7 +518,7 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
             } else {
                 "none"
             };
-            let shape = shape_for(k, chunks, cad, tess_c.inst.a);
+            let shape = shape_for(k, chunks, cad, tess_c.inst.a, None, "");
             let chord_pcs: Vec<Vec<i32>> = chords.iter().map(|c| c.pcs.clone()).collect();
             let mut prng = rng_for(seed, &format!("ip|{}|{}", idx, k));
             let mut opts = PitchOpts {

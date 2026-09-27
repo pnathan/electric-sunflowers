@@ -126,6 +126,10 @@ fn len_for(len_secs: f64) -> usize {
 
 #[test]
 fn vowels_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let vw = ["iy", "ih", "eh", "ae", "aa", "ao", "ow", "uw", "ah", "er"];
     let mut sp = Vec::new();
@@ -178,6 +182,10 @@ const LINES: [&[&str]; 4] = [
 
 #[test]
 fn sing2_first_4_lines_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let tuning = Tuning::default();
     for (vk, voice) in [("baritone", Voice::Baritone), ("alto", Voice::Alto)] {
@@ -234,6 +242,10 @@ fn demo_lead_30_notes() -> (Vec<VoiceNote>, VoiceParams, Voice) {
 
 #[test]
 fn demo_lead_30_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let (notes, vp, _voice) = demo_lead_30_notes();
     let seed = 1234u32;
@@ -250,6 +262,10 @@ fn demo_lead_30_matches_js() {
 /// content, only the opts shape is what this exercises).
 #[test]
 fn harmony_voice_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let (notes, vp, _voice) = demo_lead_30_notes();
     let seed = 1234u32;
@@ -271,6 +287,10 @@ fn harmony_voice_matches_js() {
 /// `rateScale:1.07`, `noBreath:true`.
 #[test]
 fn doubles_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let (notes, mut vp, _voice) = demo_lead_30_notes();
     vp.fs *= 1.03;
@@ -293,6 +313,10 @@ fn doubles_match_js() {
 
 #[test]
 fn choir_style_notes_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let notes = vec![
         note(0.5, 1.3, 60, None, Some(&["aa"]), 0.8, true, false),
@@ -328,6 +352,10 @@ fn choir_style_notes_match_js() {
 /// VF.legacy=0: the non-legacy stop branch, audio-level parity.
 #[test]
 fn legacy0_stops_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let notes = vec![
         note(0.5, 0.9, 55, Some(&["p", "ae", "t"]), None, 1.0, true, false),
@@ -346,6 +374,10 @@ fn legacy0_stops_match_js() {
 /// Explicit grace notes, audio-level parity.
 #[test]
 fn grace_notes_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let index = read_index();
     let mut notes = vec![
         note(0.5, 1.0, 60, Some(&["m", "ae"]), None, 1.0, true, false),
@@ -367,6 +399,10 @@ fn grace_notes_match_js() {
 /// up in `cargo test -- --nocapture`.
 #[test]
 fn timing_ns_per_sample() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let (notes, vp, _voice) = demo_lead_30_notes();
     let seed = 1234u32;
     let len = len_for(notes.last().unwrap().t1 + 1.0);

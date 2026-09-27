@@ -115,6 +115,10 @@ const TOL: f64 = 5e-5;
 
 #[test]
 fn vocal_tracks_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let raw = demo_song();
     let song = normalize_song(&raw).expect("normalize_song");
     let seed = SEED;

@@ -140,3 +140,61 @@ fn styles_command_lists_known_keys() {
     assert!(stdout.contains("cowboy"));
     assert!(stdout.contains("bluegrass"));
 }
+
+/// Default output (no `-o`) is now `song.ogg`, not a WAV file, and it
+/// carries the song's title/note as Vorbis comments.
+#[test]
+fn default_output_is_ogg_with_tags() {
+    let dir = tempfile::tempdir().unwrap();
+    let status = Command::new(bin())
+        .current_dir(&dir)
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7"])
+        .status()
+        .expect("run sunflower render");
+    assert!(status.success());
+
+    let out = dir.path().join("song.ogg");
+    assert!(out.exists(), "expected default output at song.ogg");
+    let bytes = std::fs::read(&out).unwrap();
+    assert_eq!(&bytes[0..4], b"OggS");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("vorbis"));
+    assert!(text.contains("ARTIST=Claude"));
+}
+
+/// `-o` picks the format from the extension; `.flac` produces a valid FLAC
+/// file (magic bytes "fLaC").
+#[test]
+fn dash_o_flac_extension_picks_flac_format() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("small.flac");
+    let status = Command::new(bin())
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", out.to_str().unwrap()])
+        .status()
+        .expect("run sunflower render");
+    assert!(status.success());
+    let bytes = std::fs::read(&out).unwrap();
+    assert_eq!(&bytes[0..4], b"fLaC");
+}
+
+/// `--quality` is accepted for an Ogg render and does not error.
+#[test]
+fn quality_flag_is_accepted_for_ogg() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("q.ogg");
+    let status = Command::new(bin())
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "--quality",
+            "0.2",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("run sunflower render");
+    assert!(status.success());
+    assert!(out.exists());
+}

@@ -301,6 +301,10 @@ fn find_line_idx(_form: &compose::form::Form, n: &compose::melody::LeadNote) -> 
 
 #[test]
 fn demo_song_seeds_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let raw = demo_song_raw();
     let song = normalize_song(&raw).unwrap();
     let refdata = read_ref();
@@ -312,6 +316,10 @@ fn demo_song_seeds_match_js() {
 
 #[test]
 fn demo_song_voices_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let raw = demo_song_raw();
     let song = normalize_song(&raw).unwrap();
     let refdata = read_ref();
@@ -323,6 +331,10 @@ fn demo_song_voices_match_js() {
 
 #[test]
 fn blues_song_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let raw = blues_song_raw();
     let song = normalize_song(&raw).unwrap();
     let refdata = read_ref();
@@ -331,6 +343,10 @@ fn blues_song_matches_js() {
 
 #[test]
 fn verse_growth_song_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let raw = verse_growth_song_raw();
     let song = normalize_song(&raw).unwrap();
     let refdata = read_ref();
@@ -339,6 +355,10 @@ fn verse_growth_song_matches_js() {
 
 #[test]
 fn malformed_inputs_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let refdata = read_ref();
     let cases = [
         "missing_ph",

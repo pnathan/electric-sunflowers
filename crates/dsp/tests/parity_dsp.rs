@@ -75,6 +75,10 @@ fn parse_ft(s: &str) -> FilterType {
 
 #[test]
 fn run_bq_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "run_bq");
     let input_len = c["input_len"].as_u64().unwrap() as usize;
@@ -103,6 +107,10 @@ fn run_bq_matches_js() {
 
 #[test]
 fn pluck_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "pluck");
     let len = c["len"].as_u64().unwrap() as usize;
@@ -143,6 +151,10 @@ fn pluck_matches_js() {
 
 #[test]
 fn ks_pluck_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "ks_pluck");
     let len = c["len"].as_u64().unwrap() as usize;
@@ -163,6 +175,10 @@ fn ks_pluck_matches_js() {
 
 #[test]
 fn body_ir_data_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "body_ir");
     let all = read_bin("body_ir");
@@ -189,6 +205,10 @@ fn body_ir_data_matches_js() {
 
 #[test]
 fn conv_stereo_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "conv_stereo");
     let x_len = c["xLen"].as_u64().unwrap() as usize;
@@ -216,6 +236,10 @@ fn conv_stereo_matches_js() {
 
 #[test]
 fn compress_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "compress");
     let n = c["n"].as_u64().unwrap() as usize;
@@ -232,6 +256,10 @@ fn compress_matches_js() {
 
 #[test]
 fn stereo_compress_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "stereo_compress");
     let n = c["n"].as_u64().unwrap() as usize;
@@ -252,6 +280,10 @@ fn stereo_compress_matches_js() {
 
 #[test]
 fn fdn_reverb_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "fdn_reverb");
     let n = c["n"].as_u64().unwrap() as usize;
@@ -273,6 +305,10 @@ fn fdn_reverb_matches_js() {
 
 #[test]
 fn render_violin_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "render_violin");
     let len = c["len"].as_u64().unwrap() as usize;
@@ -303,6 +339,10 @@ fn render_violin_matches_js() {
 /// `len`, and a second seed.
 #[test]
 fn render_violin_ex_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "render_violin_ex");
     let len = c["len"].as_u64().unwrap() as usize;
@@ -371,6 +411,10 @@ fn build_render(len: usize) -> Render {
 
 #[test]
 fn mix_song_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "mix_song");
     let len = c["len"].as_u64().unwrap() as usize;
@@ -428,6 +472,10 @@ fn burst_track_lr(seed: u32, side: usize, len: usize) -> Vec<f32> {
 /// than recomputing (and must not copy the cached buffers).
 #[test]
 fn mix_song_ex_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "mix_song_ex");
     let len = c["len"].as_u64().unwrap() as usize;

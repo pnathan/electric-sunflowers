@@ -8,3 +8,10 @@ publish.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 libm.workspace = true
+
+[features]
+# V8-exact transcendentals (v8math.rs), for parity testing against node only.
+# The default (this feature off) uses whichever of std/libm is fastest while
+# staying within about 1-2 ulp of correct, chosen by ns/call measurement; see
+# crates/core/examples/mathbench.rs and the parity_math test.
+v8 = []

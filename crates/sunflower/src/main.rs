@@ -3,13 +3,13 @@
 //! long-lived product the JS page's audio engine is being ported into.
 
 mod style_glue;
-mod wav;
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use compose::song::{normalize_song, Song};
 use compose::voices::Voice as ComposeVoice;
 use dsp::mix::TRACKS;
+use export::{BitDepth, ExportOpts, Meta};
 use sfcore::tuning::Tuning;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -25,14 +25,24 @@ struct Cli {
 enum Cmd {
     /// Render the built-in demo song.
     Demo {
-        #[arg(short, long, default_value = "out.wav")]
-        out: PathBuf,
+        /// Output file; the extension picks the format (.ogg, .flac, .wav).
+        /// Defaults to song.ogg.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
         #[arg(long)]
         seed: Option<u32>,
         #[arg(long)]
         voice: Option<String>,
+        /// WAV only: 32-bit float samples instead of 16-bit PCM.
         #[arg(long)]
         float: bool,
+        /// Ogg Vorbis VBR quality, roughly -0.2 to 1.0 (default 0.6, about
+        /// 192 kb/s for a 44.1 kHz stereo signal).
+        #[arg(long)]
+        quality: Option<f32>,
+        /// FLAC only: 16-bit output instead of the default 24-bit.
+        #[arg(long)]
+        flac16: bool,
         /// Use the single-threaded render/mix path instead of the default
         /// threaded one.
         #[arg(long)]
@@ -41,8 +51,10 @@ enum Cmd {
     /// Normalize, style, render and mix a song JSON file.
     Render {
         song: PathBuf,
-        #[arg(short, long, default_value = "out.wav")]
-        out: PathBuf,
+        /// Output file; the extension picks the format (.ogg, .flac, .wav).
+        /// Defaults to song.ogg.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
         #[arg(long)]
         seed: Option<u32>,
         #[arg(long)]
@@ -53,8 +65,16 @@ enum Cmd {
         /// choir, harmonies, doubles. May be given more than once.
         #[arg(long = "no")]
         no: Vec<String>,
+        /// WAV only: 32-bit float samples instead of 16-bit PCM.
         #[arg(long)]
         float: bool,
+        /// Ogg Vorbis VBR quality, roughly -0.2 to 1.0 (default 0.6, about
+        /// 192 kb/s for a 44.1 kHz stereo signal).
+        #[arg(long)]
+        quality: Option<f32>,
+        /// FLAC only: 16-bit output instead of the default 24-bit.
+        #[arg(long)]
+        flac16: bool,
         /// Use the single-threaded render/mix path instead of the default
         /// threaded one.
         #[arg(long)]
@@ -71,12 +91,22 @@ enum Cmd {
         via: Via,
         #[arg(long)]
         model: Option<String>,
-        #[arg(short, long, default_value = "out.wav")]
-        out: PathBuf,
+        /// Output file; the extension picks the format (.ogg, .flac, .wav).
+        /// Defaults to <title-slug>.ogg.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
         #[arg(long)]
         seed: Option<u32>,
+        /// WAV only: 32-bit float samples instead of 16-bit PCM.
         #[arg(long)]
         float: bool,
+        /// Ogg Vorbis VBR quality, roughly -0.2 to 1.0 (default 0.6, about
+        /// 192 kb/s for a 44.1 kHz stereo signal).
+        #[arg(long)]
+        quality: Option<f32>,
+        /// FLAC only: 16-bit output instead of the default 24-bit.
+        #[arg(long)]
+        flac16: bool,
         /// Use the single-threaded render/mix path instead of the default
         /// threaded one.
         #[arg(long)]
@@ -99,27 +129,56 @@ fn main() {
     }
 }
 
+/// Turns a `--float`/`--quality`/`--flac16` trio into `ExportOpts`.
+fn export_opts(float: bool, quality: Option<f32>, flac16: bool) -> ExportOpts {
+    ExportOpts {
+        ogg_quality: quality.unwrap_or(0.6),
+        flac_bits: if flac16 { BitDepth::Bits16 } else { BitDepth::Bits24 },
+        wav_float: float,
+    }
+}
+
 fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Demo { out, seed, voice, float, sequential } => {
-            cmd_demo(&out, seed, voice.as_deref(), float, sequential)
+        Cmd::Demo { out, seed, voice, float, quality, flac16, sequential } => {
+            let out = out.unwrap_or_else(|| PathBuf::from("song.ogg"));
+            let opts = export_opts(float, quality, flac16);
+            cmd_demo(&out, seed, voice.as_deref(), &opts, sequential)
         }
-        Cmd::Render { song, out, seed, voice, style, no, float, sequential } => {
-            cmd_render(&song, &out, seed, voice.as_deref(), style.as_deref(), &no, float, sequential)
+        Cmd::Render { song, out, seed, voice, style, no, float, quality, flac16, sequential } => {
+            let out = out.unwrap_or_else(|| PathBuf::from("song.ogg"));
+            let opts = export_opts(float, quality, flac16);
+            cmd_render(&song, &out, seed, voice.as_deref(), style.as_deref(), &no, &opts, sequential)
         }
-        Cmd::Write { mood, style, voice, via, model, out, seed, float, sequential } => cmd_write(
-            &mood,
-            style.as_deref(),
-            voice.as_deref(),
-            via,
-            model.as_deref(),
-            &out,
-            seed,
-            float,
-            sequential,
-        ),
+        Cmd::Write { mood, style, voice, via, model, out, seed, float, quality, flac16, sequential } => {
+            let opts = export_opts(float, quality, flac16);
+            cmd_write(&mood, style.as_deref(), voice.as_deref(), via, model.as_deref(), out, seed, &opts, sequential)
+        }
         Cmd::Styles => cmd_styles(),
+    }
+}
+
+/// Lowercases `s`, replaces runs of non-alphanumerics with a single `-`, and
+/// trims leading/trailing `-`. Used to name a `write`-command's output file
+/// after the song's title when `-o` is not given.
+fn slugify(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut last_was_dash = false;
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if !last_was_dash {
+            out.push('-');
+            last_was_dash = true;
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        "song".to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -219,9 +278,33 @@ fn render_and_mix(
     }
 }
 
-fn write_output(out: &Path, l: &[f32], r: &[f32], float: bool) -> Result<()> {
-    wav::write_wav(out, l, r, sfcore::SR as u32, float)
-        .with_context(|| format!("writing WAV to {}", out.display()))?;
+/// The style label for `song.style`'s key, if any style has been applied.
+fn style_label(song: &Song) -> String {
+    song.style
+        .as_deref()
+        .and_then(|key| songwriter::styles::styles().iter().find(|(k, _)| *k == key))
+        .map(|(_, s)| s.label.to_string())
+        .unwrap_or_default()
+}
+
+/// Builds the tags written into the exported file: title and liner note
+/// from the song itself, artist defaults to "Claude" inside `export::Meta`,
+/// date is the current year, genre/style is the style's label if a style
+/// was applied.
+fn song_meta(song: &Song) -> Meta {
+    Meta {
+        title: song.title.clone(),
+        artist: String::new(),
+        comment: song.note.clone(),
+        date: current_year().to_string(),
+        style: style_label(song),
+    }
+}
+
+fn write_output(out: &Path, l: &[f32], r: &[f32], meta: &Meta, opts: &ExportOpts) -> Result<()> {
+    export::write_audio(out, l, r, sfcore::SR as u32, meta, opts)
+        .map_err(|e| anyhow!("{e}"))
+        .with_context(|| format!("writing audio to {}", out.display()))?;
     eprintln!(
         "sunflower: wrote {} ({:.1}s, {} channels x {} samples)",
         out.display(),
@@ -232,13 +315,19 @@ fn write_output(out: &Path, l: &[f32], r: &[f32], float: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_demo(out: &Path, seed: Option<u32>, voice: Option<&str>, float: bool, sequential: bool) -> Result<()> {
+fn cmd_demo(
+    out: &Path,
+    seed: Option<u32>,
+    voice: Option<&str>,
+    opts: &ExportOpts,
+    sequential: bool,
+) -> Result<()> {
     let seed = resolve_seed(seed);
     let voice = parse_voice(voice)?;
     let raw = engine::demo_song();
     let song = normalize_song(&raw).map_err(|e| anyhow!("demo song failed to normalize: {e}"))?;
     let (l, r) = render_and_mix(&song, seed, voice, &[], sequential)?;
-    write_output(out, &l, &r, float)
+    write_output(out, &l, &r, &song_meta(&song), opts)
 }
 
 fn cmd_render(
@@ -248,7 +337,7 @@ fn cmd_render(
     voice: Option<&str>,
     style: Option<&str>,
     no: &[String],
-    float: bool,
+    opts: &ExportOpts,
     sequential: bool,
 ) -> Result<()> {
     let seed = resolve_seed(seed);
@@ -263,7 +352,7 @@ fn cmd_render(
         style_glue::apply_style_to_song(&mut song, key).map_err(|e| anyhow!(e))?;
     }
     let (l, r) = render_and_mix(&song, seed, voice, no, sequential)?;
-    write_output(out, &l, &r, float)
+    write_output(out, &l, &r, &song_meta(&song), opts)
 }
 
 fn cmd_write(
@@ -272,9 +361,9 @@ fn cmd_write(
     voice: Option<&str>,
     via: Via,
     model: Option<&str>,
-    out: &Path,
+    out: Option<PathBuf>,
     seed: Option<u32>,
-    float: bool,
+    opts: &ExportOpts,
     sequential: bool,
 ) -> Result<()> {
     let seed = resolve_seed(seed);
@@ -292,12 +381,15 @@ fn cmd_write(
     let mut rand = move || rng.next();
 
     eprintln!("sunflower: asking Claude to write the song ({})", via_label(via));
-    let opts = songwriter::WriteSongOptions { model: model.map(|s| s.to_string()), effort: None };
-    let (raw, dir) = songwriter::write_song(claude.as_ref(), mood, voice, style, year, &mut rand, opts)
-        .map_err(|e| anyhow!("songwriter: {e}"))?;
+    let write_opts = songwriter::WriteSongOptions { model: model.map(|s| s.to_string()), effort: None };
+    let (raw, dir) =
+        songwriter::write_song(claude.as_ref(), mood, voice, style, year, &mut rand, write_opts)
+            .map_err(|e| anyhow!("songwriter: {e}"))?;
 
-    let song_stem = out.with_extension("");
-    let json_path = song_stem.with_extension("json");
+    // Save the model's reply before validating it, so a rejected song is kept.
+    let title = raw.get("title").and_then(|t| t.as_str()).unwrap_or("song");
+    let out = out.unwrap_or_else(|| PathBuf::from(format!("{}.ogg", slugify(title))));
+    let json_path = out.with_extension("json");
     std::fs::write(&json_path, serde_json::to_string_pretty(&raw)?)
         .with_context(|| format!("saving raw song JSON to {}", json_path.display()))?;
     eprintln!("sunflower: saved raw song JSON to {}", json_path.display());
@@ -314,7 +406,7 @@ fn cmd_write(
     println!("tempo: {:.0}", song.tempo);
 
     let (l, r) = render_and_mix(&song, seed, voice_enum, &[], sequential)?;
-    write_output(out, &l, &r, float)
+    write_output(&out, &l, &r, &song_meta(&song), opts)
 }
 
 fn via_label(via: Via) -> &'static str {

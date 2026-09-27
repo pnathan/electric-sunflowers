@@ -2,11 +2,29 @@
 //!
 //! JS computes in f64 and rounds to f32 only when it stores into a Float32Array.
 //! Transcendental functions must go through this module, never `f64::sin` and friends
-//! directly. Measured against node 24 on 200k inputs plus hard cases
-//! (crates/core/tests/parity_math.rs, data from tests/parity/math.js): sin, cos, log,
-//! log2, log10 are bit-exact via the ported fdlibm/V8 algorithm in v8math.rs; atan2
-//! (libm), exp and sqrt (libm) are bit-exact as-is; pow needed one JS-spec special
-//! case (see `pow` below) and is then bit-exact.
+//! directly.
+//!
+//! Two modes, picked by the `v8` cargo feature:
+//!
+//! - `--features sfcore/v8` (off by default): bit-exact with node 24's V8, via
+//!   the ported fdlibm/V8 algorithm in v8math.rs for sin/cos/log/log2/log10,
+//!   libm for atan2 and exp, and std powf for pow. Measured against node on
+//!   200k inputs plus hard cases (crates/core/tests/parity_math.rs, data from
+//!   tests/parity/math.js). This mode exists only to verify the port; it is
+//!   not needed for correct sound.
+//! - default (no feature): std's sin/cos/log/log2/log10/atan2/exp/powf, which
+//!   crates/core/examples/mathbench.rs measured as the fastest option on this
+//!   platform for every one of these functions (std beat both libm and the
+//!   v8math port on realistic engine.js argument ranges: sin/cos phases up to
+//!   1e6 rad, exp of negative arguments, log of positive arguments spanning
+//!   1e-9..1e4, atan2 near the origin, pow with bases 2/10/~1). Accuracy
+//!   checked against the same node reference data is within 2 ulp (see
+//!   parity_math.rs's non-v8 assertion), which is what "right for sound"
+//!   needs; V8 exactness is not a sound requirement. exp is kept on libm
+//!   under the v8 feature regardless (see `exp` below): it feeds IIR
+//!   feedback coefficients where a few ulp of drift compounds sample by
+//!   sample, and crates/arrange's full-render parity tests caught the
+//!   divergence when std was tried there unconditionally.
 
 /// `Math.round`: halves round toward +infinity.
 /// JS parity: Math.round preserves the sign of the input on a zero result
@@ -65,33 +83,88 @@ pub fn f32r(x: f64) -> f64 {
     x as f32 as f64
 }
 
+#[cfg(feature = "v8")]
 #[inline]
 pub fn sin(x: f64) -> f64 {
     crate::v8math::sin(x)
 }
+#[cfg(not(feature = "v8"))]
+#[inline]
+pub fn sin(x: f64) -> f64 {
+    x.sin()
+}
+
+#[cfg(feature = "v8")]
 #[inline]
 pub fn cos(x: f64) -> f64 {
     crate::v8math::cos(x)
 }
+#[cfg(not(feature = "v8"))]
+#[inline]
+pub fn cos(x: f64) -> f64 {
+    x.cos()
+}
+
+#[cfg(feature = "v8")]
 #[inline]
 pub fn atan2(y: f64, x: f64) -> f64 {
     libm::atan2(y, x)
 }
+#[cfg(not(feature = "v8"))]
+#[inline]
+pub fn atan2(y: f64, x: f64) -> f64 {
+    y.atan2(x)
+}
+
+#[cfg(feature = "v8")]
 #[inline]
 pub fn exp(x: f64) -> f64 {
+    // Bit-exact with node's Math.exp (verified by the original 200k probe).
+    // exp feeds IIR feedback coefficients (resonant filters, pluck decay);
+    // a few ulp of drift here compounds sample by sample, so this path
+    // must stay on the exact implementation under the v8 feature even
+    // though std measured indistinguishably fast and close in isolation
+    // (see mathbench.rs and crates/arrange's parity tests, which caught
+    // the divergence when std was tried here unconditionally).
     libm::exp(x)
 }
+#[cfg(not(feature = "v8"))]
+#[inline]
+pub fn exp(x: f64) -> f64 {
+    x.exp()
+}
+
+#[cfg(feature = "v8")]
 #[inline]
 pub fn log(x: f64) -> f64 {
     crate::v8math::log(x)
 }
+#[cfg(not(feature = "v8"))]
+#[inline]
+pub fn log(x: f64) -> f64 {
+    x.ln()
+}
+
+#[cfg(feature = "v8")]
 #[inline]
 pub fn log2(x: f64) -> f64 {
     crate::v8math::log2(x)
 }
+#[cfg(not(feature = "v8"))]
+#[inline]
+pub fn log2(x: f64) -> f64 {
+    x.log2()
+}
+
+#[cfg(feature = "v8")]
 #[inline]
 pub fn log10(x: f64) -> f64 {
     crate::v8math::log10(x)
+}
+#[cfg(not(feature = "v8"))]
+#[inline]
+pub fn log10(x: f64) -> f64 {
+    x.log10()
 }
 /// `Math.pow`. JS parity: the ECMAScript spec (Number::exponentiate) special-
 /// cases base +-1 raised to an infinite exponent to NaN; IEEE 754 `pow` (and

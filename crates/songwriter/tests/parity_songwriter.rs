@@ -58,6 +58,10 @@ const SEEDS: [u32; 5] = [1, 2, 3, 4, 5];
 
 #[test]
 fn style_direction_matches_js_for_every_style() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let refdata = read_ref();
     let style_keys: Vec<String> =
         refdata["styleKeys"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
@@ -75,6 +79,10 @@ fn style_direction_matches_js_for_every_style() {
 
 #[test]
 fn style_direction_matches_js_for_null_key() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let refdata = read_ref();
     let ref_cases = refdata["nullStyleDirections"].as_array().unwrap();
     for (i, &seed) in SEEDS.iter().enumerate() {
@@ -87,6 +95,10 @@ fn style_direction_matches_js_for_null_key() {
 
 #[test]
 fn form_text_matches_js_for_every_form() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let refdata = read_ref();
     let form_keys: Vec<String> =
         refdata["formKeys"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
@@ -103,6 +115,10 @@ fn form_text_matches_js_for_every_form() {
 
 #[test]
 fn apply_style_clamps_match_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let refdata = read_ref();
     let cases = refdata["applyStyleClamps"].as_array().unwrap();
 
@@ -139,6 +155,10 @@ fn apply_style_clamps_match_js() {
 
 #[test]
 fn song_prompt_matches_js_for_every_style_and_voice() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let refdata = read_ref();
     let style_keys: Vec<String> =
         refdata["styleKeys"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();

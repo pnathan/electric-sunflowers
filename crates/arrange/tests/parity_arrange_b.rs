@@ -169,6 +169,10 @@ fn run_case(label: &str, song_raw: Value, rf: &Value) {
 
 #[test]
 fn arrange_b_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let rf = read_ref();
     run_case("demo", demo_song_raw(), &rf["demo"]);
     run_case("blues", blues_song_raw(), &rf["blues"]);

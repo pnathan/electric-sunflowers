@@ -11,3 +11,6 @@ pub const SR_F: f64 = 44100.0;
 pub const HOP: usize = 64;
 pub const LEAD_IN: f64 = 0.6;
 pub const TAIL: f64 = 4.5;
+
+/// True when built with the `v8` feature (bit-exact V8 math, for the JS parity tests).
+pub const V8_EXACT: bool = cfg!(feature = "v8");

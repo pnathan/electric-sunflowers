@@ -280,13 +280,26 @@ pub fn render_choir(p: &Prepared, seed: u32, len: usize, tuning: &Tuning) -> Vec
 /// parallelized.
 pub fn render_choir_threaded(p: &Prepared, seed: u32, len: usize, tuning: &Tuning) -> Vec<Vec<f32>> {
     let mut jobs = choir_plan(p, seed, tuning);
-    let audios: Vec<Vec<f32>> =
-        jobs.par_iter_mut().map(|job| render_voice(&job.notes, &job.params, len, &mut job.opts, tuning)).collect();
-
     let mut l = vec![0.0f32; len];
     let mut r = vec![0.0f32; len];
-    for (job, v) in jobs.iter().zip(audios.iter()) {
-        add_pan(&mut l, &mut r, 0, v, job.pan, 1.0);
+
+    // Render and sum in fixed-size groups instead of collecting every
+    // singer's full-length buffer (up to 4 presets * tuning.choir_n, e.g.
+    // 12 at the default 3) before summing: with 12 singers at the demo's
+    // length that collect held ~390 MB of mono f32 alive at once, on top of
+    // whatever the other threaded tracks (guitar/bass/drums/...) were doing
+    // in parallel. `CHUNK` bounds that to at most `CHUNK` buffers regardless
+    // of choir_n, trading a little of the singer-level parallelism for
+    // memory. Chunking by original order and summing each chunk in order
+    // before starting the next is exactly the same arithmetic as summing
+    // one big `audios` vector in order, so the result is unchanged.
+    const CHUNK: usize = 4;
+    for group in jobs.chunks_mut(CHUNK) {
+        let audios: Vec<Vec<f32>> =
+            group.par_iter_mut().map(|job| render_voice(&job.notes, &job.params, len, &mut job.opts, tuning)).collect();
+        for (job, v) in group.iter().zip(audios.iter()) {
+            add_pan(&mut l, &mut r, 0, v, job.pan, 1.0);
+        }
     }
     vec![l, r]
 }

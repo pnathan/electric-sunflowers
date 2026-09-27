@@ -10,6 +10,7 @@ compose = { path = "../compose" }
 dsp = { path = "../dsp" }
 engine = { path = "../engine" }
 songwriter = { path = "../songwriter" }
+export = { path = "../export" }
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"

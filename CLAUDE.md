@@ -72,12 +72,13 @@ Latest readings: violin 0.47-0.74 as violin; choir organ 0.11; guitar 0.38 as gu
 
 The Rust workspace (`crates/*`) is the long-lived engine; the JS page is its reference. Crates: `sfcore` (JS number rules, V8-exact math, seeded streams, tuning), `compose`, `dsp`, `voice`, `arrange`, `engine` (render_song, threaded path), `songwriter` (styles, prompt, `trait Claude` with `ClaudeCli` and `ClaudeApi`), `sunflower` (CLI: `demo`, `render`, `write`, `styles`).
 
-- Parity: `tests/parity/gen.sh` writes JS reference data to `ref/parity/`; each crate's `tests/parity_*.rs` compares against it. The demo at seed 1234 matches `tests/mt.js` in all but 383 of 16.4M 16-bit samples, each off by 1 LSB. Voice audio differs by up to 6e-9 of peak on long renders; cause not found.
-- Math goes through `sfcore::js`. V8 exactness serves only to verify the port; once a change is judged by the ear tools, faster math may replace it.
-- JS bugs are ported as they are, marked `JS parity:`; the duplicate `shapeFor` (the per-section contour is dead) is one. Fixes where the JS gives NaN are marked `Deviation from JS:`.
+- Parity: `tests/parity/gen.sh` writes JS reference data to `ref/parity/`; each crate's `tests/parity_*.rs` compares against it when built with `--features sfcore/v8,engine/capture_raw` and skips otherwise. The demo at seed 1234 matches `tests/mt.js` in all but 383 of 16.4M 16-bit samples, each off by 1 LSB. Voice audio differs by up to 6e-9 of peak on long renders; cause not found.
+- Math goes through `sfcore::js`: std math by default, the V8-exact port under the `sfcore/v8` feature. Default and exact renders differ by at most 1 LSB at 16 bits; math is about 4.5% of render time.
+- JS bugs are ported as they are, marked `JS parity:`. Fixes where the JS gives NaN are marked `Deviation from JS:`.
+- `shapeFor`'s per-section contour (melodyProfile's `shape` table) is now live in both engines: the duplicate second JS definition that shadowed it is removed.
 - `ClaudeCli` runs `claude -p` in an empty directory with `--strict-mcp-config`, `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and no tools; not `--bare`, which disables the logged-in account.
-- Build offline here (`cargo build --offline`); crates.io is blocked from this machine.
-- Timing, demo song: 6.0 s threaded, 18.2 s on one core (12-core machine); about 1.3 GB peak.
+- Export (`crates/export`): Ogg Vorbis by default (about 160 kb/s VBR), FLAC and WAV by extension; tags carry title, artist, liner note, date and style.
+- Timing, demo song: 6.3 s threaded (0.89 GB peak), 16.2 s on one core (0.72 GB); node takes 25 s and 0.93 GB.
 
 ## Open issues
 

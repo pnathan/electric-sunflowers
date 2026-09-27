@@ -164,11 +164,19 @@ fn check_song(case_name: &str, raw: &Value) {
 
 #[test]
 fn demo_auto_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     check_song("demo_auto", &demo_song());
 }
 
 #[test]
 fn demo_strum_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let mut raw = demo_song();
     raw["guitar"] = json!("strum");
     check_song("demo_strum", &raw);
@@ -176,6 +184,10 @@ fn demo_strum_matches_js() {
 
 #[test]
 fn demo_fingerpick_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let mut raw = demo_song();
     raw["guitar"] = json!("fingerpick");
     check_song("demo_fingerpick", &raw);
@@ -183,6 +195,10 @@ fn demo_fingerpick_matches_js() {
 
 #[test]
 fn demo_travis_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let mut raw = demo_song();
     raw["guitar"] = json!("travis");
     check_song("demo_travis", &raw);
@@ -190,6 +206,10 @@ fn demo_travis_matches_js() {
 
 #[test]
 fn demo_arpeggio_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let mut raw = demo_song();
     raw["guitar"] = json!("arpeggio");
     check_song("demo_arpeggio", &raw);
@@ -197,16 +217,28 @@ fn demo_arpeggio_matches_js() {
 
 #[test]
 fn blues_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     check_song("blues", &blues_song());
 }
 
 #[test]
 fn sixeight_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     check_song("sixeight", &sixeight_song());
 }
 
 #[test]
 fn guitar_voicing_matches_js() {
+    if !sfcore::V8_EXACT {
+        eprintln!("skipped: JS parity needs --features sfcore/v8");
+        return;
+    }
     let idx = read_index();
     let c = case(&idx, "guitar_voicing");
     let chords: Vec<String> = c["chords"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();

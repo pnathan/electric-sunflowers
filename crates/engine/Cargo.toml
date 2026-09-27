@@ -15,3 +15,17 @@ rayon = "1.10"
 
 [dev-dependencies]
 songwriter = { path = "../songwriter" }
+
+[features]
+# Keep a copy of every raw track in RenderedSong::raw_tracks, for the parity
+# tests only. Off by default: a default-on feature would be re-enabled for the
+# sunflower binary by workspace feature unification, doubling peak memory.
+capture_raw = []
+
+[[test]]
+name = "parity_song"
+required-features = ["capture_raw"]
+
+[[test]]
+name = "threaded_parity"
+required-features = ["capture_raw"]
