@@ -1,0 +1,146 @@
+[
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/mdct.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/mdct.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/mdct.c",
+  "output": "lib/CMakeFiles/vorbis.dir/mdct.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/smallft.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/smallft.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/smallft.c",
+  "output": "lib/CMakeFiles/vorbis.dir/smallft.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/block.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/block.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/block.c",
+  "output": "lib/CMakeFiles/vorbis.dir/block.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/envelope.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/envelope.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/envelope.c",
+  "output": "lib/CMakeFiles/vorbis.dir/envelope.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/window.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/window.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/window.c",
+  "output": "lib/CMakeFiles/vorbis.dir/window.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/lsp.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/lsp.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/lsp.c",
+  "output": "lib/CMakeFiles/vorbis.dir/lsp.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/lpc.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/lpc.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/lpc.c",
+  "output": "lib/CMakeFiles/vorbis.dir/lpc.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/analysis.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/analysis.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/analysis.c",
+  "output": "lib/CMakeFiles/vorbis.dir/analysis.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/synthesis.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/synthesis.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/synthesis.c",
+  "output": "lib/CMakeFiles/vorbis.dir/synthesis.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/psy.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/psy.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/psy.c",
+  "output": "lib/CMakeFiles/vorbis.dir/psy.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/info.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/info.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/info.c",
+  "output": "lib/CMakeFiles/vorbis.dir/info.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/floor1.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/floor1.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/floor1.c",
+  "output": "lib/CMakeFiles/vorbis.dir/floor1.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/floor0.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/floor0.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/floor0.c",
+  "output": "lib/CMakeFiles/vorbis.dir/floor0.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/res0.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/res0.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/res0.c",
+  "output": "lib/CMakeFiles/vorbis.dir/res0.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/mapping0.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/mapping0.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/mapping0.c",
+  "output": "lib/CMakeFiles/vorbis.dir/mapping0.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/registry.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/registry.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/registry.c",
+  "output": "lib/CMakeFiles/vorbis.dir/registry.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/codebook.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/codebook.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/codebook.c",
+  "output": "lib/CMakeFiles/vorbis.dir/codebook.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/sharedbook.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/sharedbook.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/sharedbook.c",
+  "output": "lib/CMakeFiles/vorbis.dir/sharedbook.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/lookup.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/lookup.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/lookup.c",
+  "output": "lib/CMakeFiles/vorbis.dir/lookup.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/bitrate.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/bitrate.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/bitrate.c",
+  "output": "lib/CMakeFiles/vorbis.dir/bitrate.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/cpu.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/cpu.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/cpu.c",
+  "output": "lib/CMakeFiles/vorbis.dir/cpu.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbis.dir/xmmlib.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/xmmlib.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/xmmlib.c",
+  "output": "lib/CMakeFiles/vorbis.dir/xmmlib.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include -I/tmp/vorbis-rs/vendor/vorbis/lib  -o CMakeFiles/vorbisenc.dir/vorbisenc.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/vorbisenc.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/vorbisenc.c",
+  "output": "lib/CMakeFiles/vorbisenc.dir/vorbisenc.c.o"
+},
+{
+  "directory": "/tmp/vorbis-rs/vendor/vorbis/lib",
+  "command": "/usr/bin/cc  -I/tmp/vorbis-rs/vendor/vorbis/include  -o CMakeFiles/vorbisfile.dir/vorbisfile.c.o -c /tmp/vorbis-rs/vendor/vorbis/lib/vorbisfile.c",
+  "file": "/tmp/vorbis-rs/vendor/vorbis/lib/vorbisfile.c",
+  "output": "lib/CMakeFiles/vorbisfile.dir/vorbisfile.c.o"
+}
+]

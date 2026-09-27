@@ -1,0 +1,15 @@
+/tmp/vorbis-rs/vendor/vorbis/CMakeFiles/edit_cache.dir
+/tmp/vorbis-rs/vendor/vorbis/CMakeFiles/rebuild_cache.dir
+/tmp/vorbis-rs/vendor/vorbis/CMakeFiles/list_install_components.dir
+/tmp/vorbis-rs/vendor/vorbis/CMakeFiles/install.dir
+/tmp/vorbis-rs/vendor/vorbis/CMakeFiles/install/local.dir
+/tmp/vorbis-rs/vendor/vorbis/CMakeFiles/install/strip.dir
+/tmp/vorbis-rs/vendor/vorbis/lib/CMakeFiles/vorbis.dir
+/tmp/vorbis-rs/vendor/vorbis/lib/CMakeFiles/vorbisenc.dir
+/tmp/vorbis-rs/vendor/vorbis/lib/CMakeFiles/vorbisfile.dir
+/tmp/vorbis-rs/vendor/vorbis/lib/CMakeFiles/edit_cache.dir
+/tmp/vorbis-rs/vendor/vorbis/lib/CMakeFiles/rebuild_cache.dir
+/tmp/vorbis-rs/vendor/vorbis/lib/CMakeFiles/list_install_components.dir
+/tmp/vorbis-rs/vendor/vorbis/lib/CMakeFiles/install.dir
+/tmp/vorbis-rs/vendor/vorbis/lib/CMakeFiles/install/local.dir
+/tmp/vorbis-rs/vendor/vorbis/lib/CMakeFiles/install/strip.dir

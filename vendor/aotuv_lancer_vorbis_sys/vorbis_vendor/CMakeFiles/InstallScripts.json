@@ -1,0 +1,8 @@
+{
+	"InstallScripts" : 
+	[
+		"/tmp/vorbis-rs/vendor/vorbis/cmake_install.cmake",
+		"/tmp/vorbis-rs/vendor/vorbis/lib/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
