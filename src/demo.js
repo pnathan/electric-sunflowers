@@ -1,0 +1,30 @@
+const DEMO_SONG={
+ title:"Every Harbor",
+ note:"A Celtic sea-waltz with a thread of Lisbon fado under it: an emigrant counting the ports that kept a piece of her.",
+ key:"G",mode:"major",meter:"3/4",tempo:104,guitar:"arpeggio",voice:"baritone",
+ band:{drums:"brushes",bass:true,harmonyGuitar:true,harp:true,violin:true,choir:true,harmonies:true,doubles:true},
+ sections:[
+  {type:"intro",chords:["G","C","G","D"]},
+  {type:"verse",lines:[
+   {syl:"The *fer-ry *leaves at *half past *four",ph:"dh ax|f eh|r iy|l iy v z|ae t|hh ae f|p ae s t|f ao r",chords:["G","C"]},
+   {syl:"with *salt still *dry-ing *on the *rail,",ph:"w ih dh|s ao l t|s t ih l|d r ay|ih ng|aa n|dh ax|r ey l",chords:["G","D"]},
+   {syl:"my *moth-er's *coat, a *bor-rowed *door,",ph:"m ay|m ah|dh er z|k ow t|ax|b aa|r ow d|d ao r",chords:["Em","C"]},
+   {syl:"and *ev-ery *lan-tern *turn-ing *pale.",ph:"ae n d|eh v|r iy|l ae n|t er n|t er n|ih ng|p ey l",chords:["G D","G"]}]},
+  {type:"chorus",lines:[
+   {syl:"Oh *car-ry me the *long way *home",ph:"ow|k ae|r iy|m iy|dh ax|l ao ng|w ey|hh ow m",chords:["C","G"]},
+   {syl:"where the *riv-er *keeps its *name,",ph:"w eh r|dh ax|r ih|v er|k iy p s|ih t s|n ey m",chords:["Em","D"]},
+   {syl:"I have *wan-dered, *I have *known",ph:"ay|hh ae v|w aa n|d er d|ay|hh ae v|n ow n",chords:["C","G"]},
+   {syl:"*ev-ery *har-bor, *none the *same.",ph:"eh v|r iy|hh aa r|b er|n ah n|dh ax|s ey m",chords:["C D","G"]}]},
+  {type:"verse",lines:[
+   {syl:"In *Lis-bon *some-one *sang of *loss,",ph:"ih n|l ih z|b ax n|s ah m|w ah n|s ae ng|ah v|l ao s",chords:["G","C"]},
+   {syl:"in *Gal-way, *rain on *ev-ery *stone;",ph:"ih n|g ao l|w ey|r ey n|aa n|eh v|r iy|s t ow n",chords:["G","D"]},
+   {syl:"the *songs are *old-er *than the *cross,",ph:"dh ax|s ao ng z|aa r|ow l|d er|dh ae n|dh ax|k r ao s",chords:["Em","C"]},
+   {syl:"they *car-ry *more than *they have *shown.",ph:"dh ey|k ae|r iy|m ao r|dh ae n|dh ey|hh ae v|sh ow n",chords:["G D","G"]}]},
+  {type:"chorus",same:true},
+  {type:"bridge",lines:[
+   {syl:"And *when the *tide goes *out for *good,",ph:"ae n d|w eh n|dh ax|t ay d|g ow z|aw t|f ao r|g uh d",chords:["Em","C"]},
+   {syl:"I'll *sing it *where my *moth-er *stood.",ph:"ay l|s ih ng|ih t|w eh r|m ay|m ah|dh er|s t uh d",chords:["Am","D"]}]},
+  {type:"chorus",same:true},
+  {type:"outro",chords:["C","G","D","G"]}
+ ]};
+if(typeof module!=='undefined')module.exports={DEMO_SONG};

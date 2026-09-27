@@ -1,0 +1,11 @@
+# measurement tools (tools/, tests/*.py). CPU-only torch is enough.
+numpy
+scipy
+librosa
+matplotlib
+fonttools
+jiwer
+openai-whisper
+panns-inference
+torch
+playwright

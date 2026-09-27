@@ -1,0 +1,5 @@
+ref/
+__pycache__/
+*.f32
+*.wav
+node_modules/
