@@ -1,0 +1,10 @@
+[package]
+name = "voice"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+sfcore = { path = "../core" }
+compose = { path = "../compose" }
+dsp = { path = "../dsp" }

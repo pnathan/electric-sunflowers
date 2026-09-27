@@ -3,3 +3,4 @@ __pycache__/
 *.f32
 *.wav
 node_modules/
+target/

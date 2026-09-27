@@ -1,0 +1,10 @@
+[package]
+name = "sunflower"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+sfcore = { path = "../core" }
+songwriter = { path = "../songwriter" }
+serde_json.workspace = true
