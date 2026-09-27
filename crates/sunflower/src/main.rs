@@ -123,6 +123,8 @@ enum Via {
 }
 
 fn main() {
+    sfcore::fp::init_pool(None);
+    sfcore::fp::flush_denormals();
     if let Err(e) = run() {
         eprintln!("sunflower: error: {e:#}");
         std::process::exit(1);

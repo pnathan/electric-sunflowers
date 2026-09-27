@@ -3,7 +3,7 @@
 //! same "mean vowel distance(200-2.5k) dB" line for comparison with node.
 
 use compose::voices::{voice_params, Voice};
-use dsp::fft::make_fft;
+use dsp::fft::{RealFft, C32};
 use sfcore::rng::rng_for;
 use sfcore::tuning::Tuning;
 use sfcore::SR_F;
@@ -15,17 +15,16 @@ const BANDS: [f64; 17] = [
     200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0, 8000.0,
 ];
 
+/// Hann-windowed power spectrum of the first 8192 samples (bins 0..4095).
 fn spec(a: &[f32]) -> Vec<f64> {
     const N: usize = 8192;
-    let fft = make_fft(N);
-    let mut re = vec![0.0f64; N];
-    let mut im = vec![0.0f64; N];
-    for i in 0..N {
-        let w = 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / N as f64).cos();
-        re[i] = a[i] as f64 * w;
-    }
-    fft.run(&mut re, &mut im, false);
-    (0..N / 2).map(|k| re[k] * re[k] + im[k] * im[k]).collect()
+    let fft = RealFft::new(N);
+    let mut x: Vec<f32> =
+        (0..N).map(|i| a[i] * (0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / N as f64).cos()) as f32).collect();
+    let mut out = vec![C32::default(); fft.spectrum_len()];
+    let mut scratch = fft.make_scratch();
+    fft.forward(&mut x, &mut out, &mut scratch).expect("buffers sized from the plan");
+    out[..N / 2].iter().map(|c| c.re as f64 * c.re as f64 + c.im as f64 * c.im as f64).collect()
 }
 
 fn main() {

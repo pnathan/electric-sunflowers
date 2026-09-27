@@ -1,1 +1,161 @@
-//! Note events in seconds and fractional MIDI (PluckNote, StringNote, BowNote, DrumHit, VocalNote, Singer), shared by arrange, instruments, voice and engine.
+//! Note events: plain data in seconds and fractional MIDI, shared by the
+//! planners (`arrange`) and the renderers (`instruments`, `voice`, `engine`).
+//! Times are `f64` seconds from the start of the song; levels are linear
+//! `f32` in 0..=1 unless stated.
+
+use crate::model::Voice;
+use crate::phoneme::Phoneme;
+use serde::Serialize;
+
+/// A plucked note on a free string model (bass, harp, harmony guitar).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct PluckNote {
+    pub t0: f64,
+    /// Release (damping) time.
+    pub t1: f64,
+    pub midi: f32,
+    pub vel: f32,
+}
+
+/// A note on one of the six accompaniment guitar strings. Each string holds
+/// one list; a new note on a string ends the previous one.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct StringNote {
+    pub t: f64,
+    /// Time the string is damped.
+    pub stop: f64,
+    /// String index, 0 = low E.
+    pub string: u8,
+    pub midi: u8,
+    pub vel: f32,
+}
+
+/// A bowed violin note.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct BowNote {
+    pub t0: f64,
+    pub t1: f64,
+    pub midi: f32,
+    pub vel: f32,
+    pub vibrato: bool,
+}
+
+/// Drum voice.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub enum DrumKind {
+    Kick,
+    Snare,
+    Rim,
+    /// Brush tap on the snare head.
+    Tap,
+    /// Brush swirl lasting `dur` seconds.
+    Swish { dur: f32 },
+    Hat,
+    Shaker,
+    /// Tom tuned to `hz`.
+    Tom { hz: f32 },
+    Ride,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct DrumHit {
+    pub t: f64,
+    pub kind: DrumKind,
+    pub vel: f32,
+    /// -1 (left) to 1 (right).
+    pub pan: f32,
+}
+
+/// One sung note: a syllable (or a vowel for the choir) on one pitch.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct VocalNote {
+    pub t0: f64,
+    pub t1: f64,
+    pub midi: f32,
+    /// Phonemes of the syllable; the choir sings a single vowel.
+    pub phones: Vec<Phoneme>,
+    pub amp: f32,
+    pub stress: bool,
+    pub phrase_start: bool,
+    pub phrase_end: bool,
+    /// Grace note: pitch (fractional MIDI) the note slides from into `midi`.
+    pub grace: Option<f32>,
+}
+
+/// Per-singer performance settings: how one singer departs from the voice
+/// type's preset. Scales are multipliers on the preset (1 = unchanged).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct SingStyle {
+    /// Constant pitch offset in cents.
+    pub detune_cents: f32,
+    /// Onset lag in seconds added to each note's t0 (not t1) at render time.
+    pub lateness: f32,
+    /// Vibrato depth scale.
+    pub vibrato_scale: f32,
+    /// Vibrato rate scale.
+    pub vibrato_rate_scale: f32,
+    /// Formant frequency scale (vocal tract length); 1.03 is a shorter tract.
+    pub formant_scale: f32,
+    /// Extra scale on F1 only.
+    pub f1_scale: f32,
+    /// Breath noise scale.
+    pub breath_scale: f32,
+    /// Breath noise added to the preset's level after scaling.
+    pub breath_add: f32,
+    /// Glottal Rd scale (above 1: laxer, breathier source).
+    pub rd_scale: f32,
+    /// Jitter (period perturbation) scale.
+    pub jitter_scale: f32,
+    /// Shimmer (amplitude perturbation) scale.
+    pub shimmer_scale: f32,
+    /// Number of high resonances (5.5-8.8 kHz) above the five formants, 0-4.
+    pub n_high: u8,
+    /// Time constant in seconds of the voicing-amplitude smoother.
+    pub av_tau: f32,
+    /// Time constant in seconds of the pitch glide between notes.
+    pub glide: f32,
+    /// Pitch scoop into phrase-initial notes.
+    pub scoop: bool,
+    /// Audible breaths in pauses between phrases.
+    pub breath_pauses: bool,
+}
+
+impl SingStyle {
+    /// The lead singer: the preset unchanged.
+    pub const LEAD: SingStyle = SingStyle {
+        detune_cents: 0.0,
+        lateness: 0.0,
+        vibrato_scale: 1.0,
+        vibrato_rate_scale: 1.0,
+        formant_scale: 1.0,
+        f1_scale: 1.0,
+        breath_scale: 1.0,
+        breath_add: 0.0,
+        rd_scale: 1.0,
+        jitter_scale: 1.0,
+        shimmer_scale: 1.0,
+        n_high: 4,
+        av_tau: 0.009,
+        glide: 0.028,
+        scoop: true,
+        breath_pauses: true,
+    };
+}
+
+impl Default for SingStyle {
+    fn default() -> Self {
+        SingStyle::LEAD
+    }
+}
+
+/// One singer's part: the notes and how to sing them.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Singer {
+    pub voice: Voice,
+    pub style: SingStyle,
+    pub notes: Vec<VocalNote>,
+    /// -1 (left) to 1 (right).
+    pub pan: f32,
+    /// Seconds added to every note's t0 and t1 at render time.
+    pub offset: f64,
+}

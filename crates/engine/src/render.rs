@@ -65,6 +65,7 @@ fn render_song_impl(
     mut progress: Option<&mut dyn FnMut(&str, f64)>,
     threaded: bool,
 ) -> RenderedSong {
+    sfcore::fp::flush_denormals();
     macro_rules! step {
         ($label:expr, $frac:expr) => {
             if let Some(p) = progress.as_deref_mut() {
@@ -90,15 +91,40 @@ fn render_song_impl(
         let mut harp_s = None;
         let mut vhg_s = None;
         std::thread::scope(|s| {
-            s.spawn(|| lead_s = Some(vocals::render_lead(&prepared, seed, len, tuning)));
-            s.spawn(|| harmony_s = Some(vocals::render_harmony(&prepared, song, seed, len, tuning)));
-            s.spawn(|| doubles_s = Some(vocals::render_doubles(&prepared, seed, len, tuning)));
-            s.spawn(|| choir_s = Some(vocals::render_choir_threaded(&prepared, seed, len, tuning)));
-            s.spawn(|| guitar_s = Some(band::render_guitar(song, form, tl, seed, tuning)));
-            s.spawn(|| bass_s = Some(band::render_bass(song, form, tl, seed)));
-            s.spawn(|| drums_s = Some(band::render_drums(song, form, tl, seed)));
-            s.spawn(|| harp_s = Some(band::render_harp(song, form, tl, seed)));
             s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                lead_s = Some(vocals::render_lead(&prepared, seed, len, tuning));
+            });
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                harmony_s = Some(vocals::render_harmony(&prepared, song, seed, len, tuning));
+            });
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                doubles_s = Some(vocals::render_doubles(&prepared, seed, len, tuning));
+            });
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                choir_s = Some(vocals::render_choir_threaded(&prepared, seed, len, tuning));
+            });
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                guitar_s = Some(band::render_guitar(song, form, tl, seed, tuning));
+            });
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                bass_s = Some(band::render_bass(song, form, tl, seed));
+            });
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                drums_s = Some(band::render_drums(song, form, tl, seed));
+            });
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                harp_s = Some(band::render_harp(song, form, tl, seed));
+            });
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
                 let bl = song.break_lead.map(|b| b.as_str());
                 vhg_s = Some(band::render_violin_and_harmony_guitar(&prepared, song, seed, len, bl));
             });
@@ -157,10 +183,22 @@ fn render_song_impl(
     if threaded {
         let (mut g, mut h, mut hp, mut v) = (None, None, None, None);
         std::thread::scope(|s| {
-            s.spawn(|| g = band::apply_body("guitar", seed, len, &guitar[0]));
-            s.spawn(|| h = band::apply_body("hg", seed, len, &hg_track[0]));
-            s.spawn(|| hp = band::apply_body("harp", seed, len, &harp[0]));
-            s.spawn(|| v = band::apply_body("violin", seed, len, &violin_track[0]));
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                g = band::apply_body("guitar", seed, len, &guitar[0]);
+            });
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                h = band::apply_body("hg", seed, len, &hg_track[0]);
+            });
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                hp = band::apply_body("harp", seed, len, &harp[0]);
+            });
+            s.spawn(|| {
+                sfcore::fp::flush_denormals();
+                v = band::apply_body("violin", seed, len, &violin_track[0]);
+            });
         });
         if let Some([l, r]) = g {
             guitar = vec![l, r];

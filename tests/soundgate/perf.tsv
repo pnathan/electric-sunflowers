@@ -5,3 +5,9 @@ w0	6a973e7+dirty	1run	1	-	4.62	874	14.77	698	yes
 w0	6a973e7+dirty	pass	3	3.90	4.58	878	13.85	699	yes
 w0-run	6a973e7+dirty	pass	3	1.38	4.56	878	13.88	699	yes
 w0-verify	6a973e7+dirty	pass	3	1.89	4.73	877	14.21	699	yes
+w1-sfcore	4caf1c2+dirty	pass	3	3.85	4.03	888	11.61	702	yes
+w1-filters	4caf1c2+dirty	pass	3	3.78	3.73	892	11.60	702	yes
+w1-fft	4caf1c2+dirty	pass	3	5.96	3.75	890	11.48	702	yes
+w1	4caf1c2+dirty	fail	3	2.62	3.24	889	8.91	702	yes
+w1	4caf1c2+dirty	pass	3	3.18	3.18	890	8.98	702	yes
+w1-verify	4caf1c2+dirty	pass	3	1.41	3.17	890	9.14	702	yes
