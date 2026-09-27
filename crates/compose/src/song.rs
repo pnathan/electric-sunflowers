@@ -244,6 +244,36 @@ pub struct Section {
     pub repeat: bool,
 }
 
+/// `song.breakLead` (styles.js applyStyle: `S.lead`, one of
+/// 'violin'/'guitar'/'both'). `None` means JS's absent `song.breakLead`
+/// (before applyStyle runs, or for a style with no `lead`), which
+/// `render_violin_and_harmony_guitar` treats the same as `Both`
+/// (`song.breakLead||'both'`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BreakLead {
+    Violin,
+    Guitar,
+    Both,
+}
+
+impl BreakLead {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            BreakLead::Violin => "violin",
+            BreakLead::Guitar => "guitar",
+            BreakLead::Both => "both",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "violin" => BreakLead::Violin,
+            "guitar" => BreakLead::Guitar,
+            _ => BreakLead::Both,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Song {
     pub title: String,
@@ -256,6 +286,12 @@ pub struct Song {
     pub voice: Voice,
     pub band: Band,
     pub sections: Vec<Section>,
+    /// `song.style` (styles.js applyStyle: the style key). `None` before
+    /// applyStyle runs, as normalizeSong never sets it.
+    pub style: Option<String>,
+    /// `song.breakLead`. `None` before applyStyle runs, as normalizeSong
+    /// never sets it.
+    pub break_lead: Option<BreakLead>,
 }
 
 impl Song {
@@ -434,6 +470,8 @@ pub fn normalize_song(raw: &serde_json::Value) -> Result<Song, String> {
         voice,
         band,
         sections: secs,
+        style: None,
+        break_lead: None,
     })
 }
 

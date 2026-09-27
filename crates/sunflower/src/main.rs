@@ -33,6 +33,10 @@ enum Cmd {
         voice: Option<String>,
         #[arg(long)]
         float: bool,
+        /// Use the single-threaded render/mix path instead of the default
+        /// threaded one.
+        #[arg(long)]
+        sequential: bool,
     },
     /// Normalize, style, render and mix a song JSON file.
     Render {
@@ -51,6 +55,10 @@ enum Cmd {
         no: Vec<String>,
         #[arg(long)]
         float: bool,
+        /// Use the single-threaded render/mix path instead of the default
+        /// threaded one.
+        #[arg(long)]
+        sequential: bool,
     },
     /// Write a new song with Claude, then render and mix it.
     Write {
@@ -69,6 +77,10 @@ enum Cmd {
         seed: Option<u32>,
         #[arg(long)]
         float: bool,
+        /// Use the single-threaded render/mix path instead of the default
+        /// threaded one.
+        #[arg(long)]
+        sequential: bool,
     },
     /// List style keys and labels.
     Styles,
@@ -90,13 +102,23 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Demo { out, seed, voice, float } => cmd_demo(&out, seed, voice.as_deref(), float),
-        Cmd::Render { song, out, seed, voice, style, no, float } => {
-            cmd_render(&song, &out, seed, voice.as_deref(), style.as_deref(), &no, float)
+        Cmd::Demo { out, seed, voice, float, sequential } => {
+            cmd_demo(&out, seed, voice.as_deref(), float, sequential)
         }
-        Cmd::Write { mood, style, voice, via, model, out, seed, float } => {
-            cmd_write(&mood, style.as_deref(), voice.as_deref(), via, model.as_deref(), &out, seed, float)
+        Cmd::Render { song, out, seed, voice, style, no, float, sequential } => {
+            cmd_render(&song, &out, seed, voice.as_deref(), style.as_deref(), &no, float, sequential)
         }
+        Cmd::Write { mood, style, voice, via, model, out, seed, float, sequential } => cmd_write(
+            &mood,
+            style.as_deref(),
+            voice.as_deref(),
+            via,
+            model.as_deref(),
+            &out,
+            seed,
+            float,
+            sequential,
+        ),
         Cmd::Styles => cmd_styles(),
     }
 }
@@ -164,19 +186,37 @@ fn build_enabled(song: &Song, no: &[String]) -> Result<impl Fn(&dsp::mix::TrackS
     })
 }
 
-fn render_and_mix(song: &Song, seed: u32, voice: Option<ComposeVoice>, no: &[String]) -> Result<(Vec<f32>, Vec<f32>)> {
+/// Renders and mixes `song`. Uses the threaded render/mix path by default
+/// (`sequential=false`); `--sequential` selects the single-threaded path
+/// instead (the two are bit-identical, see
+/// `crates/engine/tests/threaded_parity.rs`).
+fn render_and_mix(
+    song: &Song,
+    seed: u32,
+    voice: Option<ComposeVoice>,
+    no: &[String],
+    sequential: bool,
+) -> Result<(Vec<f32>, Vec<f32>)> {
     let tuning = Tuning::default();
-    eprintln!("sunflower: preparing and rendering tracks");
-    let mut rendered = {
-        let mut progress = |label: &str, frac: f64| {
-            eprintln!("sunflower: {label} ({:.0}%)", frac * 100.0);
-        };
-        engine::render_song(song, seed, voice, &tuning, Some(&mut progress))
-    };
     let enabled = build_enabled(song, no)?;
-    eprintln!("sunflower: mixing");
-    let (l, r) = engine::mix(&mut rendered, enabled, seed);
-    Ok((l, r))
+    if sequential {
+        eprintln!("sunflower: preparing and rendering tracks (sequential)");
+        let mut rendered = {
+            let mut progress = |label: &str, frac: f64| {
+                eprintln!("sunflower: {label} ({:.0}%)", frac * 100.0);
+            };
+            engine::render_song(song, seed, voice, &tuning, Some(&mut progress))
+        };
+        eprintln!("sunflower: mixing");
+        let (l, r) = engine::mix(&mut rendered, enabled, seed);
+        Ok((l, r))
+    } else {
+        eprintln!("sunflower: preparing and rendering tracks (threaded)");
+        let mut rendered = engine::render_song_threaded(song, seed, voice, &tuning);
+        eprintln!("sunflower: mixing");
+        let (l, r) = engine::mix_threaded(&mut rendered, enabled, seed);
+        Ok((l, r))
+    }
 }
 
 fn write_output(out: &Path, l: &[f32], r: &[f32], float: bool) -> Result<()> {
@@ -192,12 +232,12 @@ fn write_output(out: &Path, l: &[f32], r: &[f32], float: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_demo(out: &Path, seed: Option<u32>, voice: Option<&str>, float: bool) -> Result<()> {
+fn cmd_demo(out: &Path, seed: Option<u32>, voice: Option<&str>, float: bool, sequential: bool) -> Result<()> {
     let seed = resolve_seed(seed);
     let voice = parse_voice(voice)?;
     let raw = engine::demo_song();
     let song = normalize_song(&raw).map_err(|e| anyhow!("demo song failed to normalize: {e}"))?;
-    let (l, r) = render_and_mix(&song, seed, voice, &[])?;
+    let (l, r) = render_and_mix(&song, seed, voice, &[], sequential)?;
     write_output(out, &l, &r, float)
 }
 
@@ -209,6 +249,7 @@ fn cmd_render(
     style: Option<&str>,
     no: &[String],
     float: bool,
+    sequential: bool,
 ) -> Result<()> {
     let seed = resolve_seed(seed);
     let voice = parse_voice(voice)?;
@@ -221,7 +262,7 @@ fn cmd_render(
     if let Some(key) = style {
         style_glue::apply_style_to_song(&mut song, key).map_err(|e| anyhow!(e))?;
     }
-    let (l, r) = render_and_mix(&song, seed, voice, no)?;
+    let (l, r) = render_and_mix(&song, seed, voice, no, sequential)?;
     write_output(out, &l, &r, float)
 }
 
@@ -234,6 +275,7 @@ fn cmd_write(
     out: &Path,
     seed: Option<u32>,
     float: bool,
+    sequential: bool,
 ) -> Result<()> {
     let seed = resolve_seed(seed);
     let voice_enum = parse_voice(voice)?;
@@ -245,22 +287,14 @@ fn cmd_write(
                 .map_err(|e| anyhow!("could not build the API client: {e}"))?,
         ),
     };
-    let mut req_model = model.map(|s| s.to_string());
-
-    let year = 2026; // CLAUDE.md: age counted from 1999 as of "the current year".
+    let year = current_year(); // CLAUDE.md: age counted from 1999 as of "the current year".
     let mut rng = sfcore::rng::rng_for(seed, "sunflower-write");
     let mut rand = move || rng.next();
 
     eprintln!("sunflower: asking Claude to write the song ({})", via_label(via));
-    let (raw, dir) = write_song_with_model(
-        claude.as_ref(),
-        mood,
-        voice,
-        style,
-        year,
-        &mut rand,
-        req_model.take(),
-    )?;
+    let opts = songwriter::WriteSongOptions { model: model.map(|s| s.to_string()), effort: None };
+    let (raw, dir) = songwriter::write_song(claude.as_ref(), mood, voice, style, year, &mut rand, opts)
+        .map_err(|e| anyhow!("songwriter: {e}"))?;
 
     let song_stem = out.with_extension("");
     let json_path = song_stem.with_extension("json");
@@ -279,7 +313,7 @@ fn cmd_write(
     println!("meter: {}", song.meter_name);
     println!("tempo: {:.0}", song.tempo);
 
-    let (l, r) = render_and_mix(&song, seed, voice_enum, &[])?;
+    let (l, r) = render_and_mix(&song, seed, voice_enum, &[], sequential)?;
     write_output(out, &l, &r, float)
 }
 
@@ -290,75 +324,26 @@ fn via_label(via: Via) -> &'static str {
     }
 }
 
-/// Wraps `songwriter::write_song`, honoring an explicit `--model` override.
-/// `write_song` always sets `req.model = DEFAULT_MODEL` internally before the
-/// call reaches this crate, so an override is applied by re-issuing the
-/// prompt build here when one is given, rather than by mutating a request
-/// this crate does not construct itself.
-fn write_song_with_model(
-    claude: &dyn songwriter::claude::Claude,
-    mood: &str,
-    voice_pref: Option<&str>,
-    style: Option<&str>,
-    year: i32,
-    rand: &mut dyn FnMut() -> f64,
-    model: Option<String>,
-) -> Result<(serde_json::Value, songwriter::styles::Direction)> {
-    if model.is_none() {
-        return songwriter::write_song(claude, mood, voice_pref, style, year, rand)
-            .map_err(|e| anyhow!("songwriter: {e}"));
-    }
-    // Re-implement the thin call so the model override reaches the request:
-    // same call order and rand draws as write_song (styleDirection then
-    // songPrompt), so this stays a faithful substitute, not a fork.
-    let dir = songwriter::styles::style_direction(style, rand);
-    let prompt_text = songwriter::prompt::song_prompt(mood, voice_pref, Some(dir.clone()), year, rand);
-    let mut req = songwriter::claude::Request::new(prompt_text);
-    req.model = model.unwrap();
-    req.json_schema = Some(songwriter::schema::song_schema());
-    let reply = claude.complete(&req).map_err(|e| anyhow!("claude call failed: {e}"))?;
-    eprintln!("sunflower: model reported back: {}", reply.model.as_deref().unwrap_or(&req.model));
-    let json = extract_json_object(&reply.text)
-        .ok_or_else(|| anyhow!("no JSON object found in reply: {}", reply.text))?;
-    let value: serde_json::Value = serde_json::from_str(&json).context("invalid JSON in reply")?;
-    Ok((value, dir))
-}
-
-/// Duplicated from `songwriter::extract_json_object`, which is private to
-/// that crate: balanced-brace scan tolerating a code fence or stray prose.
-fn extract_json_object(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    let start = text.find('{')?;
-    let mut depth = 0i32;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut i = start;
-    while i < bytes.len() {
-        let c = bytes[i] as char;
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                in_string = false;
-            }
-        } else {
-            match c {
-                '"' => in_string = true,
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(text[start..=i].to_string());
-                    }
-                }
-                _ => {}
-            }
-        }
-        i += 1;
-    }
-    None
+/// The current UTC year (CLAUDE.md: the songwriter persona's age is counted
+/// from 1999 as of the current year).
+fn current_year() -> i32 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Days since the epoch, then a plain proleptic-Gregorian civil-from-days
+    // calculation (Howard Hinnant's algorithm) to get the year without
+    // pulling in a chrono dependency.
+    let days = (secs / 86400) as i64;
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }) as i32
 }
 
 fn cmd_styles() -> Result<()> {

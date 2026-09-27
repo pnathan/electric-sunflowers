@@ -227,6 +227,7 @@ dependencies = [
  "rayon",
  "serde_json",
  "sfcore",
+ "songwriter",
  "voice",
 ]
 

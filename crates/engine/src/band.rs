@@ -54,13 +54,8 @@ pub fn render_harp(song: &Song, form: &Form, tl: &Timeline, seed: u32) -> Vec<Ve
 /// Returns `(tracks.violin, tracks.hg)`, each the track's raw mono channel.
 ///
 /// `break_lead` is `song.breakLead` (engine.js: `song.breakLead||'both'`).
-/// JS parity / deviation: `applyStyle` (styles.js), which is the only place
-/// that ever sets `breakLead`, has not been ported yet, so `compose::song::Song`
-/// carries no such field. Every normalized song today therefore behaves as
-/// JS's un-styled `renderSong` does: `breakLead` is always absent, i.e.
-/// always `'both'`. This parameter exists so a caller can pass the styled
-/// value once `applyStyle` lands; until then `render_song` always passes
-/// `None`.
+/// `None` when no style has been applied yet (matching JS's absent
+/// `breakLead`, which falls back to `'both'` below).
 pub fn render_violin_and_harmony_guitar(
     prepared: &Prepared,
     song: &Song,

@@ -1,25 +1,62 @@
 //! Full-song parity test against tests/parity/song.js's reference dump
 //! (ref/parity/song.json). Run tests/parity/gen.sh first.
 //!
-//! Two cases, matching the JS reference exactly:
+//! Four cases, matching the JS reference exactly:
 //!  - "demo": DEMO_SONG, seed 1234, voice 'auto', every track enabled.
 //!  - "blues": the 12-bar-blues literal from tests/formtest.js, seed 7,
-//!    voice 'alto', every track enabled.
+//!    voice 'alto', every track enabled, no style applied (breakLead stays
+//!    unset/'both').
+//!  - "blues_guitar_lead": the same literal with style 'blues' applied
+//!    (lead:'guitar'), same seed/voice.
+//!  - "blues_violin_lead": the same literal with style 'oldtime' applied
+//!    (lead:'violin', and turns the violin band track on), same seed/voice.
 //!
 //! Each of `renderSong`'s raw tracks (`RenderedSong::raw_tracks`, in `TRACKS`
-//! order) and the final mix (`mix`) are compared on their 25%/50%/75% 2s
-//! windows, a whole-buffer stride-97 sample, and sum/sumsq over the whole
-//! buffer (f64, index order, matching the JS reference's accumulation
-//! order). Reports max abs error / peak per track/channel to stderr.
+//! order) and the final mix (`mix`) are compared on their win25/win50/win75
+//! windows (chosen in song.js by energy, not a fixed fraction: win50 is the
+//! 2s window around the highest-RMS 0.5s block, win25/win75 are the
+//! 25%/75% points of the channel's non-silent span), a whole-buffer
+//! stride-97 sample, and sum/sumsq over the whole buffer (f64, index order,
+//! matching the JS reference's accumulation order). A channel silent for
+//! its entire length is recorded with `silent:true`, and every non-silent
+//! reference window is asserted to actually carry a nonzero peak (so a
+//! window can't silently degenerate into a no-op check). Reports max abs
+//! error / peak per track/channel to stderr.
 
-use compose::song::normalize_song;
+use compose::song::{normalize_song, Band as SongBand, BreakLead, Song};
 use compose::voices::Voice;
 use dsp::mix::TRACKS;
 use engine::{demo_song, mix, render_song};
 use serde_json::Value;
+use sfcore::js::{clamp, round};
 use sfcore::tuning::Tuning;
+use songwriter::styles::apply_style;
 use std::path::PathBuf;
 use std::time::Instant;
+
+/// Ports styles.js applyStyle(song,key) onto a `compose::song::Song`, same
+/// as `sunflower::style_glue::apply_style_to_song` (duplicated here rather
+/// than depended on, to avoid a cross-crate test-only dependency on the
+/// `sunflower` binary crate).
+fn apply_style_to_song(song: &mut Song, key: &str) {
+    let arr = apply_style(key, &song.meter_name).unwrap_or_else(|| panic!("unknown style: {key}"));
+    song.style = Some(key.to_string());
+    song.guitar = arr.guitar.to_string();
+    song.break_lead = Some(BreakLead::from_str(arr.break_lead));
+    song.band = SongBand {
+        drums: arr.drums.to_string(),
+        bass: arr.band.bass,
+        harmony_guitar: arr.band.harmony_guitar,
+        harp: arr.band.harp,
+        violin: arr.band.violin,
+        choir: arr.band.choir,
+        harmonies: arr.band.harmonies,
+        doubles: arr.band.doubles,
+    };
+    if let Some((lo, hi)) = arr.tempo_clamp {
+        song.tempo = round(clamp(song.tempo, lo, hi));
+    }
+}
 
 fn ref_path() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../ref/parity/song.json"))
@@ -68,16 +105,24 @@ fn check_channel(name: &str, buf: &[f32], chan_ref: &Value, tol: f64) -> f64 {
     assert_eq!(buf.len(), len, "{name}: length mismatch");
 
     let mut worst = 0.0f64;
+    // song.js's energyWindows: a channel silent for its whole length has no
+    // energy to find, so win25/win50/win75 fall back to fixed points and
+    // stay all-zero; a non-silent channel's windows are chosen to land on
+    // real signal, so each must carry a nonzero peak.
+    let silent = chan_ref["silent"].as_bool().unwrap_or(false);
 
     for win_key in ["win25", "win50", "win75"] {
         let w = &chan_ref[win_key];
         let start = w["start"].as_u64().unwrap() as usize;
         let data = f64_arr(&w["data"]);
-        let (e, _) = err_metric(&buf[start..start + data.len()], &data);
+        let (e, peak) = err_metric(&buf[start..start + data.len()], &data);
         if e > worst {
             worst = e;
         }
         assert!(e < tol, "{name} {win_key}: relative error {e} >= {tol}");
+        if !silent {
+            assert!(peak > 0.0, "{name} {win_key}: reference window is silent but chan_ref says non-silent");
+        }
     }
 
     let stride = chan_ref["stride"].as_u64().unwrap() as usize;
@@ -140,9 +185,12 @@ fn check_track(name: &str, chs: &[Vec<f32>], track_ref: &Value, tol: f64) {
 // harmless fp-reordering noise.
 const TOL: f64 = 1e-5;
 
-fn run_case(name: &str, song_json: &Value, seed: u32, voice: Option<Voice>) {
+fn run_case(name: &str, song_json: &Value, seed: u32, voice: Option<Voice>, style_key: Option<&str>) {
     eprintln!("case {name}:");
-    let song = normalize_song(song_json).expect("song normalizes");
+    let mut song = normalize_song(song_json).expect("song normalizes");
+    if let Some(key) = style_key {
+        apply_style_to_song(&mut song, key);
+    }
     let tuning = Tuning::default();
 
     let t0 = Instant::now();
@@ -179,15 +227,15 @@ fn run_case(name: &str, song_json: &Value, seed: u32, voice: Option<Voice>) {
 
 #[test]
 fn demo_song_matches_js() {
-    run_case("demo", &demo_song(), 1234, None);
+    run_case("demo", &demo_song(), 1234, None, None);
 }
 
-#[test]
-fn blues_literal_matches_js() {
+/// tests/formtest.js's 12-bar-blues literal, copied verbatim (see song.js).
+fn blues_literal() -> Value {
     let l = |syl: &str, ph: &str, ch: &[&str]| {
         serde_json::json!({"syl": syl, "ph": ph, "chords": ch})
     };
-    let blues = serde_json::json!({
+    serde_json::json!({
         "title": "Rent Day Blues", "note": "", "key": "E", "mode": "mixolydian", "meter": "4/4", "tempo": 84,
         "guitar": "travis", "voice": "baritone",
         "band": {"drums": "brushes", "bass": true, "harmonyGuitar": true, "harp": false, "violin": false, "choir": false, "harmonies": false, "doubles": false},
@@ -206,6 +254,27 @@ fn blues_literal_matches_js() {
             {"type": "interlude", "chords": ["E7", "A7", "E7", "E7", "B7", "A7", "E7", "B7"]},
             {"type": "outro", "chords": ["E7", "A7", "E7", "E7"]}
         ]
-    });
-    run_case("blues", &blues, 7, Some(Voice::Alto));
+    })
+}
+
+#[test]
+fn blues_literal_matches_js() {
+    run_case("blues", &blues_literal(), 7, Some(Voice::Alto), None);
+}
+
+/// Style 'blues' (lead:'guitar'): the violin break is silenced instead of
+/// played, and applyStyle's tempo clamp also fires (blues's only declared
+/// meter, 4/4, matches BLUES's own meter).
+#[test]
+fn blues_guitar_lead_matches_js() {
+    run_case("blues_guitar_lead", &blues_literal(), 7, Some(Voice::Alto), Some("blues"));
+}
+
+/// Style 'oldtime' (lead:'violin'): the harmony-guitar break is silenced
+/// instead, and the style's band turns the violin track on (BLUES's own
+/// band leaves it off), so this also exercises a track BLUES alone never
+/// renders as non-silent.
+#[test]
+fn blues_violin_lead_matches_js() {
+    run_case("blues_violin_lead", &blues_literal(), 7, Some(Voice::Alto), Some("oldtime"));
 }

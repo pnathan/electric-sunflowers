@@ -8,6 +8,15 @@ pub mod styles;
 use claude::{Claude, ClaudeError, Request};
 use styles::Direction;
 
+/// Model/effort options for `write_song`. `model` defaults to
+/// `claude::DEFAULT_MODEL` when `None`; `effort` is passed through to the
+/// request only when given.
+#[derive(Debug, Default, Clone)]
+pub struct WriteSongOptions {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
 /// Builds the songwriter prompt, calls `claude`, and extracts the song JSON object
 /// from the reply text (tolerating a code fence or stray prose around it), returning
 /// it alongside the `Direction` (style/form/mode/meter/tempo choice) used to build the
@@ -15,6 +24,9 @@ use styles::Direction;
 ///
 /// `style` names a STYLES key to fix the direction instead of a random pick; `None`
 /// lets `style_direction` choose (the songwriter's "choice picks a style at random").
+///
+/// `opts` overrides the request's model and/or effort; leave default for the
+/// crate's usual `claude::DEFAULT_MODEL` and no effort setting.
 pub fn write_song(
     claude: &dyn Claude,
     mood: &str,
@@ -22,12 +34,14 @@ pub fn write_song(
     style: Option<&str>,
     year: i32,
     rand: &mut dyn FnMut() -> f64,
+    opts: WriteSongOptions,
 ) -> Result<(serde_json::Value, Direction), WriteSongError> {
     let dir = styles::style_direction(style, rand);
     let prompt_text = prompt::song_prompt(mood, voice_pref, Some(dir.clone()), year, rand);
 
     let mut req = Request::new(prompt_text);
-    req.model = claude::DEFAULT_MODEL.to_string();
+    req.model = opts.model.unwrap_or_else(|| claude::DEFAULT_MODEL.to_string());
+    req.effort = opts.effort;
     req.json_schema = Some(schema::song_schema());
 
     let reply = claude.complete(&req).map_err(WriteSongError::Claude)?;

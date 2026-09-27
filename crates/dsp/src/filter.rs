@@ -60,7 +60,10 @@ pub fn bq(ty: FilterType, f: f64, q: f64, g: f64) -> BqCoeffs {
             a2 = 1.0 - al;
         }
         FilterType::Hs | FilterType::Ls => {
-            let sq = 2.0 * js::pow(a, 0.5) * al;
+            // engine.js: 2*Math.sqrt(A)*al. IEEE sqrt is exact and equals
+            // Math.sqrt, so use f64::sqrt directly rather than js::pow's
+            // general (imprecise) pow(x,0.5) path.
+            let sq = 2.0 * a.sqrt() * al;
             let sg = if ty == FilterType::Hs { 1.0 } else { -1.0 };
             b0 = a * ((a + 1.0) + sg * (a - 1.0) * c + sq);
             b1 = -2.0 * sg * a * ((a - 1.0) + sg * (a + 1.0) * c);

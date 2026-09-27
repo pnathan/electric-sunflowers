@@ -98,10 +98,10 @@ fn render_song_impl(
             s.spawn(|| bass_s = Some(band::render_bass(song, form, tl, seed)));
             s.spawn(|| drums_s = Some(band::render_drums(song, form, tl, seed)));
             s.spawn(|| harp_s = Some(band::render_harp(song, form, tl, seed)));
-            // JS parity / deviation: `song.breakLead` is always absent
-            // today; see the doc comment on
-            // `band::render_violin_and_harmony_guitar`.
-            s.spawn(|| vhg_s = Some(band::render_violin_and_harmony_guitar(&prepared, song, seed, len, None)));
+            s.spawn(|| {
+                let bl = song.break_lead.map(|b| b.as_str());
+                vhg_s = Some(band::render_violin_and_harmony_guitar(&prepared, song, seed, len, bl));
+            });
         });
         lead = lead_s.unwrap();
         harmony = harmony_s.unwrap();
@@ -136,9 +136,8 @@ fn render_song_impl(
 
         step!("Tracking harp and strings", 0.86);
         harp = band::render_harp(song, form, tl, seed);
-        // JS parity / deviation: `song.breakLead` is always absent today; see
-        // the doc comment on `band::render_violin_and_harmony_guitar`.
-        let (v, h) = band::render_violin_and_harmony_guitar(&prepared, song, seed, len, None);
+        let bl = song.break_lead.map(|b| b.as_str());
+        let (v, h) = band::render_violin_and_harmony_guitar(&prepared, song, seed, len, bl);
         violin = v;
         hg = h;
     }
