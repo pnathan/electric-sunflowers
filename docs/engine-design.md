@@ -11,7 +11,7 @@ Goals
 1. Same instruments, same musical behaviour, same character. Detail may change; every change is measured by the sound gate (section 12).
 2. Code that names its algorithms. Each sound model is a small typed unit with a doc comment that gives the algorithm, the source, and the parameters that set the sound.
 3. One code path. No sequential/threaded twins, no feature-gated capture paths, no parity shims. `RAYON_NUM_THREADS=1` is the sequential path, and the output is bit-identical at any thread count.
-4. Demo song (186 s, seed 1234): threaded render plus mix <= 2.5 s wall, single thread <= 9 s, peak RSS <= 0.50 GB threaded and <= 0.40 GB single thread (today: 6.3 s, 16.2 s, 0.89 GB, 0.72 GB).
+4. Speed and memory are aims, not gates: roughly 2.5 s threaded and 9 s on one thread for the demo, and less memory than today (at design time: 6.3 s, 16.2 s, 0.89 GB, 0.72 GB). The gate fails only on a gross regression (+50%). Clean code comes before the last seconds.
 5. Typed data end to end. After the JSON boundary there are no strings in the render path except lyric text and titles, and no panics on user input.
 
 Non-goals

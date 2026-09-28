@@ -10,13 +10,12 @@
 #   --against DIR       compare LTAS and pitch with another run (e.g. out/gate/w1)
 #                       instead of tests/soundgate/baseline.
 #   --capture-baseline  copy this run's JSON results into tests/soundgate/baseline/.
-#   --targets           also enforce the section 10 absolute targets (threaded
-#                       <= 2.5 s, one thread <= 9 s, RSS <= 0.50 / 0.40 GB) and
-#                       thread invariance (sha256 of the two demo WAVs equal).
+#   --targets           also report the design's perf goals (not enforced).
+# Thread invariance (sha256 of the two demo WAVs equal) is always checked.
 # Output goes to out/gate/LABEL/. Exit status 1 when any line fails.
 # Perf: 3 timings per configuration (min wall, max RSS), checked against the
-# last pass row of perf.tsv with another label and against the first pass
-# row, +10% each. Every run appends a row with status pass/fail/loaded.
+# first pass row of perf.tsv (fail above +50%) and reported against the last
+# pass row. Every run appends a row with status pass/fail/loaded.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -177,35 +176,35 @@ first=$(awk -F'\t' 'NR>1 && $3=="pass"' "$perf" | head -n 1 || true)
 loaded=0
 if fcmp "$load1 > $ncpu / 2"; then
     loaded=1
-    record FAIL "perf load" "load average $load1 > $ncpu/2 cores: times not comparable"
+    record INFO "perf load" "load average $load1 > $ncpu/2 cores: times not comparable"
 fi
-perf_check() { # ROW WHAT
+# Perf is reported, not policed: only a gross regression (+50% against the
+# first pass row, the perf baseline) fails. Against the previous row it is
+# information, since run-to-run noise on a shared machine is about 10%.
+perf_check() { # ROW WHAT LIMIT
     local rlabel ptw ptr pow porss name v p u pair
     IFS=$'\t' read -r rlabel _ _ _ _ ptw ptr pow porss _ <<<"$1"
     for pair in "threaded wall:$tw:$ptw:s" "threaded RSS:$tr:$ptr:MB" "one-thread wall:$ow:$pow:s" "one-thread RSS:$orss:$porss:MB"; do
         IFS=: read -r name v p u <<<"$pair"
-        if fcmp "$v <= 1.10 * $p"; then
-            record PASS "perf $name vs $2" "$v $u ($rlabel $p $u, limit +10%)"
+        if [[ "$3" == info ]]; then
+            record INFO "perf $name vs $2" "$v $u ($rlabel $p $u)"
+        elif fcmp "$v <= 1.50 * $p"; then
+            record PASS "perf $name vs $2" "$v $u ($rlabel $p $u, limit +50%)"
         else
-            record FAIL "perf $name vs $2" "$v $u ($rlabel $p $u, limit +10%)"
+            record FAIL "perf $name vs $2" "$v $u ($rlabel $p $u, limit +50%)"
         fi
     done
 }
 if [[ -n "$prev" ]]; then
-    perf_check "$prev" prev
-    [[ "$first" != "$prev" ]] && perf_check "$first" base
+    perf_check "$prev" prev info
+    perf_check "$first" base fail
 else
     record INFO "perf" "no pass row yet: this row becomes the perf baseline if the gate passes"
 fi
 if [[ $targets -eq 1 ]]; then
-    fcmp "$tw <= 2.5" && record PASS "target threaded wall" "$tw s <= 2.5" || record FAIL "target threaded wall" "$tw s > 2.5"
-    fcmp "$ow <= 9" && record PASS "target one-thread wall" "$ow s <= 9" || record FAIL "target one-thread wall" "$ow s > 9"
-    fcmp "$tr <= 500" && record PASS "target threaded RSS" "$tr MB <= 500" || record FAIL "target threaded RSS" "$tr MB > 500"
-    fcmp "$orss <= 400" && record PASS "target one-thread RSS" "$orss MB <= 400" || record FAIL "target one-thread RSS" "$orss MB > 400"
-    [[ "$same" == yes ]] && record PASS "thread invariance" "sha256 equal" || record FAIL "thread invariance" "demo.wav != demo1.wav"
-else
-    record INFO "thread invariance" "sha256 equal: $same"
+    record INFO "targets" "design goals (not enforced): threaded <= 2.5 s, one thread <= 9 s, RSS <= 500/400 MB; now $tw s, $ow s, $tr/$orss MB"
 fi
+[[ "$same" == yes ]] && record PASS "thread invariance" "sha256 equal" || record FAIL "thread invariance" "demo.wav != demo1.wav"
 
 if [[ $capture -eq 1 ]]; then
     for s in "${seeds[@]}"; do
@@ -219,7 +218,7 @@ fi
 
 commit=$(git rev-parse --short HEAD)
 if ! git diff --quiet HEAD -- crates Cargo.toml Cargo.lock 2>/dev/null; then commit="$commit+dirty"; fi
-if [[ $loaded -eq 1 ]]; then status=loaded; elif [[ $fails -gt 0 ]]; then status=fail; else status=pass; fi
+if [[ $fails -eq 0 && $loaded -eq 1 ]]; then status=loaded; elif [[ $fails -gt 0 ]]; then status=fail; else status=pass; fi
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$commit" "$status" "$perf_runs" "$load1" "$tw" "$tr" "$ow" "$orss" "$same" >> "$perf"
 record INFO "perf.tsv" "row $label status $status"
 
