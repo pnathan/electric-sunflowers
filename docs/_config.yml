@@ -1,0 +1,12 @@
+# GitHub Pages: deploy from branch trunk, folder /docs. No plugins beyond
+# the Pages defaults.
+title: electric-sunflowers
+description: Claude writes a folk song; a deterministic engine sings and plays it.
+theme: jekyll-theme-cayman
+
+# The design and plan notes are working documents, read on GitHub. They are
+# kept out of the site so that Liquid never parses them.
+exclude:
+  - engine-design.md
+  - features-*
+  - "*-plan.json"
