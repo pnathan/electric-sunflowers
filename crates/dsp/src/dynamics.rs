@@ -21,14 +21,6 @@ use sfcore::math::{db_to_gain, gain_to_db, one_pole_coeff_tau};
 /// Samples between gain-computer updates.
 pub const GAIN_PERIOD: usize = 16;
 
-/// shim: deleted in wave 5 with its callers in mix.rs and the stems example.
-/// Same as `sfcore::math::gain_to_db`.
-#[doc(hidden)]
-#[inline]
-pub fn db_of(v: f64) -> f64 {
-    gain_to_db(v)
-}
-
 /// Pole k = exp(-1 / (t fs)) = 1 - `one_pole_coeff_tau`; t <= 0 or
 /// non-finite gives 0 (instant).
 fn pole(t: f64, fs: f64) -> f64 {
@@ -161,20 +153,4 @@ impl Compressor {
             self.gain = g1;
         }
     }
-}
-
-/// shim: deleted in wave 5. Mono compressor at `sfcore::SR_F`; knee None
-/// (or non-positive, or non-finite) means 6 dB.
-#[doc(hidden)]
-pub fn compress(x: &mut [f32], thr_db: f64, ratio: f64, atk: f64, rel: f64, knee: Option<f64>) {
-    let knee_db = knee.filter(|k| k.is_finite() && *k > 0.0).unwrap_or(6.0);
-    let det = PeakDetector::new(atk, rel, sfcore::SR_F);
-    Compressor::new(det, GainComputer { thr_db, ratio, knee_db }, Link::Mono).process_mono(x);
-}
-
-/// shim: deleted in wave 5. Stereo-linked compressor at `sfcore::SR_F`, 10 dB knee.
-#[doc(hidden)]
-pub fn stereo_compress(l: &mut [f32], r: &mut [f32], thr_db: f64, ratio: f64, atk: f64, rel: f64) {
-    let det = PeakDetector::new(atk, rel, sfcore::SR_F);
-    Compressor::new(det, GainComputer { thr_db, ratio, knee_db: 10.0 }, Link::StereoMax).process_stereo(l, r);
 }

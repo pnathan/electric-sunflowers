@@ -1,6 +1,12 @@
 # Engine design (Rust rewrite)
 
-Status: design for the rewrite of `crates/*` on branch `rust-cleanup`, base commit 29c5c08.
+Status: implemented on branch `rust-cleanup` (base commit 29c5c08; waves 0-5 of section 13). Deviations from the text as first written:
+
+- FFT: `dsp::fft` wraps `realfft`/`rustfft` (section 5.10) instead of a hand-written Stockham transform.
+- Memory: peak RSS for the demo is above the section 10 aims (measured figures in section 10). Speed meets them.
+- The Helmholtz analysis (Goertzel magnitudes, the note and phrase sweeps) lives in `crates/instruments/tests/helmholtz/mod.rs`, shared by the test and the example, so the library does not depend on rayon.
+- Seeds are `u64` end to end: CLI, `engine::render`, `compose::prepare`, the stems example.
+
 Scope: everything after Claude's JSON reply: validation, composition, arrangement, synthesis, mixing, export, and the CLI.
 The JS prototype (`src/engine.js`) stays in the repo as a separate product and a source of ideas. No Rust code refers to it.
 
@@ -43,14 +49,15 @@ soundgate    measurement tool (analysis only; depends on no engine crate)
 Dependency graph (arrows point at dependencies):
 
 ```
-sunflower -> engine, songwriter, export, song
+sunflower -> engine, songwriter, export, song, sfcore, rayon
 engine    -> arrange, compose, voice, instruments, dsp, song, sfcore
 arrange   -> compose, song, sfcore            (no dsp: arrangement produces events, not audio)
 voice     -> dsp, song, sfcore
 instruments -> dsp, song, sfcore
 compose   -> song, sfcore
-songwriter -> song
-dsp       -> sfcore, rayon
+songwriter -> song, sfcore, ureq, tempfile
+dsp       -> sfcore, rayon, realfft, rustfft
+export    -> sfcore, vorbis_rs, flacenc, rayon
 soundgate -> hound, serde_json                (own FFT; the instrument must not change with the thing measured)
 ```
 
@@ -103,7 +110,7 @@ Every processor exposes `tick`; the ones used over buffers also expose `process(
 - Voice tract: resonator coefficients are designed once per hop and ramped linearly per sample. For a two-pole resonator `y = a x + b y1 + c y2` the stable region in the (b, c) plane is a triangle, which is convex, so the linear path between two stable designs is stable. Klatt's unity-DC `a = 1 - b - c` is linear in (b, c) and ramps with them.
 - Violin: bow velocity, friction slope, and both delay lengths ramp per sample across each 16-sample control period.
 - Compressor: gain in dB computed every 16 samples, linearly interpolated in linear gain per sample.
-- One-pole smoothing of a control track uses `OnePole::from_tau`. The zero-phase forward-backward smoother (`filtfilt` on a frame track) is `dsp::onepole::zero_phase_smooth` and is used only on precomputed control tracks.
+- One-pole smoothing of a control track uses `OnePole::from_tau`. The zero-phase forward-backward smoother (`filtfilt` on a frame track) is `dsp::onepole::zero_phase_smooth` (one track) or `zero_phase_smooth_lanes` (N equal-length tracks in one interleaved loop; unequal lengths are an error) and is used only on precomputed control tracks.
 
 ### 3.5 Buffers and ownership
 
@@ -249,7 +256,7 @@ Each model: algorithm, source, parameters that set the sound. Values are the cur
 - Fractional delay reads: 4-point Lagrange (third order) instead of linear. Linear interpolation is a fraction-dependent low-pass, so vibrato currently modulates loop loss and brightness. Lagrange raises high-frequency loop gain; the bridge pole or the 0.985 reflection is re-tuned so the Helmholtz sweep holds (section 12) and the spectrum stays within the gate.
 - Control rate 16 samples with per-sample ramps of speed, slope and delay lengths.
 - Output taps the incoming bridge wave (documented).
-- Measured today (JS): 213/216 single notes and 174/174 phrase notes hold Helmholtz motion; violin scores 0.47-0.74 as violin. The filtered-sawtooth predecessor scored 0.01.
+- Measured today (JS): 213/216 single notes and 174/174 phrase notes hold Helmholtz motion; violin scores 0.47-0.74 as violin. The filtered-sawtooth predecessor scored 0.01. Rust, wave 5 (BRIDGE_POLE 0.35, reflection 0.985): 212/216 single notes, 119/120 phrase notes.
 
 ### 5.8 Drums (`instruments::drums`)
 
@@ -264,7 +271,7 @@ Each model: algorithm, source, parameters that set the sound. Values are the cur
 
 ### 5.10 FFT and convolution (`dsp::fft`, `dsp::conv`)
 
-- FFT: Stockham autosort, radix 4 with a radix-2 last stage when log2 n is odd (Stockham 1966; Van Loan 1992, Computational Frameworks for the FFT). Interleaved `f32` complex, per-stage contiguous twiddle tables, no bit reversal. `RealFft` of size n: complex FFT of n/2 plus the split step.
+- FFT: typed wrappers over `rustfft` (mixed-radix Cooley-Tukey, radix 4/8 butterflies, AVX or SSE kernels chosen at run time) and `realfft` (a real transform of size n from a complex transform of n/2 plus the split step; Sorensen, Jones, Heideman, Burrus 1987). Interleaved `f32` complex, caller-owned scratch, length mismatches returned as errors. The hand-written Stockham transform first planned here was not built.
 - Convolution: overlap-add (Stockham 1966). `StereoIr::new(l, r)` precomputes both half spectra once. Per block: one forward real FFT, two complex products, two inverse real FFTs (1.5 full-size transforms per block, down from 2). FFT size n = next power of two >= 4 * IR length. All-zero input blocks are skipped.
 - Parallel: rayon over contiguous ranges of blocks; each range writes its span plus the IR tail to a private buffer; ranges are added in time order.
 - Target: <= 0.5 ms per 65536-point complex transform on one core of this machine (i7-9750H), against 2.4 ms today.
@@ -358,6 +365,8 @@ Today (default build, i7-9750H 6C/12T): 6.3 s threaded, 16.2 s single, 0.89 / 0.
 
 Targets for the demo, measured as `sunflower demo --seed 1234 -o x.wav` (WAV, so the encoder is excluded): threaded <= 2.5 s, single thread <= 9 s, peak RSS <= 0.50 GB threaded, <= 0.40 GB single thread.
 
+Measured at wave 5 close (gate run w5-final, min of 3): 2.16 s threaded, 6.53 s single thread, 647 MB and 491 MB peak RSS. Speed meets the targets; memory does not. The sparse stem cache holds 22,515 present 4096-frame blocks (guitar 4002, harp 3430, violin 3180, hg 2428, drums 2392, choir 1826, bass 1649, lead 1605, doubles 1132, harmony 871), 369 MB, plus 66 MB of output; the threaded excess is transient per-task render and convolution buffers.
+
 Plan, in order of measured or estimated gain:
 
 1. FTZ/DAZ on every render thread. Measured: mix 4.44 s to 2.78 s single thread.
@@ -400,7 +409,6 @@ Later, each gated by the owner's ear and the Python ear tools:
 - K-weighted loudness for track normalisation (needs re-derived strip gains).
 - Use the melody profile's instrumental tessitura and contour for break melodies; honour the form plan's break and tag roles.
 - Viterbi counter-line; per-string fret tracking for slides and hammer-ons.
-- `realfft`/`rustfft` in place of the hand-written FFT (needs a network fetch).
 
 ## 12. The sound gate
 

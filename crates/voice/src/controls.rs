@@ -14,7 +14,7 @@
 //!    fields).
 //! 2. `shape_dynamics`: per-note swell (notes over 0.5 s, 0.9 + 0.16 sin)
 //!    and a 40% fade over the last 45% of a phrase-final note.
-//! 3. Zero-phase one-pole smoothing (`dsp::onepole::zero_phase_smooth`) of
+//! 3. Zero-phase one-pole smoothing (`dsp::onepole::zero_phase_smooth_lanes`) of
 //!    every track except pitch; time constants in `SMOOTH_*` and the
 //!    singer's `av_tau`.
 //! 4. `pitch_track`: the note's MIDI pitch from its onset to the next
@@ -34,7 +34,7 @@
 use std::f64::consts::{PI, TAU};
 use std::ops::Range;
 
-use dsp::onepole::zero_phase_smooth;
+use dsp::onepole::{zero_phase_smooth, zero_phase_smooth_lanes};
 use dsp::stochastic::RandomWalk;
 use sfcore::math::{one_pole_coeff_tau, smoothstep};
 use sfcore::random::Rng;
@@ -229,32 +229,6 @@ pub fn rasterise(plan: &[(Span, Segment)], w: Window, out: &mut ControlTracks) {
             Segment::Closure { av, .. } => c.av[r].fill(av as f32),
             Segment::Breath { .. } => c.ah[r].fill(BREATH_AH),
             Segment::Silence { .. } => {}
-        }
-    }
-}
-
-/// `dsp::onepole::zero_phase_smooth` of each track with its own
-/// coefficient, bit for bit, with the tracks' recurrences interleaved in
-/// one loop so they overlap in the pipeline. The tracks must have equal
-/// lengths (every `ControlTracks` track does).
-pub fn zero_phase_smooth_lanes<const N: usize>(tracks: [&mut [f32]; N], a: [f64; N]) {
-    let n = tracks.first().map_or(0, |t| t.len());
-    assert!(tracks.iter().all(|t| t.len() == n), "zero_phase_smooth_lanes: tracks of unequal length");
-    if n == 0 {
-        return;
-    }
-    let mut y: [f64; N] = std::array::from_fn(|l| tracks[l][0] as f64);
-    for i in 0..n {
-        for l in 0..N {
-            y[l] += a[l] * (tracks[l][i] as f64 - y[l]);
-            tracks[l][i] = y[l] as f32;
-        }
-    }
-    let mut y: [f64; N] = std::array::from_fn(|l| tracks[l][n - 1] as f64);
-    for i in (0..n).rev() {
-        for l in 0..N {
-            y[l] += a[l] * (tracks[l][i] as f64 - y[l]);
-            tracks[l][i] = y[l] as f32;
         }
     }
 }
@@ -481,10 +455,12 @@ impl<'a> Articulation<'a> {
             SMOOTH_NOISE_BAND,
         ];
         let c = &mut *out;
-        zero_phase_smooth_lanes(
+        let smoothed = zero_phase_smooth_lanes(
             [&mut c.f1, &mut c.f2, &mut c.f3, &mut c.nas, &mut c.av, &mut c.ah, &mut c.af, &mut c.b1x, &mut c.ff, &mut c.fbw],
             taus.map(|t| one_pole_coeff_tau(t, FRAME_RATE)),
         );
+        // Every ControlTracks track has the window's frame count.
+        debug_assert!(smoothed.is_ok(), "control tracks of unequal length");
 
         pitch_track(self.notes, &self.syl, range, &self.settings, w, &mut out.midi);
         self.vibrato.add(&mut out.midi, notes, w);
@@ -595,8 +571,9 @@ mod tests {
         pitch_track(&notes, &syl, 0..notes.len(), &settings, Window::song(m.len()), &mut m);
         for n in notes.iter().filter(|n| n.t1 - n.t0 >= 0.4 && n.grace.is_none()) {
             let d = n.t1 - n.t0;
-            for i in frame(n.t0 + 0.2 * d)..frame(n.t1 - 0.2 * d) {
-                assert!((m[i] - n.midi).abs() < 0.05, "note {} frame {i}: {}", n.midi, m[i]);
+            let (a, b) = (frame(n.t0 + 0.2 * d), frame(n.t1 - 0.2 * d));
+            for (i, &mi) in m[a..b].iter().enumerate() {
+                assert!((mi - n.midi).abs() < 0.05, "note {} frame {}: {mi}", n.midi, a + i);
             }
         }
         // The scoop starts the first phrase below the note; the grace note

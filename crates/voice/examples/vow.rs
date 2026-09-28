@@ -96,8 +96,8 @@ fn main() {
     for i in 0..VW.len() {
         for j in (i + 1)..VW.len() {
             let mut d = 0.0;
-            for b in 0..12 {
-                d += (spectra[i][b] - spectra[j][b]).powi(2);
+            for (a, b) in spectra[i].iter().zip(&spectra[j]).take(12) {
+                d += (a - b).powi(2);
             }
             tot += (d / 12.0).sqrt();
             c += 1;

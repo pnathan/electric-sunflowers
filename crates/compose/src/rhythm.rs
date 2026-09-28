@@ -258,6 +258,7 @@ pub fn set_text(stresses: &[bool], n_bars: usize, grid: &MeterGrid, style: &Rhyt
 }
 
 /// `set_text` with explicit weights.
+#[allow(clippy::needless_range_loop)] // the Viterbi recursion reads several arrays by slot index
 pub fn set_text_with(
     stresses: &[bool],
     n_bars: usize,

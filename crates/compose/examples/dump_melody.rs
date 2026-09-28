@@ -20,7 +20,7 @@ const DEMO: &str = include_str!("../../engine/src/demo.json");
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let target = args.first().ok_or("usage: dump_melody <song.json|demo> [--seed N] [--voice V]")?;
-    let mut seed: u32 = 1234;
+    let mut seed: u64 = 1234;
     let mut voice: Option<Voice> = None;
     let mut i = 1;
     while i < args.len() {

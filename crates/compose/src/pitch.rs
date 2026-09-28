@@ -304,7 +304,7 @@ pub fn pitch_line_with(p: &PitchProblem, w: &PitchWeights, rng: &mut Rng) -> Vec
         }
         nc[i] = k;
     }
-    if nc.iter().any(|&k| k == 0) {
+    if nc.contains(&0) {
         // An empty scale cannot come from a mode; keep the register.
         return vec![p.register; n];
     }

@@ -114,10 +114,9 @@ impl<const N: usize> Joint<N> {
 }
 
 /// Renders `song` with `seed`. `voice` `None` uses the song's voice.
-/// Composition draws from the low 32 bits of `seed`.
 pub fn render(song: &Song, seed: u64, voice: Option<Voice>, progress: &dyn Progress) -> (Prepared, Stems) {
     sfcore::fp::flush_denormals();
-    let prepared = prepare(song, seed as u32, voice);
+    let prepared = prepare(song, seed, voice);
     let len = len_samples(prepared.timeline.end);
     let arr = arrange::arrange(song, &prepared, seed);
     let v = &arr.vocals;

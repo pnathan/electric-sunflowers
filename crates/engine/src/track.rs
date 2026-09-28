@@ -344,8 +344,7 @@ mod tests {
     fn band_names_round_trip() {
         for p in BandPart::ALL {
             assert_eq!(BandPart::from_name(p.name()), Some(p));
-            let mut b = Band::default();
-            b.harp = true;
+            let mut b = Band { harp: true, ..Band::default() };
             assert!(p.on(&b));
             p.switch_off(&mut b);
             assert!(!p.on(&b));

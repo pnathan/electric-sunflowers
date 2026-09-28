@@ -50,12 +50,3 @@ pub fn add_mono(dst_l: &mut [f32], dst_r: &mut [f32], start: isize, src: &[f32],
         *r += s * gr;
     }
 }
-
-/// shim: deleted in wave 5. Equal-power pan-and-add with a gain.
-#[doc(hidden)]
-pub fn add_pan(l: &mut [f32], r: &mut [f32], start: i64, sig: &[f32], pan: f64, gain: f64) {
-    let [gl, gr] = equal_power(pan);
-    let g = gain as f32;
-    let start = isize::try_from(start).unwrap_or(if start < 0 { isize::MIN } else { isize::MAX });
-    add_mono(l, r, start, sig, [gl * g, gr * g]);
-}

@@ -32,6 +32,7 @@ impl Ramp {
 
     /// Advance one sample and return the new value.
     #[inline(always)]
+    #[allow(clippy::should_implement_trait)] // a ramp never ends; not an Iterator
     pub fn next(&mut self) -> f64 {
         if self.left > 0 {
             self.left -= 1;

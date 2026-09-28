@@ -212,11 +212,3 @@ fn run_range(x: &[f32], ir: &StereoIr, used: usize, job: Job<'_>, w: &mut Work) 
     }
     (span_end, tail)
 }
-
-/// Shim: deleted in wave 5. Old entry point: builds a `StereoIr` from f32
-/// taps and convolves; returns (left, right).
-pub fn conv_stereo(x: &[f32], h_l: &[f32], h_r: &[f32], out_len: usize) -> (Vec<f32>, Vec<f32>) {
-    let ir = StereoIr::from_f32(h_l, h_r);
-    let [l, r] = convolve_mono_to_stereo(x, &ir, out_len);
-    (l, r)
-}

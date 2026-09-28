@@ -1,8 +1,10 @@
 //! Bowed string: Helmholtz sweep, tuning, spectrum against the earlier
-//! model (dsp::violin, linear delay reads), finite output, planner rules.
+//! linear-read model, finite output, planner rules.
+
+mod helmholtz;
 
 use dsp::fft::{RealFft, C32};
-use instruments::violin::helmholtz::{note_sweep, phrase_sweep};
+use helmholtz::{note_sweep, phrase_sweep};
 use instruments::violin::{plan_strokes, render_violin};
 use sfcore::math::mtof;
 use sfcore::random::Rng;
@@ -142,30 +144,34 @@ fn third_octave_db(x: &[f32]) -> Vec<f64> {
         .collect()
 }
 
+/// 1/3-octave levels (dB re total, 200 Hz - 8 kHz) of the earlier bowed
+/// string (linear delay reads, same loss), averaged over seeds 100-111,
+/// for `spectrum_matches_earlier_model`. Measured at commit 50ade40, the
+/// last tree that held that model.
+const EARLIER_MODEL_DB: [f64; 17] = [
+    -35.42, -35.57, -34.95, -2.72, -9.74, -37.55, -8.33, -13.62, -11.48, -15.02, -14.39, -16.90, -19.10, -20.16, -22.78,
+    -24.45, -27.52,
+];
+
 /// A sustained A4, mf (velocity 0.6), vibrato on, 2.2 s: the 1/3-octave
-/// spectrum of the new model, averaged over 12 seeds, within 3 dB of the
-/// earlier model (linear reads, same loss) over 200 Hz - 8 kHz.
+/// spectrum of the model, averaged over 12 seeds, within 3 dB of the
+/// earlier model (`EARLIER_MODEL_DB`) over 200 Hz - 8 kHz. The Lagrange
+/// reads and the re-tuned loss were chosen against it (design 5.7).
 #[test]
 fn spectrum_matches_earlier_model() {
     let len = (2.6 * SR_F) as usize;
     let (a, b) = ((0.4 * SR_F) as usize, (2.2 * SR_F) as usize);
     let seeds = 12;
     let mut new_db = [0.0; 17];
-    let mut old_db = [0.0; 17];
     for s in 0..seeds {
         let x = render_violin(&[note(0.1, 2.3, 69.0, 0.6, true)], len, 100 + s);
-        let old_note = dsp::violin::ViolinNote { t0: 0.1, t1: 2.3, m: 69.0, v: 0.6, vib: None };
-        let y = dsp::violin::render_violin(&[old_note], len, 100 + s as u32);
         for (acc, v) in new_db.iter_mut().zip(third_octave_db(&x[a..b])) {
-            *acc += v / seeds as f64;
-        }
-        for (acc, v) in old_db.iter_mut().zip(third_octave_db(&y[a..b])) {
             *acc += v / seeds as f64;
         }
     }
     let mut worst = 0.0f64;
     let mut report = String::new();
-    for (k, (n, o)) in new_db.iter().zip(&old_db).enumerate() {
+    for (k, (n, o)) in new_db.iter().zip(&EARLIER_MODEL_DB).enumerate() {
         let fc = 1000.0 * 10f64.powf((k as f64 - 7.0) / 10.0);
         report += &format!("{fc:7.0} Hz  new {n:7.2}  old {o:7.2}  diff {:+6.2}\n", n - o);
         worst = worst.max((n - o).abs());

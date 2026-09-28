@@ -13,9 +13,8 @@
 //! ```
 //!
 //! Aspiration is raw white noise into the cascade; only breath noise is
-//! low-passed at 2.6 kHz. CLAUDE.md says aspiration is low-passed too; that
-//! text is corrected in wave 5, and low-passing aspiration is a later,
-//! ear-gated change (design section 11).
+//! low-passed at 2.6 kHz. Low-passing aspiration as well is open work, to
+//! be decided by ear (design section 11).
 //!
 //! Frame work. F1-F3 targets are designed once per frame and ramped per
 //! sample to the next frame's design (design 3.4). F2 and F3 wobble by a

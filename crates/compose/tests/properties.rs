@@ -12,7 +12,7 @@ fn demo() -> Song {
     s
 }
 
-const SEEDS: u32 = 200;
+const SEEDS: u64 = 200;
 
 #[test]
 fn stressed_syllables_land_on_strong_slots() {

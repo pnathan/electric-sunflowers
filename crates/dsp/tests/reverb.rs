@@ -1,8 +1,8 @@
-//! Fdn8: decay time against the absorption design, stability, decorrelation,
-//! and the `fdn_reverb` shim.
+//! Fdn8: decay time against the absorption design, stability, decorrelation.
 
 use dsp::biquad::{Biquad, BiquadCoeffs};
-use dsp::reverb::{absorption, fdn_reverb, Fdn8, T60_DC, T60_NYQ};
+use std::f64::consts::FRAC_1_SQRT_2;
+use dsp::reverb::{absorption, Fdn8, T60_DC, T60_NYQ};
 use sfcore::random::{tag, Rng};
 
 const FS: f64 = 44_100.0;
@@ -34,7 +34,7 @@ fn schroeder_t60(e: &[f64]) -> f64 {
     let (mut sx, mut sy, mut sxx, mut sxy, mut n) = (0.0, 0.0, 0.0, 0.0, 0.0);
     for (i, &v) in edc.iter().enumerate() {
         let db = 10.0 * (v / tot).log10();
-        if db <= -5.0 && db >= -35.0 {
+        if (-35.0..=-5.0).contains(&db) {
             let t = i as f64 / FS;
             sx += t;
             sy += db;
@@ -61,10 +61,10 @@ fn octave_250_500_t60_matches_design() {
     // low-passes at 500 Hz (fourth-order Butterworth-like skirts).
     let band = |x: &mut [f32]| {
         for c in [
-            BiquadCoeffs::highpass(FS, 250.0, 0.7071),
-            BiquadCoeffs::highpass(FS, 250.0, 0.7071),
-            BiquadCoeffs::lowpass(FS, 500.0, 0.7071),
-            BiquadCoeffs::lowpass(FS, 500.0, 0.7071),
+            BiquadCoeffs::highpass(FS, 250.0, FRAC_1_SQRT_2),
+            BiquadCoeffs::highpass(FS, 250.0, FRAC_1_SQRT_2),
+            BiquadCoeffs::lowpass(FS, 500.0, FRAC_1_SQRT_2),
+            BiquadCoeffs::lowpass(FS, 500.0, FRAC_1_SQRT_2),
         ] {
             Biquad::new(c).process(x);
         }
@@ -132,25 +132,6 @@ fn mono_input_gives_decorrelated_outputs() {
     let rho = slr / (sll * srr).sqrt();
     println!("mono in: L/R correlation {rho:.4}");
     assert!(rho.abs() < 0.3, "correlation {rho}");
-}
-
-#[test]
-fn shim_adds_the_block_output() {
-    let n = 20_000;
-    let mut rng = Rng::stream(3, tag("test.reverb.shim"));
-    let mut il = vec![0.0f32; n];
-    let mut ir = vec![0.0f32; n];
-    rng.fill_bipolar(&mut il);
-    rng.fill_bipolar(&mut ir);
-    let mut a_l = vec![0.25f32; n];
-    let mut a_r = vec![-0.25f32; n];
-    fdn_reverb(&il, &ir, &mut a_l, &mut a_r, 0.55, 1234);
-    let mut fdn = Fdn8::new(FS, 1234, T60_DC, T60_NYQ);
-    let mut b_l = vec![0.25f32; n];
-    let mut b_r = vec![-0.25f32; n];
-    fdn.process_block([&il, &ir], [&mut b_l, &mut b_r], 0.55);
-    assert_eq!(a_l, b_l);
-    assert_eq!(a_r, b_r);
 }
 
 #[test]

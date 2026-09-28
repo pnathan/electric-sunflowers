@@ -130,20 +130,20 @@ pub(crate) fn write(
         let n = lc.len() * 2;
         match sample {
             WavSample::Float32 => {
-                for ((&a, &b), o) in lc.iter().zip(rc).zip(bytes.chunks_exact_mut(8)) {
+                for ((&a, &b), o) in lc.iter().zip(rc).zip(bytes.as_chunks_mut::<8>().0) {
                     o[..4].copy_from_slice(&a.to_le_bytes());
                     o[4..].copy_from_slice(&b.to_le_bytes());
                 }
             }
             WavSample::Pcm16 => {
                 quantize_interleaved(lc, rc, BitDepth::Bits16, &mut dither, &mut ints);
-                for (&v, o) in ints[..n].iter().zip(bytes.chunks_exact_mut(2)) {
+                for (&v, o) in ints[..n].iter().zip(bytes.as_chunks_mut::<2>().0) {
                     o.copy_from_slice(&(v as i16).to_le_bytes());
                 }
             }
             WavSample::Pcm24 => {
                 quantize_interleaved(lc, rc, BitDepth::Bits24, &mut dither, &mut ints);
-                for (&v, o) in ints[..n].iter().zip(bytes.chunks_exact_mut(3)) {
+                for (&v, o) in ints[..n].iter().zip(bytes.as_chunks_mut::<3>().0) {
                     o.copy_from_slice(&v.to_le_bytes()[..3]);
                 }
             }

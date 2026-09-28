@@ -8,7 +8,3 @@ publish.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-
-[dev-dependencies]
-# Comparison tests against the current parser only; not a runtime dependency.
-compose = { path = "../compose" }

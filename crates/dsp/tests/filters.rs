@@ -3,7 +3,7 @@
 
 use dsp::biquad::{Biquad, BiquadCoeffs, Cascade, EqBand, EqKind, StereoBiquad};
 use dsp::dynamics::{Compressor, GainComputer, Link, PeakDetector};
-use dsp::onepole::{zero_phase_smooth, DcBlocker, OnePole};
+use dsp::onepole::{zero_phase_smooth, zero_phase_smooth_lanes, DcBlocker, OnePole, UnequalLengths};
 use dsp::pan::{add_mono, balance, equal_power};
 use dsp::resonator::{coeffs, Resonator};
 use dsp::smoother::Ramp;
@@ -194,6 +194,23 @@ fn zero_phase_smooth_is_symmetric_and_keeps_constants() {
     zero_phase_smooth(&mut e, 0.5);
 }
 
+#[test]
+fn zero_phase_smooth_lanes_equals_separate_calls() {
+    let a: Vec<f32> = (0..300).map(|i| ((i * 37 % 101) as f32 / 50.0) - 1.0).collect();
+    let b: Vec<f32> = (0..300).map(|i| ((i * 11 % 53) as f32 / 26.0) - 1.0).collect();
+    let (mut a1, mut b1) = (a.clone(), b.clone());
+    zero_phase_smooth(&mut a1, 0.2);
+    zero_phase_smooth(&mut b1, 0.05);
+    let (mut a2, mut b2) = (a.clone(), b.clone());
+    assert_eq!(zero_phase_smooth_lanes([&mut a2, &mut b2], [0.2, 0.05]), Ok(()));
+    assert!(a1.iter().zip(&a2).all(|(x, y)| x.to_bits() == y.to_bits()));
+    assert!(b1.iter().zip(&b2).all(|(x, y)| x.to_bits() == y.to_bits()));
+    // Unequal lengths: an error, and no track changes.
+    let (mut a3, mut short) = (a.clone(), b[..299].to_vec());
+    assert_eq!(zero_phase_smooth_lanes([&mut a3, &mut short], [0.2, 0.05]), Err(UnequalLengths));
+    assert_eq!(a3, a);
+}
+
 /// Peak and -3 dB bandwidth of the Klatt resonator, by its z-domain response.
 fn res_mag(a: f64, b: f64, c: f64, f: f64) -> f64 {
     let w = 2.0 * PI * f / FS;
@@ -332,7 +349,7 @@ fn equal_power_sums_to_unit_power() {
         let [l, r] = equal_power(p);
         close((l * l + r * r) as f64, 1.0, 1e-6, "power");
     }
-    assert_eq!(equal_power(-1.0)[1].abs() < 1e-7, true);
+    assert!(equal_power(-1.0)[1].abs() < 1e-7);
     close(equal_power(0.0)[0] as f64, FRAC_1_SQRT_2, 1e-7, "centre");
 }
 

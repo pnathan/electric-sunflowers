@@ -64,7 +64,7 @@ fn read_float_wav(path: &str) -> Option<(Vec<f32>, Vec<f32>)> {
             return None;
         }
         if &b[i..i + 4] == b"data" {
-            let x: Vec<f32> = body.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+            let x: Vec<f32> = body.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect();
             let l = x.iter().step_by(2).copied().collect();
             let r = x.iter().skip(1).step_by(2).copied().collect();
             return Some((l, r));

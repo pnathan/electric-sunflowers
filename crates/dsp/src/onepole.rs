@@ -10,6 +10,8 @@
 //!   (filtfilt, Gustafsson 1996 without the edge padding). Zero phase, squared
 //!   magnitude. Each pass starts its state at the first sample it reads, so a
 //!   constant track passes unchanged. For precomputed control tracks only.
+//!   `zero_phase_smooth_lanes` runs N equal-length tracks in one interleaved
+//!   loop; unequal lengths are an error.
 
 use std::f64::consts::PI;
 
@@ -107,15 +109,40 @@ impl DcBlocker {
 /// Filtfilt with the one-pole z += a (x - z): forward pass seeded with the
 /// first sample, then backward pass seeded with the last forward output.
 pub fn zero_phase_smooth(buf: &mut [f32], a: f64) {
-    let (Some(&first), Some(_)) = (buf.first(), buf.last()) else { return };
-    let mut y = first as f64;
-    for v in buf.iter_mut() {
-        y += a * (*v as f64 - y);
-        *v = y as f32;
+    // One lane cannot have unequal lengths.
+    let _ = zero_phase_smooth_lanes([buf], [a]);
+}
+
+/// Tracks passed to `zero_phase_smooth_lanes` differ in length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnequalLengths;
+
+/// `zero_phase_smooth` of N equal-length tracks, each with its own
+/// coefficient, bit for bit the same as N separate calls. The recurrences
+/// are interleaved in one loop so they overlap in the pipeline. Unequal
+/// lengths return `Err(UnequalLengths)` and leave every track unchanged.
+#[allow(clippy::needless_range_loop)] // lane l of sample i across N tracks
+pub fn zero_phase_smooth_lanes<const N: usize>(tracks: [&mut [f32]; N], a: [f64; N]) -> Result<(), UnequalLengths> {
+    let n = tracks.first().map_or(0, |t| t.len());
+    if tracks.iter().any(|t| t.len() != n) {
+        return Err(UnequalLengths);
     }
-    let mut y = buf[buf.len() - 1] as f64;
-    for v in buf.iter_mut().rev() {
-        y += a * (*v as f64 - y);
-        *v = y as f32;
+    if n == 0 {
+        return Ok(());
     }
+    let mut y: [f64; N] = std::array::from_fn(|l| tracks[l][0] as f64);
+    for i in 0..n {
+        for l in 0..N {
+            y[l] += a[l] * (tracks[l][i] as f64 - y[l]);
+            tracks[l][i] = y[l] as f32;
+        }
+    }
+    let mut y: [f64; N] = std::array::from_fn(|l| tracks[l][n - 1] as f64);
+    for i in (0..n).rev() {
+        for l in 0..N {
+            y[l] += a[l] * (tracks[l][i] as f64 - y[l]);
+            tracks[l][i] = y[l] as f32;
+        }
+    }
+    Ok(())
 }

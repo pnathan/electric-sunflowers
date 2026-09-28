@@ -25,3 +25,6 @@ w4-final	6a2aa22+dirty	pass	3	2.62	2.11	647	6.52	492	yes
 w4-strict-check	6a2aa22+dirty	pass	3	2.92	2.11	648	6.35	492	yes
 w4-recheck	6a2aa22+dirty	pass	3	3.13	2.10	648	6.32	492	yes
 w4-verify	6a2aa22+dirty	pass	3	3.46	2.12	663	6.53	492	yes
+w5-final	3cb6122+dirty	pass	3	3.38	2.16	647	6.53	491	yes
+w5	3cb6122+dirty	pass	3	3.84	2.21	665	6.36	492	yes
+w5-verify	3cb6122+dirty	pass	3	2.96	2.14	648	6.58	492	yes

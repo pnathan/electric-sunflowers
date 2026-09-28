@@ -46,7 +46,7 @@ fn write_f32_wav(path: &Path, chs: &[&[f32]], sr: u32) -> std::io::Result<()> {
 }
 
 fn run() -> Result<(), String> {
-    let mut seed: u32 = 1234;
+    let mut seed: u64 = 1234;
     let mut out: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -66,7 +66,7 @@ fn run() -> Result<(), String> {
 
     let song = demo_song();
     let t = Instant::now();
-    let (prepared, stems) = render(song, seed as u64, None, &NoProgress);
+    let (prepared, stems) = render(song, seed, None, &NoProgress);
     let render_s = t.elapsed().as_secs_f64();
 
     let notes: Vec<serde_json::Value> =
@@ -98,7 +98,7 @@ fn run() -> Result<(), String> {
     let write_s = t.elapsed().as_secs_f64();
 
     let t = Instant::now();
-    let m = mix(&stems, &song.band, seed as u64);
+    let m = mix(&stems, &song.band, seed);
     let mix_s = t.elapsed().as_secs_f64();
     let p = out.join("mix.wav");
     write_f32_wav(&p, &[&m.l, &m.r], sr).map_err(|e| format!("{}: {e}", p.display()))?;

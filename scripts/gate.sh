@@ -155,7 +155,7 @@ else
 fi
 
 echo "== helmholtz"
-if [[ -f crates/instruments/examples/helmholtz.rs ]]; then hpkg=instruments; else hpkg=dsp; fi
+hpkg=instruments
 helm_line=$(cargo run --release -q -p "$hpkg" --example helmholtz | grep '^stable' | tail -n 1 || true)
 echo "$helm_line"
 hn=$(awk '{split($2,a,"/"); print a[1]}' <<<"$helm_line")

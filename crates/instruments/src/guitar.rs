@@ -49,7 +49,7 @@ pub struct GuitarTuning {
     pub sympathetic: f64,
 }
 
-/// Shipped guitar settings (the GT values of the original engine).
+/// Shipped guitar settings.
 pub const TUNING: GuitarTuning = GuitarTuning { damping: 0.18, attack: 1.0, glide: 5.0, sympathetic: 1.0 };
 
 /// Open strings, MIDI: E2 A2 D3 G3 B3 E4.

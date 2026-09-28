@@ -196,7 +196,7 @@ fn ffmpeg_decode_s32(path: &Path) -> Vec<i32> {
     assert!(status.success(), "ffmpeg failed to decode");
     let b = std::fs::read(&decoded).unwrap();
     std::fs::remove_file(&decoded).ok();
-    chunk(&b, b"data").chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()
+    chunk(&b, b"data").as_chunks::<4>().0.iter().map(|c| i32::from_le_bytes(*c)).collect()
 }
 
 #[test]
@@ -266,7 +266,7 @@ fn flac16_equals_wav16_through_ffmpeg() {
     export::write(&pw, &l, &r, 44100, &Meta::default(), Format::Wav { sample: WavSample::Pcm16 }).unwrap();
     let f: Vec<i32> = ffmpeg_decode_s32(&pf).iter().map(|v| v >> 16).collect();
     let wb = std::fs::read(&pw).unwrap();
-    let w: Vec<i32> = chunk(&wb, b"data").chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as i32).collect();
+    let w: Vec<i32> = chunk(&wb, b"data").as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c) as i32).collect();
     std::fs::remove_file(&pf).ok();
     std::fs::remove_file(&pw).ok();
     assert_eq!(f, w, "FLAC and WAV 16-bit samples differ (dither must depend on position only)");
@@ -309,15 +309,4 @@ fn ogg_has_header_and_tags() {
     for s in ["vorbis", "TITLE=Format Test", "ARTIST=Claude", "COMMENT=a liner note for the format test", "DATE=2026", "GENRE=cowboy"] {
         assert!(text.contains(s), "Ogg lacks {s}");
     }
-}
-
-/// The shim still routes by extension.
-#[test]
-fn write_audio_shim_routes_by_extension() {
-    let path = tmp_path("shim.flac");
-    let (l, r) = test_signal(5000);
-    export::write_audio(&path, &l, &r, 44100, &Meta::default(), &export::ExportOpts::default()).unwrap();
-    let b = std::fs::read(&path).unwrap();
-    std::fs::remove_file(&path).ok();
-    assert_eq!(streaminfo(&b).6, 24);
 }

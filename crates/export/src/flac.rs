@@ -64,7 +64,7 @@ fn block_size(n: usize) -> Result<usize, ExportError> {
     // few steps (the tail grows by the frame count per step).
     (MIN_BLOCK..=BLOCK)
         .rev()
-        .find(|b| n % b == 0 || n % b >= MIN_BLOCK)
+        .find(|b| n.is_multiple_of(*b) || n % b >= MIN_BLOCK)
         .ok_or_else(|| ExportError::Flac("no valid block size".into()))
 }
 
@@ -138,8 +138,7 @@ struct Scratch {
 fn encode_frame(
     k: usize,
     s: &mut Scratch,
-    l: &[f32],
-    r: &[f32],
+    [l, r]: [&[f32]; 2],
     block: usize,
     bits: BitDepth,
     config: &(Config, Config),
@@ -194,7 +193,7 @@ pub(crate) fn write(path: &Path, l: &[f32], r: &[f32], sr: u32, meta: &Meta, bit
             .into_par_iter()
             .map_init(
                 || Scratch { fb: FrameBuf::with_size(CHANNELS, block).ok(), ints: vec![0; block * CHANNELS] },
-                |s, k| encode_frame(k, s, l, r, block, bits, &config, &info),
+                |s, k| encode_frame(k, s, [l, r], block, bits, &config, &info),
             )
             .collect();
         for bytes in encoded {

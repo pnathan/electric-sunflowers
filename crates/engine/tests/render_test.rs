@@ -76,7 +76,7 @@ fn one_and_eight_threads_are_bit_identical() {
 
 /// Whether the arrangement of `song` at `seed` has events for track `id`.
 fn has_events(song: &Song, seed: u64, id: TrackId) -> bool {
-    let prepared = compose::prepare::prepare(song, seed as u32, None);
+    let prepared = compose::prepare::prepare(song, seed, None);
     let a = arrange::arrange(song, &prepared, seed);
     let v = &a.vocals;
     match id {

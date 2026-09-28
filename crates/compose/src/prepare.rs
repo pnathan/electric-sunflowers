@@ -40,7 +40,7 @@ const MIN_NOTE: f64 = 0.05;
 /// composing again in the new key; the `compose_once_equals_two_passes`
 /// test checks it. Then times the notes in seconds. `voice_key` `None`
 /// uses the song's voice.
-pub fn prepare(song: &Song, seed: u32, voice_key: Option<Voice>) -> Prepared {
+pub fn prepare(song: &Song, seed: u64, voice_key: Option<Voice>) -> Prepared {
     let vk = voice_key.unwrap_or(song.voice);
     let (form, timeline, mut comp, key_shift) = compose_for_voice(song, seed, vk);
     time_notes(&mut comp.lead, &timeline);
@@ -59,7 +59,7 @@ fn key_shift_of(tr: i32) -> i32 {
 }
 
 /// Compose in the written key and transpose for `voice` (see `prepare`).
-fn compose_for_voice(song: &Song, seed: u32, voice: Voice) -> (Form, Timeline, Comp, i32) {
+fn compose_for_voice(song: &Song, seed: u64, voice: Voice) -> (Form, Timeline, Comp, i32) {
     let mut form = build_form(song, 0);
     let tl = Timeline::new(&form, song.tempo_bpm);
     let mut comp = compose_melody(song, &mut form, &tl, seed);
@@ -251,7 +251,7 @@ mod tests {
     /// The former preparation: compose in the written key, compose again
     /// in the chosen key, then shift octaves so the median lands where
     /// `choose_transpose` wants it (rounding half up).
-    fn two_passes(song: &Song, seed: u32, voice: Voice) -> (Form, Comp, i32) {
+    fn two_passes(song: &Song, seed: u64, voice: Voice) -> (Form, Comp, i32) {
         let mut form = build_form(song, 0);
         let tl = Timeline::new(&form, song.tempo_bpm);
         let comp = compose_melody(song, &mut form, &tl, seed);
@@ -288,7 +288,7 @@ mod tests {
         for key in 0..12 {
             for &mode in song::Mode::ALL {
                 let s = demo_in(key, mode);
-                for seed in 0..100u32 {
+                for seed in 0..100u64 {
                     let voice = Voice::ALL[seed as usize % Voice::ALL.len()];
                     let (f2, c2, ks2) = two_passes(&s, seed, voice);
                     let (f1, _, c1, ks1) = compose_for_voice(&s, seed, voice);

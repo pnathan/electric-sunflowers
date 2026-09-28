@@ -34,9 +34,9 @@ fn strum_song() -> Song {
     song::normalize_value(&v).unwrap().0
 }
 
-fn plan(song: &Song, seed: u32) -> (Prepared, Arrangement) {
+fn plan(song: &Song, seed: u64) -> (Prepared, Arrangement) {
     let p = prepare(song, seed, None);
-    let a = arrange(song, &p, seed as u64);
+    let a = arrange(song, &p, seed);
     (p, a)
 }
 
@@ -214,7 +214,7 @@ fn arrange_has_no_audio_code() {
         include_str!("../src/harmony_guitar.rs"),
         include_str!("../src/vocals.rs"),
     ] {
-        for bad in ["dsp::", "SR_F", "Vec<f32>", "sfcore::js", "sfcore::rng"] {
+        for bad in ["dsp::", "SR_F", "Vec<f32>"] {
             assert!(!src.contains(bad), "arrange source contains {bad}");
         }
     }

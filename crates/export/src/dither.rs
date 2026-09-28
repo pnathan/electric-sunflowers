@@ -53,6 +53,7 @@ impl Tpdf {
 
     /// Next dither value in LSB: triangular on (-1, 1), mean 0, variance 1/6.
     #[inline]
+    #[allow(clippy::should_implement_trait)] // an endless stream; not an Iterator
     pub fn next(&mut self) -> f64 {
         if self.left == 0 {
             self.block += 1;
@@ -100,7 +101,7 @@ pub fn quantize(x: f32, bits: BitDepth, dither: &mut Tpdf) -> i32 {
 /// (`Tpdf::at`). `out.len()` must be at least `2 * l.len()`.
 pub fn quantize_interleaved(l: &[f32], r: &[f32], bits: BitDepth, dither: &mut Tpdf, out: &mut [i32]) {
     debug_assert_eq!(l.len(), r.len());
-    for ((&a, &b), o) in l.iter().zip(r).zip(out.chunks_exact_mut(2)) {
+    for ((&a, &b), o) in l.iter().zip(r).zip(out.as_chunks_mut::<2>().0) {
         o[0] = quantize(a, bits, dither);
         o[1] = quantize(b, bits, dither);
     }

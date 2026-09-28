@@ -196,9 +196,8 @@ impl Default for PluckParams {
 }
 
 impl PluckParams {
-    /// Accompaniment guitar. Replaces the PluckOpts literal in
-    /// arrange/src/guitar.rs: amp v, bright 0.6 + 0.25 v, damp GT.damp 0.18,
-    /// glide GT.glide 5 * v, atk_noise GT.atk 1.0 * v, t60 7 (82 / f)^0.45,
+    /// Accompaniment guitar: amp v, bright 0.6 + 0.25 v, damp 0.18, glide
+    /// 5 v cents, attack noise 1.0 v (`guitar::TUNING`), t60 7 (82 / f)^0.45,
     /// pick 0.11 + 0.07 U, noise 0.06, detune 1 + 0.8 U, rel 0.02, rel_t 0.08.
     /// Length comes from the string events (`guitar::render_strings`).
     pub const GUITAR: PluckParams = PluckParams {
@@ -221,7 +220,7 @@ impl PluckParams {
         length: NoteLength::Held { tail: 0.0 },
     };
 
-    /// Bass pluck layer. Replaces the literal in arrange/src/bass.rs: amp v,
+    /// Bass pluck layer: amp v,
     /// bright 0.12, damp 0.5, t60 2.2, pick 0.2, noise 0.03, detune default
     /// 1.4, rel 0.06, rel_t 0.12; length `t1 - t0 + 0.05`. The sine sub layer
     /// is `guitar::render_bass`.
@@ -245,7 +244,7 @@ impl PluckParams {
         length: NoteLength::Held { tail: 0.05 },
     };
 
-    /// Harp. Replaces the literal in arrange/src/harp.rs: amp v, bright 0.45,
+    /// Harp: amp v, bright 0.45,
     /// damp 0.16, t60 6 (98 / f)^0.5, pick 0.3 + 0.15 U, noise 0.02, detune
     /// 0.8 + 0.8 U, rel 0.3, rel_t 0.4; length `min(7, 3 + 400 / f)` s.
     pub const HARP: PluckParams = PluckParams {
@@ -268,8 +267,7 @@ impl PluckParams {
         length: NoteLength::Ring { base: 3.0, per_hz: 400.0, max: 7.0 },
     };
 
-    /// Harmony-guitar lead and fill notes. Replaces the literal in
-    /// engine/src/band.rs `pluck_hg`: amp v, bright 0.7, damp 0.08,
+    /// Harmony-guitar lead and fill notes: amp v, bright 0.7, damp 0.08,
     /// t60 5 (110 / f)^0.4, pick 0.12, noise 0.05, detune default 1.4,
     /// rel 0.08, rel_t 0.1; length `t1 - t0 + 0.4`.
     pub const HG_LEAD: PluckParams = PluckParams {
@@ -292,8 +290,7 @@ impl PluckParams {
         length: NoteLength::Held { tail: 0.4 },
     };
 
-    /// Harmony-guitar arpeggio. Replaces the literal in engine/src/band.rs:
-    /// amp 0.32 (fixed: the planner gives velocity 1), bright 0.65, damp
+    /// Harmony-guitar arpeggio: amp 0.32 (fixed: the planner gives velocity 1), bright 0.65, damp
     /// 0.08, t60 3, pick 0.2, noise 0.05, detune default 1.4, rel 0.15,
     /// rel_t 0.2; length 1.4 s.
     pub const HG_ARP: PluckParams = PluckParams {

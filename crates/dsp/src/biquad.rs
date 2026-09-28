@@ -10,6 +10,7 @@
 //! - shelves: the Q form, with 2 sqrt(A) alpha in the numerator and
 //!   denominator; gain dB at DC (low shelf) or Nyquist (high shelf), half the
 //!   gain in dB at f.
+//!
 //! All coefficients are normalised by a0. f is clamped to (0, 0.45 fs] and Q
 //! to a small positive floor, so no design returns NaN.
 //!

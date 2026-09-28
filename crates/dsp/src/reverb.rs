@@ -214,11 +214,3 @@ impl Fdn8 {
         }
     }
 }
-
-/// shim: deleted when the mix moves to `Fdn8` directly. Adds `wet` times
-/// the reverb of (`in_l`, `in_r`) into (`out_l`, `out_r`) with the mix T60s.
-/// A negative `seed` uses its two's-complement bits.
-pub fn fdn_reverb(in_l: &[f32], in_r: &[f32], out_l: &mut [f32], out_r: &mut [f32], wet: f64, seed: i64) {
-    let mut fdn = Fdn8::new(SR_F, seed as u64, T60_DC, T60_NYQ);
-    fdn.process_block([in_l, in_r], [out_l, out_r], wet);
-}

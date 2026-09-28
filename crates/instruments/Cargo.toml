@@ -9,4 +9,7 @@ publish.workspace = true
 sfcore = { path = "../core" }
 dsp = { path = "../dsp" }
 song = { path = "../song" }
+
+[dev-dependencies]
+# The Helmholtz sweep (tests/helmholtz/mod.rs) runs its cases in parallel.
 rayon = "1.10"

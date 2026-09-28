@@ -75,9 +75,8 @@ fn main() {
             // Low band: cross- and auto-spectra weighted by |H|^2 of a
             // 4th-order Butterworth low-pass at 300 Hz.
             let (mut x, mut e0, mut e1) = (0.0, 0.0, 0.0);
-            for k in 0..spec[0].len() {
+            for (k, (&a, &b)) in spec[0].iter().zip(&spec[1]).enumerate() {
                 let w = 1.0 / (1.0 + (k as f64 * df / 300.0).powi(8));
-                let (a, b) = (spec[0][k], spec[1][k]);
                 x += w * (a.re as f64 * b.re as f64 + a.im as f64 * b.im as f64);
                 e0 += w * ((a.re as f64).powi(2) + (a.im as f64).powi(2));
                 e1 += w * ((b.re as f64).powi(2) + (b.im as f64).powi(2));
@@ -90,8 +89,8 @@ fn main() {
         for (b, &fc) in centres.iter().enumerate() {
             let mut sd: f64 = 0.0;
             let mut mean = 0.0;
-            for c in 0..2 {
-                let v = &db[c][b];
+            for ch in &db {
+                let v = &ch[b];
                 let m = v.iter().sum::<f64>() / v.len() as f64;
                 let s = (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len() - 1) as f64).sqrt();
                 sd = sd.max(s);

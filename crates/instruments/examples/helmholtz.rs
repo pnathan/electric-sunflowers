@@ -4,9 +4,12 @@
 //! `stable N/216` and the failing notes as `midi:velocity`. Phrases: 30
 //! four-note legato phrases across the range; prints `phrase notes N/120`
 //! and the failures as `phrase.note:midi`. Criteria in
-//! `instruments::violin::helmholtz`.
+//! tests/helmholtz/mod.rs.
 
-use instruments::violin::helmholtz::{note_sweep, phrase_sweep};
+#[path = "../tests/helmholtz/mod.rs"]
+mod helmholtz;
+
+use helmholtz::{note_sweep, phrase_sweep};
 
 fn main() {
     let (ok, total, bad) = note_sweep();

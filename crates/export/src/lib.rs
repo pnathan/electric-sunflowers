@@ -169,34 +169,3 @@ pub fn write(
         Format::Wav { sample } => wav::write(path, left, right, sample_rate, meta, sample),
     }
 }
-
-/// Options for the `write_audio` shim. shim: deleted in wave 5.
-#[derive(Clone, Debug)]
-pub struct ExportOpts {
-    /// Ogg Vorbis VBR quality. Default 0.6.
-    pub ogg_quality: f32,
-    /// FLAC bit depth. Default 24.
-    pub flac_bits: BitDepth,
-    /// WAV: false = 16-bit PCM (default), true = 32-bit float.
-    pub wav_float: bool,
-}
-
-impl Default for ExportOpts {
-    fn default() -> Self {
-        Self { ogg_quality: 0.6, flac_bits: BitDepth::Bits24, wav_float: false }
-    }
-}
-
-/// `write` with the format taken from `path` and `opts`. shim: deleted in
-/// wave 5.
-pub fn write_audio(
-    path: &Path,
-    left: &[f32],
-    right: &[f32],
-    sample_rate: u32,
-    meta: &Meta,
-    opts: &ExportOpts,
-) -> Result<(), ExportError> {
-    let fmt = Format::from_path(path, opts.ogg_quality, opts.flac_bits == BitDepth::Bits16, opts.wav_float)?;
-    write(path, left, right, sample_rate, meta, fmt)
-}

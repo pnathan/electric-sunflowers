@@ -25,7 +25,7 @@ struct Cli {
 struct RenderArgs {
     /// Song seed; random (and printed) when left out.
     #[arg(long)]
-    seed: Option<u32>,
+    seed: Option<u64>,
     /// Singing voice; auto keeps the song's.
     #[arg(long, value_enum, default_value = "auto")]
     voice: VoiceArg,
@@ -208,16 +208,16 @@ fn apply_style(song: &mut Song, key: &str) -> Result<()> {
     Ok(())
 }
 
-/// A random 32-bit seed. Not cryptographic: process id xor the clock.
-fn random_seed() -> u32 {
+/// A random 64-bit seed. Not cryptographic: process id xor the clock.
+fn random_seed() -> u64 {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let pid = std::process::id() as u128;
-    ((nanos ^ (pid << 32) ^ 0x9E3779B97F4A7C15) as u64 ^ ((nanos >> 64) as u64)) as u32
+    (nanos ^ (pid << 32) ^ 0x9E3779B97F4A7C15) as u64 ^ ((nanos >> 64) as u64)
 }
 
 /// The seed from `--seed`, or a random one, printed so the run can be
 /// reproduced.
-fn resolve_seed(seed: Option<u32>) -> u32 {
+fn resolve_seed(seed: Option<u64>) -> u64 {
     seed.unwrap_or_else(|| {
         let s = random_seed();
         eprintln!("sunflower: seed {s}");
@@ -238,7 +238,7 @@ impl Progress for Report {
 /// format its extension names.
 fn pipeline(song: &Song, render: &RenderArgs, band: Band, out: &Path, export: &ExportArgs) -> Result<()> {
     let fmt = Format::from_path(out, export.quality, export.flac16, export.float)?;
-    let seed = resolve_seed(render.seed) as u64;
+    let seed = resolve_seed(render.seed);
     eprintln!("sunflower: rendering on {} threads", rayon::current_num_threads());
     let (_, stems) = engine::render(song, seed, render.voice.voice(), &Report);
     eprintln!("sunflower: mixing");
@@ -280,7 +280,7 @@ fn cmd_write(mood: &str, style: Option<&str>, via: Via, model: Option<&str>, ren
         .map(|s| s.parse::<songwriter::styles::StyleId>())
         .transpose()
         .map_err(|e| anyhow!("{e}"))?;
-    let mut rng = songwriter::Rng::stream(seed as u64, songwriter::WRITE_TAG);
+    let mut rng = songwriter::Rng::stream(seed, songwriter::WRITE_TAG);
     let req = songwriter::WriteRequest {
         mood,
         voice: render.voice.voice(),

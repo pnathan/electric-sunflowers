@@ -90,7 +90,7 @@ fn eq_channel(buf: &mut SparseBuf, strip: &Strip) -> Vec<f64> {
 /// blocks above `RMS_GATE` of the loudest block; 0 when all are silent.
 pub fn active_rms(sums: &[f64], len: usize) -> f64 {
     let block_rms = |k: usize| {
-        let n = len.saturating_sub(k * RMS_BLOCK).min(RMS_BLOCK).max(1);
+        let n = len.saturating_sub(k * RMS_BLOCK).clamp(1, RMS_BLOCK);
         (sums[k] / n as f64).sqrt()
     };
     let mx = (0..sums.len()).map(block_rms).fold(0.0, f64::max);
@@ -198,7 +198,7 @@ pub fn run_strip(strip: &Strip, mut audio: Stem) -> Option<(ProcessedStem, Optio
             active_rms(&sl, len).max(active_rms(&sr, len))
         }
     };
-    if !(rms >= SILENT_RMS) {
+    if rms.is_nan() || rms < SILENT_RMS {
         return None;
     }
     let level = TARGET_RMS / rms;

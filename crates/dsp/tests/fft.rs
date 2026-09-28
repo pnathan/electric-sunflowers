@@ -1,6 +1,6 @@
 //! FFT and convolution against direct O(n^2) references (design 9).
 
-use dsp::conv::{conv_stereo, convolve_mono_to_stereo, StereoIr};
+use dsp::conv::{convolve_mono_to_stereo, StereoIr};
 use dsp::fft::{Fft, RealFft, C32};
 
 /// Deterministic uniform noise in [-1, 1) (xorshift32; test data only).
@@ -205,14 +205,4 @@ fn convolution_is_thread_count_invariant() {
     assert!(one[0] == eight[0] && one[1] == eight[1], "1 vs 8 threads differ");
     assert!(one[0] == three[0] && one[1] == three[1], "1 vs 3 threads differ");
     assert!(one[0].iter().zip(&eight[0]).all(|(a, b)| a.to_bits() == b.to_bits()));
-}
-
-#[test]
-fn shim_matches_new_api() {
-    let x = test_input(20000);
-    let hl: Vec<f32> = noise(3000, 5).iter().map(|&v| v as f32).collect();
-    let hr: Vec<f32> = noise(3000, 6).iter().map(|&v| v as f32).collect();
-    let (l, r) = conv_stereo(&x, &hl, &hr, 23000);
-    let [nl, nr] = convolve_mono_to_stereo(&x, &StereoIr::from_f32(&hl, &hr), 23000);
-    assert_eq!((l, r), (nl, nr));
 }

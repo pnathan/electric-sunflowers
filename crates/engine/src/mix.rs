@@ -44,7 +44,7 @@ pub const BUS_RELEASE: f64 = 0.3;
 pub const BUS_KNEE_DB: f64 = 10.0;
 pub const BUS_OVER_RMS_DB: f64 = 5.0;
 
-const _: () = assert!(STEM_BLOCK % MIX_BLOCK == 0);
+const _: () = assert!(STEM_BLOCK.is_multiple_of(MIX_BLOCK));
 
 /// A stereo signal.
 #[derive(Clone, Debug, Default, PartialEq)]

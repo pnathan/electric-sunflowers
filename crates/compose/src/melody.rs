@@ -98,8 +98,8 @@ const HOOKS: [i32; 8] = [5, 7, -5, 9, 12, 3, -7, 0];
 /// the verse; amplitudes 2-5 semitones. Leap 0-0.85, repetition 0-0.8,
 /// pitch noise 0.9-2.2. Rhythm: dot and even 0-1, syncopation 0.3-0.8 in
 /// 35% of songs, rhythm noise 0.5-1.4. Prechorus contours lean upward.
-pub fn melody_profile(seed: u32, song: &Song) -> MelodyProfile {
-    let mut r = Rng::event(seed as u64, PROFILE, tag(&song.title).0);
+pub fn melody_profile(seed: u64, song: &Song) -> MelodyProfile {
+    let mut r = Rng::event(seed, PROFILE, tag(&song.title).0);
     let keys = ContourKind::KEYS;
     let pick = |r: &mut Rng, opts: &[ContourKind]| opts[r.below(opts.len() as u32) as usize];
 
@@ -325,8 +325,7 @@ const GRACE_FALL_P: f64 = 0.18;
 /// Composes every sung line (lines with the same kind, index, text and
 /// chords are composed once and repeat exactly) and the instrumental lead
 /// lines of instrumental sections. Sets `form.lines[*].pitches` and `.rh`.
-pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) -> Comp {
-    let seed64 = seed as u64;
+pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u64) -> Comp {
     let bpb = form.bpb();
     let tonic = (song.key.get() as i32 + form.transpose).rem_euclid(12);
     let t = register_of(tonic);
@@ -378,8 +377,8 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
                     prev_end,
                     hook: if first_lift && li == 0 { prof.hook } else { 0 },
                 };
-                let mut rr = Rng::event(seed64, RHYTHM, event_key(kind as usize, li, 0));
-                let mut pr = Rng::event(seed64, PITCH, event_key(kind as usize, li, sec.occ));
+                let mut rr = Rng::event(seed, RHYTHM, event_key(kind as usize, li, 0));
+                let mut pr = Rng::event(seed, PITCH, event_key(kind as usize, li, sec.occ));
                 let m = compose_line(&spec, &h, &mut rr, &mut pr);
                 cache.insert(key.clone(), m);
             }
@@ -395,7 +394,7 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
             }
 
             let n = m.pitches.len();
-            let mut gr = Rng::event(seed64, GRACE, line.start_bar as u64);
+            let mut gr = Rng::event(seed, GRACE, line.start_bar as u64);
             for i in 0..n {
                 let dur = m.rh.durs[i];
                 let midi = m.pitches[i];
@@ -434,7 +433,7 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
         }
     }
 
-    let inst = compose_instrumental(song, form, tl, seed64, tonic, t);
+    let inst = compose_instrumental(song, form, tl, seed, tonic, t);
     Comp { lead, inst, t, tonic }
 }
 

@@ -156,7 +156,7 @@ impl RealFft {
         if let Some(v) = input.first_mut() {
             v.im = 0.0;
         }
-        if self.n % 2 == 0 {
+        if self.n.is_multiple_of(2) {
             if let Some(v) = input.get_mut(self.n / 2) {
                 v.im = 0.0;
             }
@@ -175,6 +175,3 @@ impl RealFft {
         Ok(())
     }
 }
-
-/// Shim: deleted in wave 5. Old `conv_stereo` entry point; see `crate::conv`.
-pub use crate::conv::conv_stereo;
