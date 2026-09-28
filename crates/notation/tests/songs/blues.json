@@ -1,0 +1,13 @@
+{
+  "title": "Blues Test", "key": "C", "mode": "major", "meter": "4/4", "tempo": 112,
+  "guitar": "strum", "voice": "alto",
+  "sections": [
+    {"type": "verse", "lines": [
+      {"syl": "*Wo-ke up this *morn-ing, *sun was *not a-round", "chords": ["C","C","C","C","F","F","C","C","G","F","C","G"]}
+    ]},
+    {"type": "chorus", "lines": [
+      {"syl": "*Roll on *down the *line to *town", "chords": ["F","F","C","C","G","F","C","G"]}
+    ]},
+    {"type": "verse", "same": true}
+  ]
+}

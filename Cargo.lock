@@ -1288,9 +1288,11 @@ dependencies = [
  "dsp",
  "instruments",
  "rayon",
+ "serde",
  "serde_json",
  "sfcore",
  "song",
+ "songwriter",
  "voice",
 ]
 
@@ -2432,6 +2434,9 @@ name = "notation"
 version = "0.1.0"
 dependencies = [
  "compose",
+ "engine",
+ "resvg",
+ "serde_json",
  "song",
 ]
 

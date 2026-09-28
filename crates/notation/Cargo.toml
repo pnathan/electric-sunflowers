@@ -8,3 +8,8 @@ publish.workspace = true
 [dependencies]
 song = { path = "../song" }
 compose = { path = "../compose" }
+
+[dev-dependencies]
+engine = { path = "../engine" }
+resvg = "0.48"
+serde_json.workspace = true

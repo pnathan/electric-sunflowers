@@ -1,0 +1,28 @@
+{
+  "title": "Low Tide at Tomales",
+  "key": "D",
+  "mode": "mixolydian",
+  "meter": "6/8",
+  "tempo": 58,
+  "guitar": "arpeggio",
+  "voice": "soprano",
+  "sections": [
+    {"type": "intro", "chords": ["D", "C", "G", "D"]},
+    {"type": "verse", "lines": [
+      {"syl": "the *wa-ter *pulls the *sand a-*way", "chords": ["D", "C"]},
+      {"syl": "and *leaves the *heron *stand-ing *still", "chords": ["G", "D"]},
+      {"syl": "a *yel-low *light at *end of *day", "chords": ["D", "C"]},
+      {"syl": "that *runs a-*long the *western *hill", "chords": ["G A", "D"]}
+    ]},
+    {"type": "chorus", "lines": [
+      {"syl": "*oh the *tide goes *out and the *tide comes *in", "chords": ["G", "D"]},
+      {"syl": "and *ev-ery *shell has a *place it's *been", "chords": ["C", "G D"]}
+    ]},
+    {"type": "verse", "lines": [
+      {"syl": "the *fog comes *in be-*hind the *boats", "chords": ["D", "C"]},
+      {"syl": "and *gulls go *qui-et *one by *one", "chords": ["G", "D"]}
+    ]},
+    {"type": "chorus", "same": true},
+    {"type": "outro", "chords": ["D", "C", "D"]}
+  ]
+}
