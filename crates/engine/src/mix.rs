@@ -15,6 +15,14 @@
 //! 5 dB over the bus RMS, stereo-linked on max(|L|, |R|). Last, the sample
 //! peak is normalised to 0.89.
 //!
+//! Vocal ducking: every stem except the lead is turned down by up to
+//! `DUCK_DB` while the lead sings. The key is the lead's power after its
+//! strip, smoothed by a one-pole with `DUCK_ATTACK` rising and
+//! `DUCK_RELEASE` falling; the duck depth is proportional to the key's RMS
+//! up to half the lead's target level, where it reaches `DUCK_DB`. This is
+//! the broadcast "voice-over ducker", used here so the words stay on top of
+//! a full band without thinning the instrumental sections.
+//!
 //! Only the output is full length; the buses are one block.
 
 use dsp::dynamics::{Compressor, GainComputer, Link, PeakDetector};
@@ -43,6 +51,11 @@ pub const BUS_ATTACK: f64 = 0.02;
 pub const BUS_RELEASE: f64 = 0.3;
 pub const BUS_KNEE_DB: f64 = 10.0;
 pub const BUS_OVER_RMS_DB: f64 = 5.0;
+/// Accompaniment reduction while the lead sings, dB.
+pub const DUCK_DB: f64 = 5.0;
+/// Key smoothing time constants, s.
+pub const DUCK_ATTACK: f64 = 0.03;
+pub const DUCK_RELEASE: f64 = 0.35;
 
 const _: () = assert!(STEM_BLOCK.is_multiple_of(MIX_BLOCK));
 
@@ -58,6 +71,45 @@ struct Route<'a> {
     src: &'a SparseBuf,
     /// Main L, main R, send L, send R.
     g: [f32; 4],
+    /// Turned down by the vocal ducker (every track but the lead).
+    ducked: bool,
+}
+
+/// Per-frame gain the ducker applies to the accompaniment: 1 where the lead
+/// is silent, down to -`DUCK_DB` where it sings (see the module doc).
+/// `None` when the lead does not play.
+pub fn duck_gains(stems: &Stems, band: &Band) -> Option<Vec<f32>> {
+    if !TrackId::Lead.plays(band) {
+        return None;
+    }
+    let p = stems.get(TrackId::Lead)?;
+    let k = TrackId::Lead.strip().gain as f64 * p.level as f64;
+    let lead = p.audio.channels().first()?;
+    let full = 0.5 * crate::track::TARGET_RMS * k;
+    let depth = 1.0 - sfcore::math::db_to_gain(-DUCK_DB);
+    let (up, down) = (sfcore::math::one_pole_coeff_tau(DUCK_ATTACK, SR_F), sfcore::math::one_pole_coeff_tau(DUCK_RELEASE, SR_F));
+    let mut ms = 0.0f64;
+    let mut out = vec![1.0f32; stems.len];
+    let mut buf = vec![0.0f32; MIX_BLOCK];
+    for s in (0..stems.len).step_by(MIX_BLOCK) {
+        let n = MIX_BLOCK.min(stems.len - s);
+        let x: &[f32] = match lead.span(s, n) {
+            Some(x) => x,
+            None => {
+                buf[..n].fill(0.0);
+                &buf[..n]
+            }
+        };
+        for i in 0..n {
+            let v = x[i] as f64 * k;
+            let e = v * v;
+            let a = if e > ms { up } else { down };
+            ms += a * (e - ms);
+            let amount = (ms.sqrt() / full).min(1.0);
+            out[s + i] = (1.0 - depth * amount) as f32;
+        }
+    }
+    Some(out)
 }
 
 /// The routes of every stem `band` enables, in `TrackId` order.
@@ -73,7 +125,7 @@ fn routes<'a>(stems: &'a Stems, band: &Band) -> Vec<Route<'a>> {
         let send = strip.send;
         let mut push = |src, gl: f32, gr: f32| {
             let (gl, gr) = (gl * k, gr * k);
-            out.push(Route { src, g: [gl, gr, gl * send, gr * send] });
+            out.push(Route { src, g: [gl, gr, gl * send, gr * send], ducked: id != TrackId::Lead });
         };
         match &p.audio {
             Stem::Mono(x) => {
@@ -94,6 +146,7 @@ fn routes<'a>(stems: &'a Stems, band: &Band) -> Vec<Route<'a>> {
 pub fn mix(stems: &Stems, band: &Band, seed: u64) -> Stereo {
     let len = stems.len;
     let routes = routes(stems, band);
+    let duck = duck_gains(stems, band);
     let slap = if TrackId::Lead.plays(band) && stems.get(TrackId::Lead).is_some() { stems.slapback.as_ref() } else { None };
     let mut fdn = Fdn8::new(SR_F, seed, T60_DC, T60_NYQ);
     let mut out = Stereo { l: vec![0.0; len], r: vec![0.0; len] };
@@ -111,8 +164,9 @@ pub fn mix(stems: &Stems, band: &Band, seed: u64) -> Stereo {
         for rt in &routes {
             let Some(x) = rt.src.span(s, n) else { continue };
             let [a, b, c, d] = rt.g;
+            let dk = duck.as_deref().filter(|_| rt.ducked).map(|g| &g[s..s + n]);
             for i in 0..n {
-                let v = x[i];
+                let v = x[i] * dk.map_or(1.0, |g| g[i]);
                 ml[i] += v * a;
                 mr[i] += v * b;
                 sl[i] += v * c;
