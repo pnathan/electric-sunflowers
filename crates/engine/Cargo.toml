@@ -12,5 +12,9 @@ dsp = { path = "../dsp" }
 instruments = { path = "../instruments" }
 voice = { path = "../voice" }
 arrange = { path = "../arrange" }
+serde.workspace = true
 serde_json.workspace = true
 rayon = "1.10"
+
+[dev-dependencies]
+songwriter = { path = "../songwriter" }

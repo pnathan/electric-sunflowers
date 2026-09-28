@@ -257,3 +257,92 @@ fn sequential_flag_is_gone() {
     let output = Command::new(bin()).args(["demo", "--sequential"]).output().expect("run sunflower demo");
     assert!(!output.status.success());
 }
+
+/// `render` writes `<stem>.render.json` and `<stem>.sheet.json` next to the
+/// audio; the sidecar names the song, the audio, the seed and the voice.
+#[test]
+fn render_writes_the_sidecars() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("tune.ogg");
+    let status = Command::new(bin())
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "--voice", "tenor", "-o", out.to_str().unwrap()])
+        .status()
+        .expect("run sunflower render");
+    assert!(status.success());
+    let side: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("tune.render.json")).unwrap()).unwrap();
+    assert_eq!(side["seed"], 7);
+    assert_eq!(side["voice"], "tenor");
+    assert!(side["model"].is_null());
+    assert_eq!(side["song_json"].as_str().unwrap(), std::fs::canonicalize(song_path()).unwrap().to_str().unwrap());
+    assert_eq!(side["audio"].as_str().unwrap(), std::fs::canonicalize(&out).unwrap().to_str().unwrap());
+    let created = side["created"].as_str().unwrap();
+    assert_eq!(created.len(), 20, "{created}");
+    assert!(created.ends_with('Z') && &created[10..11] == "T", "{created}");
+
+    let sheet: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("tune.sheet.json")).unwrap()).unwrap();
+    assert_eq!(sheet["title"], "Test Tune");
+    assert_eq!(sheet["seed"], 7);
+    assert_eq!(sheet["voice"], "tenor");
+    let labels: Vec<&str> = sheet["sections"].as_array().unwrap().iter().map(|s| s["label"].as_str().unwrap()).collect();
+    assert_eq!(labels, ["Intro", "Verse", "Outro"]);
+    let verse = &sheet["sections"][1]["lines"][0];
+    assert_eq!(verse["text"], "the sun goes down on one more day");
+    assert_eq!(verse["syllables"].as_array().unwrap().len(), 8);
+
+    // The sheet command prints the same sheet as the sidecar.
+    let output = Command::new(bin())
+        .args(["sheet", song_path().to_str().unwrap(), "--seed", "7", "--voice", "tenor", "--json"])
+        .output()
+        .expect("run sunflower sheet");
+    assert!(output.status.success());
+    let printed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(printed, sheet);
+}
+
+/// `demo` saves the demo song as `<stem>.json` and names it in the sidecar.
+#[test]
+fn demo_writes_the_song_and_the_sidecars() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("demo.ogg");
+    let status = Command::new(bin())
+        .args(["demo", "--seed", "3", "-o", out.to_str().unwrap()])
+        .status()
+        .expect("run sunflower demo");
+    assert!(status.success());
+    let side: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("demo.render.json")).unwrap()).unwrap();
+    let song_json = side["song_json"].as_str().unwrap();
+    assert!(song_json.ends_with("demo.json"));
+    let song: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(song_json).unwrap()).unwrap();
+    assert_eq!(song["title"], "Every Harbor");
+    assert!(dir.path().join("demo.sheet.json").exists());
+}
+
+/// `sheet` prints section labels and chords above the lyric.
+#[test]
+fn sheet_prints_a_chord_sheet() {
+    let output = Command::new(bin())
+        .args(["sheet", song_path().to_str().unwrap(), "--seed", "7"])
+        .output()
+        .expect("run sunflower sheet");
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[0], "Test Tune");
+    assert!(lines.iter().any(|l| l.starts_with("[Intro]")));
+    // The key moves for the voice, so check the bar row by its form.
+    assert!(lines.iter().any(|l| l.starts_with("| ") && l.matches('|').count() == 5), "{text}");
+    let k = lines.iter().position(|l| *l == "the sun goes down on one more day").expect("lyric line");
+    let chords = lines[k - 1];
+    assert_eq!(chords.split_whitespace().count(), 2, "{chords:?}");
+    assert!(chords.starts_with(' '), "the first chord sits over a stressed syllable: {chords:?}");
+}
+
+#[test]
+fn sheet_of_a_missing_file_errors_without_panicking() {
+    let output = Command::new(bin()).args(["sheet", "/no/such/song.json", "--seed", "1"]).output().expect("run sunflower sheet");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("reading song JSON"));
+}

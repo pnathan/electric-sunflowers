@@ -6,6 +6,7 @@
 //! - `strip`: EQ, gated loudness, compressor, slapback.
 //! - `render`: the task graph (`render`), producing `Stems`.
 //! - `mix`: the block mixer, bus compressor and peak normalisation.
+//! - `sheet`: the song sheet (sections, lyrics, chords, times) as rendered.
 //!
 //! `render` once, then `mix` as often as the band changes.
 
@@ -14,6 +15,7 @@ use std::sync::OnceLock;
 pub mod band;
 pub mod mix;
 pub mod render;
+pub mod sheet;
 pub mod stem;
 pub mod strip;
 pub mod track;
@@ -21,6 +23,7 @@ pub mod vocals;
 
 pub use mix::{mix, Stereo};
 pub use render::{render, NoProgress, Progress, Stems};
+pub use sheet::{sheet_from, song_sheet, SheetBar, SheetChord, SheetLine, SheetSection, SheetSyllable, SheetWord, SongSheet};
 pub use stem::{SparseBuf, Stem};
 pub use strip::ProcessedStem;
 pub use track::{BandPart, TrackId, STRIPS};

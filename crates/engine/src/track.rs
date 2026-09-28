@@ -193,6 +193,12 @@ pub struct Strip {
     pub slapback: Option<Slapback>,
 }
 
+/// Presence cut on the accompaniment that shares the voice's intelligibility
+/// band (guitars, violin, choir): a peaking dip centred where consonant and
+/// upper-formant energy carries the words.
+const PRESENCE_HZ: f64 = 2500.0;
+const PRESENCE_CUT_DB: f64 = -3.0;
+
 /// Gated RMS every track is brought to before its strip gain.
 pub const TARGET_RMS: f64 = 0.1;
 
@@ -219,7 +225,7 @@ pub const LEAD_SLAP: Slapback = Slapback { delay_s: 0.34, feedback: 0.22, lp_hz:
 pub const STRIPS: [Strip; N_TRACKS] = [
     Strip {
         label: "Lead vocal",
-        gain: 1.0,
+        gain: 1.25,
         pan: 0.0,
         send: 0.2,
         band: None,
@@ -256,18 +262,18 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         pan: 0.0,
         send: 0.5,
         band: Some(BandPart::Choir),
-        eq: &[hp(120.0), lp(6500.0)],
+        eq: &[hp(120.0), pk(PRESENCE_HZ, 1.0, PRESENCE_CUT_DB), lp(6500.0)],
         body: None,
         comp: None,
         slapback: None,
     },
     Strip {
         label: "Guitar",
-        gain: 0.62,
+        gain: 0.5,
         pan: -0.2,
         send: 0.16,
         band: None,
-        eq: &[hp(70.0), pk(115.0, 0.9, 3.0), hs(9500.0, -2.0)],
+        eq: &[hp(70.0), pk(115.0, 0.9, 3.0), pk(PRESENCE_HZ, 1.0, PRESENCE_CUT_DB), hs(9500.0, -2.0)],
         body: Some(BodyMount { body: Body::Guitar, seed_offset: 0 }),
         comp: None,
         slapback: None,
@@ -278,7 +284,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         pan: 0.45,
         send: 0.28,
         band: Some(BandPart::HarmonyGuitar),
-        eq: &[hp(120.0), hs(9000.0, -2.0)],
+        eq: &[hp(120.0), pk(PRESENCE_HZ, 1.0, PRESENCE_CUT_DB), hs(9000.0, -2.0)],
         body: Some(BodyMount { body: Body::Guitar, seed_offset: 17 }),
         comp: None,
         slapback: None,
@@ -322,7 +328,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         pan: -0.4,
         send: 0.42,
         band: Some(BandPart::Violin),
-        eq: &[hp(190.0), hs(2800.0, 7.0), hs(7000.0, 5.0)],
+        eq: &[hp(190.0), hs(2800.0, 7.0), pk(PRESENCE_HZ, 1.0, PRESENCE_CUT_DB), hs(7000.0, 5.0)],
         body: Some(BodyMount { body: Body::Violin, seed_offset: 0 }),
         comp: None,
         slapback: None,
