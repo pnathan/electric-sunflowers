@@ -10,9 +10,9 @@
 #                       1/3-octave LTAS against tests/soundgate/baseline-mean/
 #                       (soundgate compare-mean: a band passes within 3 dB
 #                       100 Hz-10 kHz / 6 dB elsewhere, or within 2x the
-#                       baseline's seed-to-seed std; mean gated RMS 2 dB;
-#                       mean active fraction 15 pts; mix peak every seed;
-#                       lead pitch pooled over seeds).
+#                       baseline's seed-to-seed std capped at 6 / 9 dB;
+#                       mean gated RMS 1.5 dB; mean active fraction 15 pts;
+#                       mix peak every seed; lead pitch pooled over seeds).
 #   --strict            also compare seeds 1234 and 2718 one by one against
 #                       tests/soundgate/baseline/sS at 0.5 dB (100 Hz-10 kHz)
 #                       / 1 dB (other bands), with per-seed pitch: for
@@ -55,7 +55,7 @@ done
 [[ -n "$label" ]] || { echo "usage: scripts/gate.sh [--strict] [--against DIR] [--capture-baseline] [--targets] LABEL" >&2; exit 2; }
 [[ "$label" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "gate: LABEL must match [A-Za-z0-9._-]+" >&2; exit 2; }
 
-# strict per-seed tolerance; the mean check uses soundgate's defaults (3/6 dB, 2 sd)
+# strict per-seed tolerance; the mean check uses soundgate's defaults (3/6 dB, 2 sd capped at 6/9 dB)
 tol_mid=0.5; tol_edge=1.0
 seeds=(1234 2718 1 7 42 99 314 1618)
 keep_seeds=(1234 2718)
@@ -80,17 +80,12 @@ fcmp() { awk "BEGIN{exit !($1)}"; }
 echo "== build"
 cargo build --release --workspace --all-targets 2>&1 | tail -n 3
 
-features=()
-if grep -Eq '^[[:space:]]*capture_raw[[:space:]]*=' crates/engine/Cargo.toml; then
-    features=(--features capture_raw)
-fi
-
 for s in "${seeds[@]}"; do
     d="$out/s$s"
     rm -rf "$d"
     mkdir -p "$d"
     echo "== stems seed $s"
-    cargo run --release -q -p engine "${features[@]}" --example stems -- --seed "$s" --out "$d"
+    cargo run --release -q -p engine --example stems -- --seed "$s" --out "$d"
     # exit 1: NaN/inf samples in some file (listed in ltas.txt); 2: no reading
     if ! target/release/soundgate ltas "$d" > "$d/ltas.txt"; then
         record FAIL "ltas run s$s" "$(tail -n 1 "$d/ltas.txt")"
@@ -137,7 +132,7 @@ elif [[ -f "$ref_mean" ]]; then
     sed -n '/^seeds base/,$p' "$out/compare-mean-bands.txt" | tee "$out/compare-mean.txt"
     worst=$(awk 'NR>2 && $1!="pitch" && $NF!="PASS"{print $1}' "$out/compare-mean.txt" | paste -sd, -)
     if [[ $mean_ok -eq 1 ]]; then
-        record PASS "ltas mean" "every stem within 3/6 dB or 2 sd; rms 2 dB, active 15 pts, mix peak"
+        record PASS "ltas mean" "every stem within 3/6 dB or 2 sd (cap 6/9 dB); rms 1.5 dB, active 15 pts, mix peak"
         record PASS "pitch pooled" "$(grep '^pitch pooled' "$out/compare-mean.txt" | sed 's/^pitch pooled: //')"
     else
         record FAIL "ltas mean / pitch" "${worst:-pitch}: see $out/compare-mean.txt and compare-mean-bands.txt"
@@ -178,8 +173,6 @@ echo "== perf"
 # it to fall to half the core count, and above that the run is marked
 # "loaded" and the perf checks FAIL, since the times are not comparable.
 perf_runs=3
-seqflag=()
-if target/release/sunflower demo --help 2>/dev/null | grep -q -- '--sequential'; then seqflag=(--sequential); fi
 # wall seconds and max RSS MB from a /usr/bin/time -v log
 tv_wall() { awk -F': ' '/Elapsed \(wall clock\)/{n=split($2,t,":"); s=0; for(i=1;i<=n;i++) s=s*60+t[i]; printf "%.2f", s}' "$1"; }
 tv_rss() { awk -F': ' '/Maximum resident set size/{printf "%.0f", $2/1024}' "$1"; }
@@ -195,7 +188,7 @@ echo "load average $load1 on $ncpu cores"
 tw=""; tr=0; ow=""; orss=0
 for i in $(seq 1 "$perf_runs"); do
     /usr/bin/time -v -o "$out/time_threaded.$i.txt" target/release/sunflower demo --seed 1234 -o "$out/demo.wav" 2> "$out/demo.log"
-    RAYON_NUM_THREADS=1 /usr/bin/time -v -o "$out/time_one.$i.txt" target/release/sunflower demo --seed 1234 "${seqflag[@]}" -o "$out/demo1.wav" 2> "$out/demo1.log"
+    RAYON_NUM_THREADS=1 /usr/bin/time -v -o "$out/time_one.$i.txt" target/release/sunflower demo --seed 1234 -o "$out/demo1.wav" 2> "$out/demo1.log"
     w=$(tv_wall "$out/time_threaded.$i.txt"); r=$(tv_rss "$out/time_threaded.$i.txt")
     w1=$(tv_wall "$out/time_one.$i.txt"); r1=$(tv_rss "$out/time_one.$i.txt")
     echo "run $i: threaded $w s $r MB; one thread $w1 s $r1 MB"
@@ -208,7 +201,7 @@ h0=$(sha256sum "$out/demo.wav" | cut -d' ' -f1)
 h1=$(sha256sum "$out/demo1.wav" | cut -d' ' -f1)
 if [[ "$h0" == "$h1" ]]; then same=yes; else same=no; fi
 printf '%s\n%s\n' "$h0  demo.wav" "$h1  demo1.wav" > "$out/sha256.txt"
-echo "min of $perf_runs: threaded $tw s ${tr} MB; one thread${seqflag[*]:+ (${seqflag[*]})} $ow s ${orss} MB; sha equal $same"
+echo "min of $perf_runs: threaded $tw s ${tr} MB; one thread $ow s ${orss} MB; sha equal $same"
 
 # perf.tsv columns: label commit status runs load1 threaded_wall_s
 # threaded_rss_mb one_wall_s one_rss_mb sha_equal. status is pass (every

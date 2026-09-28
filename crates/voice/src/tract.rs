@@ -13,8 +13,6 @@
 //!   consonant's centre and bandwidth (Q = max(0.5, ff / bw)), added after
 //!   the tract with gain 2.2. The band-pass designer clamps the centre at
 //!   0.45 fs; that is the only clamp.
-//! - Voice bar: the source pulse through two one-pole low-passes at about
-//!   300 Hz (closure murmur of voiced stops), gain 2.2 at the output.
 //! - DC blocker, pole 0.995.
 //!
 //! Sound-setting values: F4 = (3350 - 350 sf) fs, F5 = (3950 - 500 sf) fs,
@@ -27,25 +25,17 @@
 //! distinctness from 13.6 to 10.6 dB.
 
 use dsp::biquad::{Biquad, BiquadCoeffs};
-use dsp::onepole::{DcBlocker, OnePole};
+use dsp::onepole::DcBlocker;
 use dsp::resonator::{coeffs, Resonator};
 use sfcore::{HOP, SR_F};
 
 use crate::params::VoiceParams;
+use crate::tuning::{FRICATION_GAIN, SHELF_DB, SHELF_HZ, SHELF_Q};
 
 /// Most high resonances above F5.
 pub const MAX_HIGH: usize = 4;
 /// Centres of the high resonances at formant scale 1, Hz.
 const HIGH_HZ: [f64; MAX_HIGH] = [5500.0, 6600.0, 7700.0, 8800.0];
-/// High shelf: corner Hz, Q, gain dB.
-pub const SHELF_HZ: f64 = 5200.0;
-pub const SHELF_Q: f64 = 0.7;
-pub const SHELF_DB: f64 = 16.0;
-/// Frication gain at the tract output.
-pub const FRICATION_GAIN: f64 = 2.2;
-/// Voice-bar corner (Hz) and output gain.
-pub const VOICE_BAR_HZ: f64 = 301.0;
-pub const VOICE_BAR_GAIN: f64 = 2.2;
 /// DC blocker pole.
 pub const DC_POLE: f64 = 0.995;
 /// Highest resonator centre as a fraction of the sample rate.
@@ -83,7 +73,6 @@ pub struct Tract {
     fric: Biquad,
     /// Last two frication outputs, for the idle test.
     fric_y: [f64; 2],
-    vbar: [OnePole; 2],
     dc: DcBlocker,
     /// True after a reset: the next formant update jumps instead of ramping.
     fresh: bool,
@@ -104,7 +93,6 @@ impl Tract {
             let f = HIGH_HZ[h] * fs;
             fixed[2 + h].set_coeffs(design(f, 420.0 + 0.05 * f));
         }
-        let vb = OnePole::from_hz(VOICE_BAR_HZ, SR_F);
         Tract {
             moving: [Resonator::default(); 3],
             step: [[0.0; 3]; 3],
@@ -115,7 +103,6 @@ impl Tract {
             shelf: Biquad::new(BiquadCoeffs::high_shelf(SR_F, SHELF_HZ, SHELF_Q, SHELF_DB)),
             fric: Biquad::default(),
             fric_y: [0.0; 2],
-            vbar: [vb, vb],
             dc: DcBlocker::new(DC_POLE),
             fresh: true,
         }
@@ -237,19 +224,12 @@ impl Tract {
     }
 
     /// Output stage for one block: `tract` (cascade output) plus
-    /// band-passed `fric` (noise times af) times 2.2 plus the voice bar of
-    /// `vbar` (pulse times vb) times 2.2, DC blocked, into `out`. `FRIC`
-    /// and `VBAR` select the paths at compile time; a disabled path's input
-    /// is not read.
+    /// band-passed `fric` (noise times af) times 2.2, DC blocked, into
+    /// `out`. `FRIC` selects the frication path at compile time; when off,
+    /// `fric` is not read.
     #[inline(always)]
-    pub fn finish_block<const FRIC: bool, const VBAR: bool>(
-        &mut self,
-        tract: &[f64],
-        fric: &[f64],
-        vbar: &[f64],
-        out: &mut [f32],
-    ) {
-        let (mut bp, mut lp, mut dc) = (self.fric, self.vbar, self.dc);
+    pub fn finish_block<const FRIC: bool>(&mut self, tract: &[f64], fric: &[f64], out: &mut [f32]) {
+        let (mut bp, mut dc) = (self.fric, self.dc);
         let mut fy = self.fric_y;
         for (j, (o, &t)) in out.iter_mut().zip(tract.iter()).enumerate() {
             let mut v = t;
@@ -258,13 +238,9 @@ impl Tract {
                 fy = [y, fy[0]];
                 v += y * FRICATION_GAIN;
             }
-            if VBAR {
-                let y = lp[0].tick(vbar[j]);
-                v += lp[1].tick(y) * VOICE_BAR_GAIN;
-            }
             *o = dc.tick(v) as f32;
         }
-        (self.fric, self.vbar, self.dc, self.fric_y) = (bp, lp, dc, fy);
+        (self.fric, self.dc, self.fric_y) = (bp, dc, fy);
     }
 
     /// True when the frication filter holds energy above 1e-7.
@@ -278,21 +254,10 @@ impl Tract {
         self.fric_y = [0.0; 2];
     }
 
-    /// Voice-bar output magnitude.
-    pub fn voice_bar_level(&self) -> f64 {
-        self.vbar[1].z.abs()
-    }
-
-    /// Clear the voice bar.
-    pub fn reset_voice_bar(&mut self) {
-        self.vbar[0].reset();
-        self.vbar[1].reset();
-    }
-
     /// True when the cascade output and the frication filter have decayed
-    /// below 1e-7 and the voice bar below 1e-7.
+    /// below 1e-7.
     pub fn is_quiet(&self) -> bool {
-        self.fixed[self.last_fixed].y1.abs() < 1e-7 && self.voice_bar_level() < 1e-7 && !self.frication_ringing()
+        self.fixed[self.last_fixed].y1.abs() < 1e-7 && !self.frication_ringing()
     }
 
     /// Clear the resonators and the frication filter (silent frames); the
@@ -313,7 +278,6 @@ impl Tract {
     pub fn reset(&mut self) {
         self.reset_resonators();
         self.shelf.reset();
-        self.reset_voice_bar();
         self.dc.reset();
     }
 
@@ -327,9 +291,6 @@ impl Tract {
         }
         self.shelf.flush_denormals();
         self.fric.flush_denormals();
-        for v in &mut self.vbar {
-            v.flush_denormals();
-        }
     }
 
     /// DC gain of the cascade with the current coefficients (1 by

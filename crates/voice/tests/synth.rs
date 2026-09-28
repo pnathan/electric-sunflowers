@@ -213,3 +213,39 @@ fn source_glide_across_levels_is_finite() {
     }
     assert!(max_step < 1.0, "largest sample step {max_step}");
 }
+
+/// A 0.35 s phrase gap after short notes: the span edge (the next phrase's
+/// 0.7 s lead would fall at 1.55 s, inside the 1.5-1.7 s note) must not
+/// silence the note still sounding. Baritone, /aa/ throughout.
+#[test]
+fn short_gap_keeps_the_sounding_note() {
+    let n = |t0: f64, t1: f64, midi: f32| VocalNote {
+        t0,
+        t1,
+        midi,
+        phones: vec![Phoneme::Aa],
+        amp: 0.9,
+        stress: true,
+        phrase_start: false,
+        phrase_end: false,
+        grace: None,
+    };
+    let mut notes = vec![n(0.5, 1.5, 50.0), n(1.5, 1.7, 52.0), n(1.7, 1.9, 53.0), n(2.25, 3.0, 55.0)];
+    notes[0].phrase_start = true;
+    notes[2].phrase_end = true;
+    notes[3].phrase_start = true;
+    notes[3].phrase_end = true;
+    let len = (3.6 * SR_F) as usize;
+    let mut out = vec![0.0f32; len];
+    render_phrases(&notes, Voice::Baritone, &VoiceSettings::default(), 1, len, |s0, b| {
+        out[s0..s0 + b.len()].copy_from_slice(b);
+    });
+    let rms = |a: f64, b: f64| {
+        let r = &out[(a * SR_F) as usize..(b * SR_F) as usize];
+        (r.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / r.len() as f64).sqrt()
+    };
+    let before = rms(1.50, 1.55);
+    let after = rms(1.56, 1.66);
+    let last = rms(1.75, 1.85);
+    assert!(after > 0.5 * before && after > 0.5 * last, "rms 1.50-1.55 {before}, 1.56-1.66 {after}, 1.75-1.85 {last}");
+}

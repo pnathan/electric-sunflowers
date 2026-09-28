@@ -1,184 +1,180 @@
-//! Song rendering: compose (`compose::prepare`), arrange
-//! (`arrange::arrange`), then render the ten tracks (the four vocal tracks
-//! in `vocals`, the six band tracks in `band`) into a `dsp::mix::Render`;
-//! `mix` runs the mixer over it.
+//! Song rendering (design section 3.7): compose (`compose::prepare`),
+//! arrange (`arrange::arrange`), then one `rayon::scope` of 14 tasks:
 //!
-//! `render_song` renders the tracks one after another and reports
-//! progress; `render_song_threaded` renders them in parallel. Every track
-//! draws only from its own streams and the choir sums its singers in plan
-//! order on both paths, so the two give the same samples.
+//! - voice: lead; harmony; doubles take 1; doubles take 2; choir parts in
+//!   plan order (bass, tenor, alto, soprano), each rendering its singers in
+//!   plan order into a part stem;
+//! - band: guitar; harmony guitar; bass; drums; harp; violin.
+//!
+//! Each task renders its instrument, convolves with its body (if any), runs
+//! its channel strip (`strip::run_strip`) and stores the `ProcessedStem`.
+//! The doubles stem is take 1 plus take 2 and the choir stem is the sum of
+//! the four part stems in part order; the task that finishes last of its
+//! group does the sum and runs the strip.
+//!
+//! Determinism: every random stream derives from (seed, tag, index), no
+//! stream is shared between tasks, and every sum has a fixed order, so the
+//! stems are bit-identical at any thread count.
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use compose::prepare::{prepare, Prepared};
-use dsp::mix::{mix_song, Render, TrackSpec};
 use sfcore::time::len_samples;
-use sfcore::tuning::Tuning;
 use song::{Song, Voice};
 
-use crate::band::{self, BandTrack};
-use crate::vocals;
+use crate::band;
+use crate::stem::{SparseBuf, Stem};
+use crate::strip::{run_strip, ProcessedStem};
+use crate::track::{TrackId, N_TRACKS};
+use crate::vocals::{self, choir_index, singer_seed};
 
-/// A rendered song: its composition, its length in samples, and every
-/// track loaded into a `dsp::mix::Render`.
-pub struct RenderedSong {
-    pub prepared: Prepared,
-    pub len: usize,
-    pub render: Render,
-    /// With the `capture_raw` feature: a copy of each track's channels as
-    /// loaded into `render` (after the body, before the channel strip), in
-    /// mix order; a song without drums has no drums entry. Empty otherwise.
-    pub raw_tracks: Vec<(&'static str, Vec<Vec<f32>>)>,
+/// Tasks in one render.
+pub const TASKS: usize = 14;
+
+/// Render progress: called once per finished task with the count of
+/// finished tasks and `TASKS`. Called from worker threads.
+pub trait Progress: Sync {
+    fn advance(&self, done: usize, total: usize);
 }
 
-/// Progress callback: a stage label and the fraction done.
-pub type ProgressFn<'a> = &'a mut dyn FnMut(&str, f64);
+/// Progress that reports nothing.
+pub struct NoProgress;
 
-/// Mix key of a band track.
-fn key(t: BandTrack) -> &'static str {
-    match t {
-        BandTrack::Guitar => "guitar",
-        BandTrack::HarmonyGuitar => "hg",
-        BandTrack::Bass => "bass",
-        BandTrack::Drums => "drums",
-        BandTrack::Harp => "harp",
-        BandTrack::Violin => "violin",
+impl Progress for NoProgress {
+    fn advance(&self, _done: usize, _total: usize) {}
+}
+
+/// The processed tracks of one render: the cache the mixer sums, so band
+/// toggles are a re-mix only.
+#[derive(Clone, Debug)]
+pub struct Stems {
+    pub len: usize,
+    /// Indexed by `TrackId as usize`; `None` for a silent or absent track.
+    pub tracks: [Option<ProcessedStem>; N_TRACKS],
+    /// The lead's slapback, level applied; `None` without a lead.
+    pub slapback: Option<SparseBuf>,
+}
+
+impl Stems {
+    pub fn get(&self, id: TrackId) -> Option<&ProcessedStem> {
+        self.tracks[id.index()].as_ref()
     }
 }
 
-/// Renders `song` with `seed`, one track at a time. `voice` `None` uses the
-/// song's voice. `progress` receives a label and a fraction before each
-/// stage. `tuning` is unused (the instruments and the voice carry their
-/// own settings); kept for the callers until the engine rewrite.
-pub fn render_song(
-    song: &Song,
-    seed: u32,
-    voice: Option<Voice>,
-    tuning: &Tuning,
-    progress: Option<ProgressFn<'_>>,
-) -> RenderedSong {
-    render_impl(song, seed, voice, tuning, progress, false)
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// `render_song` with the tracks rendered in parallel (rayon) and no
-/// progress. Same samples as `render_song`.
-pub fn render_song_threaded(song: &Song, seed: u32, voice: Option<Voice>, tuning: &Tuning) -> RenderedSong {
-    render_impl(song, seed, voice, tuning, None, true)
+/// Where the tasks store their results.
+struct Store {
+    tracks: Mutex<[Option<ProcessedStem>; N_TRACKS]>,
+    slapback: Mutex<Option<SparseBuf>>,
 }
 
-/// The ten tracks in mix order, as (key, channels).
-type Tracks = Vec<(&'static str, Vec<Vec<f32>>)>;
-
-fn render_impl(
-    song: &Song,
-    seed: u32,
-    voice: Option<Voice>,
-    _tuning: &Tuning,
-    mut progress: Option<ProgressFn<'_>>,
-    threaded: bool,
-) -> RenderedSong {
-    sfcore::fp::flush_denormals();
-    let mut step = |label: &str, frac: f64| {
-        if let Some(p) = progress.as_deref_mut() {
-            p(label, frac);
+impl Store {
+    /// Runs `id`'s strip over `audio` and keeps the result.
+    fn put(&self, id: TrackId, audio: Stem) {
+        if audio.is_silent() {
+            return;
         }
-    };
+        let Some((stem, slap)) = run_strip(id.strip(), audio) else { return };
+        lock(&self.tracks)[id.index()] = Some(stem);
+        if slap.is_some() {
+            *lock(&self.slapback) = slap;
+        }
+    }
+}
 
-    let prepared = prepare(song, seed, voice);
+/// Stereo part stems that are summed, in index order, once all are in.
+struct Joint<const N: usize> {
+    parts: Mutex<[Option<[SparseBuf; 2]>; N]>,
+}
+
+impl<const N: usize> Joint<N> {
+    fn new() -> Self {
+        Joint { parts: Mutex::new(std::array::from_fn(|_| None)) }
+    }
+
+    /// Stores part `i`; returns the sum of all parts when this was the last.
+    fn deposit(&self, i: usize, part: [SparseBuf; 2]) -> Option<[SparseBuf; 2]> {
+        let mut g = lock(&self.parts);
+        g[i] = Some(part);
+        if g.iter().any(Option::is_none) {
+            return None;
+        }
+        let mut it = g.iter_mut().filter_map(Option::take);
+        let mut acc = it.next()?;
+        for p in it {
+            acc[0].add(&p[0]);
+            acc[1].add(&p[1]);
+        }
+        Some(acc)
+    }
+}
+
+/// Renders `song` with `seed`. `voice` `None` uses the song's voice.
+/// Composition draws from the low 32 bits of `seed`.
+pub fn render(song: &Song, seed: u64, voice: Option<Voice>, progress: &dyn Progress) -> (Prepared, Stems) {
+    sfcore::fp::flush_denormals();
+    let prepared = prepare(song, seed as u32, voice);
     let len = len_samples(prepared.timeline.end);
-    let seed = seed as u64;
     let arr = arrange::arrange(song, &prepared, seed);
     let v = &arr.vocals;
 
-    let tracks: Tracks = if threaded {
-        let (mut lead, mut harmony, mut doubles, mut choir) = (None, None, None, None);
-        let mut band: [Option<Vec<Vec<f32>>>; 6] = Default::default();
-        rayon::scope(|s| {
-            s.spawn(|_| {
+    let results = Store { tracks: Mutex::new(Default::default()), slapback: Mutex::new(None) };
+    let (doubles, choir, done) = (Joint::<2>::new(), Joint::<4>::new(), AtomicUsize::new(0));
+    let (store, doubles, choir, done, arr) = (&results, &doubles, &choir, &done, &arr);
+    let finish = move || progress.advance(done.fetch_add(1, Ordering::Relaxed) + 1, TASKS);
+
+    rayon::scope(|s| {
+        // Longest tasks first: the guitar (render plus body) is the critical path.
+        for id in [TrackId::Guitar, TrackId::Violin, TrackId::Harp, TrackId::HarmonyGuitar, TrackId::Bass, TrackId::Drums] {
+            s.spawn(move |_| {
                 sfcore::fp::flush_denormals();
-                lead = Some(vocals::lead(v, seed, len));
+                if let Some(stem) = band::render(id, arr, seed, len) {
+                    store.put(id, stem);
+                }
+                finish();
             });
-            s.spawn(|_| {
-                sfcore::fp::flush_denormals();
-                harmony = Some(vocals::harmony(v, seed, len));
-            });
-            s.spawn(|_| {
-                sfcore::fp::flush_denormals();
-                doubles = Some(vocals::doubles(v, seed, len));
-            });
-            s.spawn(|_| {
-                sfcore::fp::flush_denormals();
-                choir = Some(vocals::choir(v, seed, len, true));
-            });
-            for (slot, t) in band.iter_mut().zip(BandTrack::ALL) {
-                let arr = &arr;
-                s.spawn(move |_| {
-                    sfcore::fp::flush_denormals();
-                    *slot = band::render(t, arr, seed, len);
-                });
-            }
-        });
-        let [dl, dr] = doubles.unwrap_or_default();
-        let [cl, cr] = choir.unwrap_or_default();
-        let mut out: Tracks = vec![
-            ("lead", vec![lead.unwrap_or_default()]),
-            ("harmony", vec![harmony.unwrap_or_default()]),
-            ("doubles", vec![dl, dr]),
-            ("choir", vec![cl, cr]),
-        ];
-        for (t, chs) in BandTrack::ALL.into_iter().zip(band) {
-            if let Some(chs) = chs {
-                out.push((key(t), chs));
-            }
         }
-        out
-    } else {
-        let mut out: Tracks = Vec::with_capacity(10);
-        step("Recording the lead vocal", 0.05);
-        out.push(("lead", vec![vocals::lead(v, seed, len)]));
-        step("Recording the harmony singer", 0.25);
-        out.push(("harmony", vec![vocals::harmony(v, seed, len)]));
-        step("Recording the doubled melody", 0.38);
-        let [dl, dr] = vocals::doubles(v, seed, len);
-        out.push(("doubles", vec![dl, dr]));
-        step("Gathering the choir", 0.5);
-        let [cl, cr] = vocals::choir(v, seed, len, false);
-        out.push(("choir", vec![cl, cr]));
-        for (t, label, frac) in [
-            (BandTrack::Guitar, "Tracking the guitar", 0.72),
-            (BandTrack::HarmonyGuitar, "Tracking the harmony guitar", 0.76),
-            (BandTrack::Bass, "Tracking bass and drums", 0.8),
-            (BandTrack::Drums, "Tracking bass and drums", 0.83),
-            (BandTrack::Harp, "Tracking harp and strings", 0.86),
-            (BandTrack::Violin, "Tracking harp and strings", 0.9),
-        ] {
-            step(label, frac);
-            if let Some(chs) = band::render(t, &arr, seed, len) {
-                out.push((key(t), chs));
-            }
+        for (id, singer, k) in [(TrackId::Lead, &v.lead, vocals::LEAD), (TrackId::Harmony, &v.harmony, vocals::HARMONY)] {
+            s.spawn(move |_| {
+                sfcore::fp::flush_denormals();
+                let mut buf = SparseBuf::new(len);
+                vocals::mono_into(singer, singer_seed(seed, k), &mut buf);
+                store.put(id, Stem::Mono(buf));
+                finish();
+            });
         }
-        step("Mixing", 0.94);
-        out
-    };
+        for (i, singer) in v.doubles.iter().enumerate() {
+            s.spawn(move |_| {
+                sfcore::fp::flush_denormals();
+                let mut take = [SparseBuf::new(len), SparseBuf::new(len)];
+                vocals::panned_into(singer, singer_seed(seed, vocals::DOUBLES + i as u64), &mut take);
+                if let Some(sum) = doubles.deposit(i, take) {
+                    store.put(TrackId::Doubles, Stem::Stereo(sum));
+                }
+                finish();
+            });
+        }
+        for (p, part) in v.choir.iter().enumerate() {
+            s.spawn(move |_| {
+                sfcore::fp::flush_denormals();
+                let mut stem = [SparseBuf::new(len), SparseBuf::new(len)];
+                for (i, singer) in part.iter().enumerate() {
+                    vocals::panned_into(singer, singer_seed(seed, choir_index(p, i)), &mut stem);
+                }
+                if let Some(sum) = choir.deposit(p, stem) {
+                    store.put(TrackId::Choir, Stem::Stereo(sum));
+                }
+                finish();
+            });
+        }
+    });
 
-    #[cfg(feature = "capture_raw")]
-    let raw_tracks = tracks.clone();
-    #[cfg(not(feature = "capture_raw"))]
-    let raw_tracks = Vec::new();
-
-    let mut render = Render::new(len);
-    for (k, chs) in tracks {
-        render.set_track(k, chs);
-    }
-    RenderedSong { prepared, len, render, raw_tracks }
-}
-
-/// Mixes the tracks `enabled` selects; returns (left, right).
-pub fn mix(rendered: &mut RenderedSong, enabled: impl Fn(&TrackSpec) -> bool, seed: u32) -> (Vec<f32>, Vec<f32>) {
-    let result = mix_song(&mut rendered.render, enabled, seed as i64, None);
-    (result.l, result.r)
-}
-
-/// `mix` with the per-track channel strips run in parallel. Same samples.
-pub fn mix_threaded(rendered: &mut RenderedSong, enabled: impl Fn(&TrackSpec) -> bool, seed: u32) -> (Vec<f32>, Vec<f32>) {
-    let result = dsp::mix::mix_song_threaded(&mut rendered.render, enabled, seed as i64);
-    (result.l, result.r)
+    let Store { tracks, slapback } = results;
+    let tracks = tracks.into_inner().unwrap_or_else(|e| e.into_inner());
+    let slapback = slapback.into_inner().unwrap_or_else(|e| e.into_inner());
+    (prepared, Stems { len, tracks, slapback })
 }

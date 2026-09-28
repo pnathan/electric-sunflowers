@@ -6,7 +6,10 @@
 //! over the seeds (the larger of the two channels), then the largest
 //! standard deviation from 80 Hz up, and the mean magnitude of the L/R
 //! correlation coefficient of the taps (broadband, and below 300 Hz by a 4th-order
-//! low-pass in the frequency domain).
+//! low-pass in the frequency domain), and the energy-group diagnostics
+//! (`Body::taps_with_groups`): the largest group gain and the smallest
+//! fraction of drawn power kept by the step and DC removal, over all seeds,
+//! channels and groups, with the group's frequency span and mode count.
 
 use dsp::fft::{RealFft, C32};
 use instruments::body::Body;
@@ -31,11 +34,28 @@ fn main() {
         // db[ch][band][seed]
         let mut db = vec![vec![vec![0.0f64; SEEDS as usize]; centres.len()]; 2];
         let (mut corr, mut corr_lo) = (0.0, 0.0f64);
+        let mut n_groups = 0;
+        let mut gains: Vec<f64> = Vec::new();
+        // (value, f_lo, f_hi, modes)
+        let mut max_gain = (0.0f64, 0.0, 0.0, 0);
+        let mut min_kept = (f64::INFINITY, 0.0, 0.0, 0);
         for seed in 0..SEEDS {
             let mut rng = Rng::stream(first + seed, tag("band.body"));
             let t = std::time::Instant::now();
-            let taps = body.taps(&mut rng);
+            let (taps, groups) = body.taps_with_groups(&mut rng);
             t_taps += t.elapsed();
+            n_groups = groups.len();
+            for g in &groups {
+                gains.extend_from_slice(&g.gain);
+                for c in 0..2 {
+                    if g.gain[c] > max_gain.0 {
+                        max_gain = (g.gain[c], g.f_lo, g.f_hi, g.modes);
+                    }
+                    if g.kept[c] < min_kept.0 {
+                        min_kept = (g.kept[c], g.f_lo, g.f_hi, g.modes);
+                    }
+                }
+            }
             for (c, ch) in taps.iter().enumerate() {
                 time.fill(0.0);
                 for (t, &x) in time.iter_mut().zip(ch.iter()) {
@@ -84,6 +104,13 @@ fn main() {
             "  worst std {worst:.2} dB; mean |L/R correlation| {:.3} broadband, {:.3} below 300 Hz",
             corr / SEEDS as f64,
             corr_lo / SEEDS as f64
+        );
+        gains.sort_by(f64::total_cmp);
+        let pct = |p: f64| gains.get(((gains.len() as f64 - 1.0) * p).round() as usize).copied().unwrap_or(0.0);
+        println!("  group gain median {:.2}, 99th percentile {:.2}, 99.9th {:.2}", pct(0.5), pct(0.99), pct(0.999));
+        println!(
+            "  {n_groups} groups; max gain {:.2} ({:.0}-{:.0} Hz, {} modes); min kept {:.3} ({:.0}-{:.0} Hz, {} modes)",
+            max_gain.0, max_gain.1, max_gain.2, max_gain.3, min_kept.0, min_kept.1, min_kept.2, min_kept.3
         );
     }
     println!("taps: {:.1} ms per IR (total run {:.2} s)", t_taps.as_secs_f64() * 1e3 / (3 * SEEDS) as f64, t0.elapsed().as_secs_f64());

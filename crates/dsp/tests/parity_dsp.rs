@@ -9,13 +9,12 @@ use dsp::body::{body_ir_data, Body};
 use dsp::dynamics::{compress, stereo_compress};
 use dsp::fft::conv_stereo;
 use dsp::filter::{bq, run_bq, FilterType};
-use dsp::mix::{mix_song, Render, TRACKS};
 use dsp::pluck::{ks_pluck, pluck, PluckOpts};
 use dsp::reverb::fdn_reverb;
 use dsp::violin::{render_violin, ViolinNote};
 use serde_json::Value;
 use sfcore::rng::rng_for;
-use sfcore::{js, SR, SR_F};
+use sfcore::js;
 use std::path::PathBuf;
 
 fn dir() -> PathBuf {
@@ -365,161 +364,4 @@ fn render_violin_ex_matches_js() {
     println!("render_violin_ex: relative max-abs-error = {e:.3e}");
     // Measured: exact (0.000e0).
     assert_eq!(e, 0.0, "render_violin_ex error {e:.3e}, expected exact");
-}
-
-/// `burstTrack`/`buildRender` from tests/parity/dsp.js: deterministic noise
-/// bursts, one rng stream per channel (so a stereo track's channels are
-/// identical, matching the JS test harness).
-fn burst_track(seed: u32, chans: usize, len: usize) -> Vec<Vec<f32>> {
-    let tag = format!("mixburst{chans}");
-    (0..chans)
-        .map(|_| {
-            let mut r = rng_for(seed, &tag);
-            let mut a = vec![0.0f32; len];
-            for &start in &[0.2f64, 1.6, 3.0] {
-                let s0 = js::round(start * SR_F) as usize;
-                let n = js::round(0.3 * SR_F) as usize;
-                for i in 0..n {
-                    if s0 + i >= len {
-                        break;
-                    }
-                    let v = (r.next() * 2.0 - 1.0) * 0.3 * js::exp(-(i as f64) / (0.05 * SR_F));
-                    a[s0 + i] = js::f32r(v) as f32;
-                }
-            }
-            a
-        })
-        .collect()
-}
-
-fn build_render(len: usize) -> Render {
-    let mut render = Render::new(len);
-    for t in TRACKS.iter() {
-        let chans = if t.key == "lead" {
-            1
-        } else if matches!(t.key, "doubles" | "harmony" | "choir" | "hg" | "harp" | "violin") {
-            2
-        } else {
-            1
-        };
-        let seed = 200 + t.key.len() as u32;
-        render.set_track(t.key, burst_track(seed, chans, len));
-    }
-    render.set_track("drums", burst_track(999, 2, len));
-    render
-}
-
-#[test]
-fn mix_song_matches_js() {
-    if !sfcore::V8_EXACT {
-        eprintln!("skipped: JS parity needs --features sfcore/v8");
-        return;
-    }
-    let idx = read_index();
-    let c = case(&idx, "mix_song");
-    let len = c["len"].as_u64().unwrap() as usize;
-    let seed = c["seed"].as_i64().unwrap();
-    let all = read_bin("mix_song");
-    let ref_all_l = &all[0..len];
-    let ref_all_r = &all[len..2 * len];
-    let ref_nh_l = &all[2 * len..3 * len];
-    let ref_nh_r = &all[3 * len..4 * len];
-
-    let mut r1 = build_render(len);
-    let m1 = mix_song(&mut r1, |_| true, seed, None);
-    let mut r2 = build_render(len);
-    let m2 = mix_song(&mut r2, |t| t.key != "harp", seed, None);
-
-    assert_eq!(m1.sample_rate, SR);
-
-    let e_all_l = err_metric(&m1.l, ref_all_l);
-    let e_all_r = err_metric(&m1.r, ref_all_r);
-    let e_nh_l = err_metric(&m2.l, ref_nh_l);
-    let e_nh_r = err_metric(&m2.r, ref_nh_r);
-    println!("mix_song: relative max-abs-error all=({e_all_l:.3e},{e_all_r:.3e}) no_harp=({e_nh_l:.3e},{e_nh_r:.3e})");
-    let worst = [e_all_l, e_all_r, e_nh_l, e_nh_r].iter().cloned().fold(0.0, js::max);
-    // Measured: exact (all worst=0.000e0) now processTrack/mixSong keep every
-    // intermediate in f32 and the reverb state is f32 too.
-    assert_eq!(worst, 0.0, "mix_song worst error {worst:.3e}, expected exact");
-}
-
-/// `burstTrackLR`/`buildRenderEx` from tests/parity/dsp.js: per-channel rng
-/// streams so a stereo track's L and R genuinely differ.
-fn burst_track_lr(seed: u32, side: usize, len: usize) -> Vec<f32> {
-    let tag = format!("mixburstlr{side}");
-    let mut r = rng_for(seed, &tag);
-    let mut a = vec![0.0f32; len];
-    let starts: [f64; 3] = if side == 0 { [0.15, 1.2, 2.3] } else { [0.3, 1.5, 2.6] };
-    for &start in &starts {
-        let s0 = js::round(start * SR_F) as usize;
-        let n = js::round(0.25 * SR_F) as usize;
-        for i in 0..n {
-            if s0 + i >= len {
-                break;
-            }
-            let v = (r.next() * 2.0 - 1.0) * 0.3 * js::exp(-(i as f64) / (0.05 * SR_F));
-            a[s0 + i] = js::f32r(v) as f32;
-        }
-    }
-    a
-}
-
-/// Wider `mixSong` coverage: stereo tracks whose L and R genuinely differ,
-/// an all-zero track (bass), a guitar track run through the exact
-/// `bodyIRData`/`BODY_OF`/`convStereo` steps `renderSong` applies
-/// (engine.js ~line 948), and two mixes of the *same* `Render` with
-/// different enabled sets, which must reuse `processTrack`'s cache rather
-/// than recomputing (and must not copy the cached buffers).
-#[test]
-fn mix_song_ex_matches_js() {
-    if !sfcore::V8_EXACT {
-        eprintln!("skipped: JS parity needs --features sfcore/v8");
-        return;
-    }
-    let idx = read_index();
-    let c = case(&idx, "mix_song_ex");
-    let len = c["len"].as_u64().unwrap() as usize;
-    let seed = c["seed"].as_i64().unwrap();
-    let all = read_bin("mix_song_ex");
-    let ref_all_l = &all[0..len];
-    let ref_all_r = &all[len..2 * len];
-    let ref_nb_l = &all[2 * len..3 * len];
-    let ref_nb_r = &all[3 * len..4 * len];
-
-    let mut render = Render::new(len);
-    for t in TRACKS.iter() {
-        let stereo = matches!(t.key, "doubles" | "harmony" | "choir" | "hg" | "harp" | "violin");
-        let seed0 = 300 + t.key.len() as u32;
-        if t.key == "bass" {
-            render.set_track(t.key, vec![vec![0.0f32; len]]); // all-zero track
-        } else if stereo {
-            render.set_track(t.key, vec![burst_track_lr(seed0, 0, len), burst_track_lr(seed0, 1, len)]);
-        } else {
-            render.set_track(t.key, vec![burst_track_lr(seed0, 0, len)]);
-        }
-    }
-    // guitar: run through the exact body-convolution step renderSong applies.
-    {
-        let seed2 = 555u32;
-        let (body, off, scale) = dsp::mix::body_of("guitar").unwrap();
-        let x = burst_track_lr(300 + "guitar".len() as u32, 0, len);
-        let d = dsp::body::body_ir_data(body, (seed2 as f64 + off) as u32);
-        let hl: Vec<f32> = d[0].iter().map(|&v| (v as f64 / scale) as f32).collect();
-        let hr: Vec<f32> = d[1].iter().map(|&v| (v as f64 / scale) as f32).collect();
-        let (yl, yr) = conv_stereo(&x, &hl, &hr, len);
-        render.set_track("guitar", vec![yl, yr]);
-    }
-
-    let m1 = mix_song(&mut render, |_| true, seed, None);
-    let e_all_l = err_metric(&m1.l, ref_all_l);
-    let e_all_r = err_metric(&m1.r, ref_all_r);
-
-    let m2 = mix_song(&mut render, |t| t.key != "bass", seed, None); // same render: cache reuse
-    let e_nb_l = err_metric(&m2.l, ref_nb_l);
-    let e_nb_r = err_metric(&m2.r, ref_nb_r);
-
-    println!("mix_song_ex: relative max-abs-error all=({e_all_l:.3e},{e_all_r:.3e}) no_bass_cached=({e_nb_l:.3e},{e_nb_r:.3e})");
-    let worst = [e_all_l, e_all_r, e_nb_l, e_nb_r].iter().cloned().fold(0.0, js::max);
-    // Measured: exact (0.000e0).
-    assert_eq!(worst, 0.0, "mix_song_ex worst error {worst:.3e}, expected exact");
 }

@@ -35,17 +35,23 @@
 //! about 3 dB at every frequency (measured over 32 seeds, 1/3 octave). Two
 //! constraints fix what the measured curve fixes and leave the rest random:
 //! (1) modes are summed in groups of 1/12 octave (the curve's resolution)
-//! from `F_CROSS` down and up, and each group is scaled per channel to its
-//! expected energy `sum a0^2 / 2 sum_{i<m} r^2i`; (2) before the sum, each
+//! from `F_CROSS` down and up, merged upward until a group holds
+//! `MIN_GROUP` (3) modes (`groups`), and each group is scaled per channel to
+//! its expected energy `sum a0^2 / 2 sum_{i<m} r^2i`; (2) before the sum, each
 //! group's complex amplitudes `a e^(j ph)` move by the least weighted
 //! change that gives the group no onset step (the IR starts at 0) and no DC
 //! (a radiated pressure has none). Without (2) each group's random onset
 //! leaks a 1/f skirt above it and a shelf below it, whose level is one
-//! random variable per group. Result, largest 1/3-octave std over 32 seeds
-//! from 80 Hz up (was 5.3 dB guitar, 5.9 harp, 8.0 violin): guitar 1.2,
-//! harp 1.5, violin 1.4 from 160 Hz (its bands below 160 Hz hold no modes
-//! and lie 40-60 dB under its peak). Below 300 Hz: guitar and harp under
-//! 0.2 dB. `examples/bodyspread.rs` prints the table.
+//! random variable per group. The constraints take 2 of a group's 2n real
+//! degrees of freedom, so a 1-mode group would be driven to rounding
+//! residue and then scaled up by about 1e16; the minimum group size keeps
+//! every group well posed (at least 10% of the drawn power kept, gains
+//! 1-51, median 2.2-2.8, over 32 seeds). Result, largest 1/3-octave std
+//! over 32 seeds from 80 Hz up (was 5.3 dB guitar, 5.9 harp, 8.0 violin):
+//! guitar 1.2, harp 1.5, violin 1.4 from 160 Hz (its bands below 160 Hz
+//! hold no modes and lie 40-60 dB under its peak). Below 300 Hz: guitar
+//! and harp under 0.2 dB. `examples/bodyspread.rs` prints the table and
+//! the group diagnostics (`Body::taps_with_groups`).
 //!
 //! The last 10% of the IR is faded linearly, then each channel is scaled to
 //! unit energy. The IR is not shortened: its 0.32-0.40 s modal tail is
@@ -55,6 +61,7 @@ use dsp::conv::StereoIr;
 use sfcore::random::{tag, Rng};
 use sfcore::SR_F;
 use std::f64::consts::{PI, TAU};
+use std::ops::Range;
 
 /// The instrument bodies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -98,6 +105,12 @@ const TAIL_FADE: f64 = 0.1;
 /// above `F_CROSS`. Measured against 1/4, 1/6 and 1/8 octave groups: the
 /// smallest worst-case band spread.
 const GROUPS_PER_OCT: f64 = 12.0;
+/// Fewest modes in an energy group. The step and DC removal takes 2 of a
+/// group's 2n real degrees of freedom; at n = 1 it takes all of them.
+/// With n >= 3 at least 4 random degrees stay. Over 32 seeds the smallest
+/// kept power fraction is 0.105 and the largest gain 51 (a group whose
+/// modes cancel in time); tests/body.rs bounds them at 0.05 and 100.
+pub const MIN_GROUP: usize = 3;
 /// Crossover between the fixed low modes and the per-seed modes, Hz.
 pub const F_CROSS: f64 = 300.0;
 
@@ -152,28 +165,34 @@ impl Body {
     /// Modes below `F_CROSS` draw from `fixed_stream`, modes above from
     /// `rng` (see the module docs).
     pub fn taps(self, rng: &mut Rng) -> [Vec<f64>; 2] {
+        self.synth(rng, None)
+    }
+
+    /// `taps`, plus one `GroupInfo` per energy group, in frequency order:
+    /// the diagnostics behind the module's stability claims.
+    pub fn taps_with_groups(self, rng: &mut Rng) -> ([Vec<f64>; 2], Vec<GroupInfo>) {
+        let mut info = Vec::new();
+        let ch = self.synth(rng, Some(&mut info));
+        (ch, info)
+    }
+
+    /// The mode table in frequency order; each mode's draws in a fixed
+    /// order (spacing, Q, amplitudes, phases) from the stream that owns it.
+    fn modes(self, rng: &mut Rng) -> Vec<Mode> {
         let s = self.spec();
         let n = (s.secs * SR_F).round() as usize;
-        let mut ch = [vec![0.0f64; n], vec![0.0f64; n]];
-        let mut gb = vec![0.0f64; n];
-        let mut group: Vec<Mode> = Vec::new();
-        let mut g_idx: Option<i64> = None;
         let mut fixed = self.fixed_stream();
+        let mut modes = Vec::with_capacity(512);
         let mut f = s.f_min;
         loop {
             let r: &mut Rng = if f < F_CROSS { &mut fixed } else { rng };
             let df = (f * 0.011).max(3.0) * (0.55 + 0.9 * r.uniform());
             f += df;
-            let low = f < F_CROSS;
-            let r: &mut Rng = if low { &mut fixed } else { rng };
-            let idx = group_of(f);
-            if g_idx != Some(idx) || f >= F_MODE_MAX {
-                flush_group(&mut ch, &mut gb, &mut group);
-                g_idx = Some(idx);
-            }
             if f >= F_MODE_MAX {
                 break;
             }
+            let low = f < F_CROSS;
+            let r: &mut Rng = if low { &mut fixed } else { rng };
             let ramp = ((f / 200.0).log2() / 6.0).clamp(0.0, 1.0);
             let q = s.q_lo + (s.q_hi - s.q_lo) * ramp * (0.7 + 0.6 * r.uniform());
             let tau = q / (PI * f);
@@ -190,7 +209,21 @@ impl Body {
                 let (ar, pr) = (a0 * r.gauss(), r.uniform() * TAU);
                 ([al, ar], [pl, pr])
             };
-            group.push(Mode { f, tau, m, a0, amp, ph });
+            modes.push(Mode { f, tau, m, a0, amp, ph });
+        }
+        modes
+    }
+
+    fn synth(self, rng: &mut Rng, mut info: Option<&mut Vec<GroupInfo>>) -> [Vec<f64>; 2] {
+        let n = (self.spec().secs * SR_F).round() as usize;
+        let modes = self.modes(rng);
+        let mut ch = [vec![0.0f64; n], vec![0.0f64; n]];
+        let mut gb = vec![0.0f64; n];
+        for g in groups(&modes) {
+            let gi = flush_group(&mut ch, &mut gb, &modes[g]);
+            if let Some(v) = info.as_deref_mut() {
+                v.push(gi);
+            }
         }
         let fl = (n as f64 * TAIL_FADE).round() as usize;
         for d in ch.iter_mut() {
@@ -239,9 +272,18 @@ struct Mode {
 /// and without the step the group's energy stays near its band: the random
 /// onset of a mode set otherwise leaks a 1/f skirt (and, below the modes, a
 /// DC shelf) whose level is a single random variable per group.
+///
+/// A group of n modes has 2n real unknowns; with n = 1 the two constraints
+/// fix both, the solution is c = 0 and only rounding residue remains, which
+/// the energy scaling would then raise by about 1e16. `groups` therefore
+/// never forms a group under `MIN_GROUP` modes, and a smaller group (only a
+/// side of `F_CROSS` holding fewer modes in all) is returned unchanged.
 fn no_step_no_dc(group: &[Mode], ch: usize) -> Vec<(f64, f64)> {
     let mut c: Vec<(f64, f64)> =
         group.iter().map(|m| (m.amp[ch] * m.ph[ch].cos(), m.amp[ch] * m.ph[ch].sin())).collect();
+    if group.len() < MIN_GROUP {
+        return c;
+    }
     // Gradients per mode as (d/d re, d/d im): step (0, 1); DC (ki, kr)
     // with k = 1/(1/tau - j w) = (1/tau + j w) / (1/tau^2 + w^2), scaled
     // by the mean w so both rows have like magnitudes.
@@ -288,16 +330,72 @@ fn no_step_no_dc(group: &[Mode], ch: usize) -> Vec<(f64, f64)> {
     c
 }
 
-/// Energy group of a mode at `f` Hz: 1/`GROUPS_PER_OCT` octave cells
-/// from `F_CROSS`, so no group holds both fixed and per-seed modes.
+/// Energy cell of a mode at `f` Hz: 1/`GROUPS_PER_OCT` octave cells
+/// from `F_CROSS`, so no cell holds both fixed and per-seed modes.
 fn group_of(f: f64) -> i64 {
     ((f / F_CROSS).log2() * GROUPS_PER_OCT).floor() as i64
 }
 
+/// Partitions the frequency-ordered `modes` into energy groups: runs of
+/// whole cells (`group_of`), each holding at least `MIN_GROUP` modes, never
+/// crossing `F_CROSS`. Cells accumulate upward until the run holds
+/// `MIN_GROUP` modes; a remainder at the top of a side joins the group
+/// below it. This merges the sparse cells at the bottom (the 3 Hz spacing
+/// floor puts 1-2 modes in a 1/12 octave near 80 Hz) and the partial cell
+/// under `F_MODE_MAX`.
+fn groups(modes: &[Mode]) -> Vec<Range<usize>> {
+    let n = modes.len();
+    let mut out: Vec<Range<usize>> = Vec::new();
+    let (mut start, mut side_first) = (0, 0);
+    for i in 1..=n {
+        if i < n && group_of(modes[i].f) == group_of(modes[i - 1].f) {
+            continue;
+        }
+        let side_end = i == n || (modes[i].f < F_CROSS) != (modes[i - 1].f < F_CROSS);
+        if i - start >= MIN_GROUP || side_end {
+            let merge = i - start < MIN_GROUP && out.len() > side_first;
+            match out.last_mut() {
+                Some(last) if merge => last.end = i,
+                _ => out.push(start..i),
+            }
+            start = i;
+        }
+        if side_end {
+            side_first = out.len();
+        }
+    }
+    out
+}
+
+/// Diagnostics of one energy group.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupInfo {
+    /// Lowest and highest mode frequency, Hz.
+    pub f_lo: f64,
+    pub f_hi: f64,
+    /// Mode count.
+    pub modes: usize,
+    /// Per channel: the fraction of the drawn weighted power
+    /// `sum |c|^2 / a0^2` left after the step and DC removal. Near
+    /// (n - 1) / n for n random modes; near 0 means the constraints consumed
+    /// the group.
+    pub kept: [f64; 2],
+    /// Per channel: the scale applied to reach the group's expected energy.
+    pub gain: [f64; 2],
+}
+
 /// Synthesises the modes of one group per channel, scales each channel to
-/// the group's expected energy, adds it into `ch` and empties `group`.
-fn flush_group(ch: &mut [Vec<f64>; 2], gb: &mut [f64], group: &mut Vec<Mode>) {
+/// the group's expected energy and adds it into `ch`. `gb` is scratch of
+/// the IR length, zero on entry and on return.
+fn flush_group(ch: &mut [Vec<f64>; 2], gb: &mut [f64], group: &[Mode]) -> GroupInfo {
     let len = group.iter().map(|m| m.m).max().unwrap_or(0);
+    let mut info = GroupInfo {
+        f_lo: group.first().map_or(0.0, |m| m.f),
+        f_hi: group.last().map_or(0.0, |m| m.f),
+        modes: group.len(),
+        kept: [0.0; 2],
+        gain: [0.0; 2],
+    };
     // Expected energy of a0 g r^i sin(w i + ph), g ~ N(0, 1), ph uniform:
     // a0^2 / 2 sum_{i<m} r^2i.
     let target: f64 = group
@@ -309,7 +407,11 @@ fn flush_group(ch: &mut [Vec<f64>; 2], gb: &mut [f64], group: &mut Vec<Mode>) {
         .sum();
     for (c, d) in ch.iter_mut().enumerate() {
         let coef = no_step_no_dc(group, c);
+        let (mut p0, mut p1) = (0.0, 0.0);
         for (md, &(cr, ci)) in group.iter().zip(&coef) {
+            let w0 = 1.0 / (md.a0 * md.a0).max(f64::MIN_POSITIVE);
+            p0 += md.amp[c] * md.amp[c] * w0;
+            p1 += (cr * cr + ci * ci) * w0;
             // a sin(w i + ph) with a e^(j ph) = cr + j ci.
             let a = cr.hypot(ci);
             let ph = ci.atan2(cr);
@@ -329,12 +431,14 @@ fn flush_group(ch: &mut [Vec<f64>; 2], gb: &mut [f64], group: &mut Vec<Mode>) {
         }
         let e: f64 = gb[..len].iter().map(|x| x * x).sum();
         let k = if e > 0.0 { (target / e).sqrt() } else { 0.0 };
+        info.kept[c] = if p0 > 0.0 { p1 / p0 } else { 0.0 };
+        info.gain[c] = k;
         for (x, y) in d[..len].iter_mut().zip(gb[..len].iter_mut()) {
             *x += k * *y;
             *y = 0.0;
         }
     }
-    group.clear();
+    info
 }
 
 /// Body transfer magnitudes, dB, 1/12 octave from 80 Hz: guitar, harp,

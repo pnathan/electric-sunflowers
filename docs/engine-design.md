@@ -95,7 +95,7 @@ Every processor exposes `tick`; the ones used over buffers also expose `process(
   `PluckNote { t0, t1, midi: f32, vel: f32 }`, `StringNote { t, stop, string: u8, midi: u8, vel }` (guitar, one list per string), `BowNote { t0, t1, midi, vel, vibrato: bool }`, `DrumHit { t, kind: DrumKind, vel, pan }`, `VocalNote { t0, t1, midi, phones, amp, stress, phrase_start, phrase_end, grace }`, `Singer { voice: Voice, style: SingStyle, notes: Vec<VocalNote>, pan, offset }`.
 - An instrument renders events into a buffer: `fn render(&self, notes: &[Note], seed: u64, out: &mut [f32])` (mono, dense slice over the song) or a stereo pair. `engine` binds each track's events to an instrument and a preset and moves the result into a stem. Instruments own every synthesis choice (pick position, brightness, release); arrange never sets synthesis parameters.
 - Parameter presets are `const` values of plain structs with `Default` (for example `PluckParams::GUITAR`, `BASS`, `HARP`, `HG_LEAD`, `HG_ARP`). No `Option` fields that mean "use the default"; no zero sentinels.
-- A voice is `voice::VoiceSynth`: a `GlottalSource`, a `Tract`, a noise generator. It renders one phrase at a time from `ControlTracks` into a caller slice. `voice::render_singer(&Singer, seed, &mut Stem)` renders every phrase into a scratch buffer and adds it to the stem with pan gains.
+- A voice is `voice::VoiceSynth`: a `GlottalSource`, a `Tract`, a noise generator. It renders one phrase at a time from `ControlTracks` into a caller slice. `voice::render_phrases(notes, voice, settings, seed, len, emit)` splits the notes into phrases (no gap of 0.3 s or more), builds control tracks for each phrase's frame window only (0.7 s lead, 0.5 s tail, clipped so windows never overlap), renders it into a scratch buffer and calls `emit(start, samples)`; the engine adds that to the stem with pan gains.
 
 ### 3.4 Parameter smoothing
 
@@ -193,7 +193,7 @@ Each model: algorithm, source, parameters that set the sound. Values are the cur
 - Five formants F1-F5 plus up to four fixed high resonances at 5.5, 6.6, 7.7, 8.8 kHz times the voice formant scale, in series. F4, F5 and the high resonances are constant per voice and are designed once, not per hop.
 - High shelf +16 dB at 5.2 kHz (RBJ shelf) after the cascade.
 - Frication: white noise through an RBJ band-pass at the consonant's centre and bandwidth, added after the tract, gain 2.2.
-- Voice bar: two one-poles (about 300 Hz) of the source, gain 0.5 (closure murmur for voiced stops).
+- No voice bar. Only the deleted alternative stop model (closure murmur) drove it; the kept stop model voices a closure through the tract at 0.1.
 - DC blocker, pole 0.995.
 - Aspiration (white noise times `ah * 0.8`) and breath noise (white noise low-passed at 2.6 kHz by a one-pole, modulated by glottal flow) enter the cascade with the source. CLAUDE.md says aspiration is also low-passed; the code does not. The rewrite keeps the code's behaviour and fixes CLAUDE.md; low-passing aspiration is a later, ear-gated change (section 11).
 - F1 is floored at 1.06 f0.
@@ -203,7 +203,8 @@ Each model: algorithm, source, parameters that set the sound. Values are the cur
 ### 5.3 Articulation (`voice::articulation`, `voice::controls`)
 
 - Algorithm: synthesis by rule with targets and transitions (Holmes, Mattingly, Shearme 1964; Klatt 1987). CV formant transitions over 50 ms from the consonant locus (locus equations, Delattre, Liberman, Cooper 1955). F1 damping during aspiration.
-- Pipeline: `plan_segments(notes, params) -> Vec<(Span, Segment)>`, `rasterise(&segments, frames) -> ControlTracks`, `shape_dynamics` (per-note swell, phrase-end fade), `pitch_track` (scoop, grace, one-sided glide), `add_vibrato` (delayed smoothstep onset, rate wobble), pitch drift (a leaky second-order random walk, `dsp::stochastic::RandomWalk`).
+- Pipeline: `plan_segments(notes, params) -> Vec<(Span, Segment)>`, `rasterise(&segments, frames) -> ControlTracks`, `shape_dynamics` (per-note swell, phrase-end fade), `pitch_track` (scoop, grace, one-sided glide), `Vibrato::add` (delayed smoothstep onset, rate wobble), pitch drift (a leaky second-order random walk, `dsp::stochastic::RandomWalk`).
+- Per-phrase windows: `controls::Articulation::phrase` builds the tracks for one phrase's frame window, not the song. It plans the phrase's notes and every earlier note that still writes frames at or after the window's start (at least the note before the phrase, whose pause and breath lead in), so a window clipped to start inside the previous phrase keeps that phrase's sounding notes. Where the next phrase's 0.7 s lead would reach back before the previous phrase's end, `synth::phrase_spans` moves the boundary to the middle of the pause before the next onset, so the zero-phase smoothers and the pitch glide restart on flat tracks, not mid-note. The vibrato phase and the drift walk run on from one window to the next, over rendered frames only; frames between windows advance neither.
 - Rules kept: flapping of unstressed intervocalic /t d/; onset compression to 45% of the inter-onset interval; coda compression; diphthong glides; a breath segment before phrases.
 - Stops: closure with 0.1 voicing, 12 ms burst at gain 0.8, 24 ms aspiration for voiceless onsets. The alternative stop model (closure murmur, soft bursts) measured worse and is deleted, not switched off.
 - /ey/ targets ey0 [450, 2020, 2600] and ey1 [340, 2210, 2780] (Hillenbrand et al. 1995).
@@ -233,7 +234,7 @@ Each model: algorithm, source, parameters that set the sound. Values are the cur
 - Algorithm: stochastic modal synthesis of a stereo body impulse response from a measured magnitude curve (commuted synthesis lineage: Smith 1993; Karjalainen and Valimaki 1993). Curves: 1/12-octave `BODY_CURVES` measured from University of Iowa MIS recordings by `tools/extract_curves.py`; guitar with a steel-string correction; harp derived from guitar (no harp reference).
 - Modes spaced max(3 Hz, 1.1% f) with +-45% jitter up to 13 kHz; Q ramps q_lo..q_hi over 200 Hz-12.8 kHz; amplitude sqrt(T df / tau) so energy density follows the curve; Gaussian amplitude and random phase. Each mode is a second-order recursive oscillator `y = 2 r cos(w) y1 - r^2 y2`, cut at 9.5 tau (82 dB). Accumulation in `f64`. Unit energy per channel; 10% linear tail fade.
 - Fixed low modes (wave 3): below `F_CROSS` = 300 Hz the modes come from the body's own stream, the same for every seed; the right channel takes the left's amplitudes at phase + pi/2 (near a Hilbert pair: equal magnitude, uncorrelated). 300 Hz because the 3 Hz spacing floor holds to 273 Hz, so lower 1/3 octaves hold only 6-20 modes. Above 300 Hz each channel draws its own amplitude and phase from the seed (decorrelated stereo).
-- Stable band levels (wave 3): overlapping random modes interfere, so a free draw scattered about 3 dB per 1/3 octave at every frequency, from seed to seed. Modes are summed in 1/12-octave groups (the curve's resolution, anchored at 300 Hz); each group's complex amplitudes are moved by the least weighted change that removes its onset step and its DC, then each channel of the group is scaled to its expected energy. Without the step and DC removal each group's random onset leaks a 1/f skirt above it and a shelf below it. Std over 32 seeds, largest 1/3-octave band from 80 Hz: guitar 5.3 -> 1.2 dB, harp 5.9 -> 1.5, violin 8.0 -> 1.4 (from 160 Hz; it has no modes below 180 Hz). Mean level changes, from the removed skirts: guitar -13 dB at 80 Hz and -6 dB at 100 Hz; harp -10 and -5 dB there and -4 to -7.5 dB from 3 to 13 kHz; violin -3 to -12 dB from 8 to 13 kHz; elsewhere within 2 dB. The IR now follows its curve within 0.8 dB per 1/3 octave above 300 Hz. `crates/instruments/examples/bodyspread.rs` prints the table.
+- Stable band levels (wave 3): overlapping random modes interfere, so a free draw scattered about 3 dB per 1/3 octave at every frequency, from seed to seed. Modes are summed in 1/12-octave groups (the curve's resolution, anchored at 300 Hz), merged upward until a group holds at least 3 modes (wave 4: a 1-mode group has 2 real unknowns against 2 constraints, so the step and DC removal left rounding residue that the energy scaling raised by about 1e16; this hit the lowest guitar and harp modes and the partial group under 13 kHz); each group's complex amplitudes are moved by the least weighted change that removes its onset step and its DC, then each channel of the group is scaled to its expected energy. Without the step and DC removal each group's random onset leaks a 1/f skirt above it and a shelf below it. Std over 32 seeds, largest 1/3-octave band from 80 Hz: guitar 5.3 -> 1.2 dB, harp 5.9 -> 1.5, violin 8.0 -> 1.4 (from 160 Hz; it has no modes below 180 Hz). Mean level changes, from the removed skirts: guitar -13 dB at 80 Hz and -6 dB at 100 Hz; harp -10 and -5 dB there and -4 to -7.5 dB from 3 to 13 kHz; violin -3 to -12 dB from 8 to 13 kHz; elsewhere within 2 dB. The IR now follows its curve within 0.8 dB per 1/3 octave above 300 Hz. `crates/instruments/examples/bodyspread.rs` prints the table.
 - Curve extrapolation beyond the measured range: 12 dB/octave both ends.
 - Level trim per body (today's `refPeak` divisors, empirical): guitar 5.4, harp 7.3, violin 2.4. Lives in `Body::spec()` with a doc line.
 - API: `Body::{Guitar, Harp, Violin}`, `Body::impulse_response(self, rng) -> StereoIr` (spectra precomputed, 5.10). Do not shorten the IR: the 0.32-0.40 s modal tail is part of the body sound.
@@ -363,7 +364,7 @@ Plan, in order of measured or estimated gain:
 2. Release profile: `lto = "fat"`, `codegen-units = 1`, `debug = 1` kept for profiles. Estimated 5-15%.
 3. FFT and convolution (5.10): 3.4 s to about 0.8 s single thread; threaded, each body convolution runs right after its own track and in parallel ranges.
 4. Task graph (3.7): the critical path becomes guitar render plus guitar body (about 1.1 s) instead of choir (4 wide) plus a barrier plus the convolutions.
-5. Voice: constant resonators designed once; fixed-size arrays; lax/tense tables interleaved per index; frication and voice bar by span. Estimated 1.3-1.6x on 3.8 s.
+5. Voice: constant resonators designed once; fixed-size arrays; lax/tense tables interleaved per index; frication by span. Estimated 1.3-1.6x on 3.8 s.
 6. Pluck: phase-split loops, `f32` delay line, scratch reuse. Estimated 1.5-2x on 1.4 s.
 7. Fused channel strip (cascade, block statistics and sparse skip in one pass) and block mixer. Estimated mix 2.78 s to about 1.2 s single thread, and about 100 MB less.
 8. Memory: sparse stems, render-into for voices and drums, no full-length buses, no zero drum stem.
@@ -408,30 +409,40 @@ A rough "about right" check that runs here without PANNs or Whisper. The owner's
 Components:
 
 - `crates/soundgate` (binary `soundgate`): reads WAV (via `hound`), has its own radix-2 `f64` FFT, depends on no engine crate.
-  - `soundgate ltas <dir>`: for each `*.wav` in `<dir>`, 1/3-octave long-term average spectrum over IEC 61260 centres 25 Hz-16 kHz (28 bands), power averaged over active 2048-sample blocks (the `active_rms` gate: blocks above 5% of the loudest), in dB relative to the file's total active power; plus gated RMS (dBFS), active-block fraction, sample peak, a NaN/inf count. Writes `<dir>/ltas.json`.
-  - `soundgate compare <base.json> <new.json> [--tol-mid DB] [--tol-edge DB]`: per file, max |delta| over 100 Hz-10 kHz bands (`--tol-mid`, default 3.0) and over the other bands (`--tol-edge`, default 6.0); active fraction within 15 points; gated RMS of `mix.wav` within 1.5 dB; peak of `mix.wav` 0.89 +- 0.002; zero NaN/inf. Prints a table, exits non-zero on failure.
-  - `soundgate pitch <wav> <notes.json>`: YIN f0 (de Cheveigne and Kawahara 2002) over the middle 60% of each note of 150 ms or longer; reports the fraction within 50 cents of the note's MIDI pitch and the count of octave errors. Writes JSON.
-- `crates/engine/examples/stems.rs --seed S --out DIR`: renders the demo song and writes each processed stem (post EQ, compression and level normalisation; pre pan) as 32-bit float WAV named by track, `mix.wav`, `notes.json` (lead notes: t0, t1, midi), and `render.json` (wall time per stage). Before the engine rewrite it builds with `--features engine/capture_raw` and applies the strip itself from `dsp::mix`'s public functions.
+  - `soundgate ltas <dir>`: for each `*.wav` in `<dir>`, 1/3-octave long-term average spectrum over IEC 61260 centres 25 Hz-16 kHz (29 bands), power averaged over active 2048-sample blocks (blocks above 5% of the loudest), in dB relative to the file's total active power; plus gated RMS (dBFS), active-block fraction, sample peak, a NaN/inf count. Writes `<dir>/ltas.json`.
+  - `soundgate mean <out.json> <dir>...`: summarises one `ltas.json` (and `lead.pitch.json`) per seed: per file and band the mean over seeds of the band level (each seed relative to its own active power, floored at -60 dB) and the seed-to-seed sample std; mean and std of gated RMS and active fraction; the peak range; the NaN/inf count; lead pitch pooled over seeds.
+  - `soundgate compare-mean <base.json> <new.json> [--bands]`: the take-robust comparison of two summaries (rules below). Prints a table per file (worst band, delta, base sd, allowance), exits non-zero on failure.
+  - `soundgate compare <base.json> <new.json> [--tol-mid DB] [--tol-edge DB]`: per-seed comparison of two `ltas.json`: max |delta| over 100 Hz-10 kHz and over the other bands; active fraction within 15 points; mix gated RMS within 1.5 dB; mix peak 0.89 +- 0.002; zero NaN/inf.
+  - `soundgate pitch <wav> <notes.json>`: YIN f0 (de Cheveigne and Kawahara 2002) over the middle 60% of each note of 150 ms or longer; the fraction within 50 cents of the note's MIDI pitch and the count of octave errors. `soundgate pitch-compare` compares two reports.
+- `crates/engine/examples/stems.rs --seed S --out DIR`: renders the demo song and writes each processed stem (post EQ, compression and level normalisation; pre pan) as 32-bit float WAV named by track, `mix.wav`, `notes.json` (lead notes: t0, t1, midi) and `render.json` (wall time per stage).
 - `crates/voice/examples/vow.rs`: mean spectral distance between ten sustained vowels, 200 Hz-2.5 kHz, baritone. Prints `mean vowel distance(200-2.5k) dB X`.
-- `crates/instruments/examples/helmholtz.rs` (before wave 2: `crates/dsp/examples/helmholtz.rs`): the sweep of section 9. Prints `stable N/216`.
-- `scripts/gate.sh [--tol-mid DB] LABEL`: runs all of the above for seeds 1234 and 2718 into `out/gate/LABEL/`, compares with `tests/soundgate/baseline/`, times the demo, appends to `tests/soundgate/perf.tsv`, prints PASS/FAIL per check.
+- `crates/instruments/examples/helmholtz.rs`: the sweep of section 9. Prints `stable N/216`.
+- `scripts/gate.sh [--strict] [--against DIR] [--capture-baseline] [--targets] LABEL`: renders the stems for 8 seeds (1234, 2718, 1, 7, 42, 99, 314, 1618: 8 takes of the demo song) into `out/gate/LABEL/sS/`, measures and summarises them, compares the summary with `tests/soundgate/baseline-mean/ltas-mean.json` (or `DIR/ltas-mean.json` with `--against`), runs the vowel and Helmholtz probes, times the demo threaded and on one thread (3 runs each), appends a row to `tests/soundgate/perf.tsv`, prints PASS/FAIL per check. WAVs are kept for seeds 1234 and 2718 only.
 
-Thresholds:
+Why a multi-seed mean: each seed is a different take (other melody notes, other arrangement detail). A per-seed LTAS delta between two engines mixes the engine change with the take change, and on sparse stems one take differs from another by up to 20 dB in a band. The mean of 8 takes has a third of the take noise, and the seed-to-seed std says how much of a delta the takes alone explain.
+
+Mean-gate rules (default mode; `soundgate::mean`):
 
 | Check | Pass |
 |---|---|
-| LTAS per stem and mix, 100 Hz-10 kHz | within 0.5 dB for waves declared "no sound change"; within 3 dB otherwise |
-| LTAS outside 100 Hz-10 kHz | within 1 dB / 6 dB (same split) |
-| Active-block fraction per stem | within 15 points |
-| Mix gated RMS | within 1.5 dB |
-| Mix peak | 0.89 +- 0.002, no NaN/inf |
-| Lead pitch | fraction within 50 cents >= baseline - 0.03; octave errors <= baseline + 2 |
+| LTAS per stem and mix, 100 Hz-10 kHz | \|mean delta\| <= max(3 dB, min(2 x base sd, 6 dB)) |
+| LTAS outside 100 Hz-10 kHz | \|mean delta\| <= max(6 dB, min(2 x base sd, 9 dB)) |
+| Mean active-block fraction per file | within 15 points |
+| Mean gated RMS per file | within 1.5 dB |
+| Mix peak, every seed | 0.89 +- 0.002; no NaN/inf in any file |
+| Lead pitch, pooled over seeds | fraction within 50 cents >= base - 0.03; octave errors per seed <= base + 1 |
 | Vowel distance | 12.8-14.0 dB (13.2-13.6 is the good reference; outside it, report) |
 | Helmholtz | >= 208/216 |
-| Render time, peak RSS (threaded and `RAYON_NUM_THREADS=1`) | no more than 10% worse than the previous row in `perf.tsv`; final wave meets section 10 |
-| Thread invariance (from the engine rewrite on) | `sha256` of the demo WAV equal at 1 and 12 threads |
+| Thread invariance | `sha256` of the demo WAV equal threaded and at `RAYON_NUM_THREADS=1` |
+| Render time, peak RSS | reported against the previous pass row; fail only above +50% of the first pass row (the perf baseline). Section 10's figures are aims, not requirements. |
 
-Baseline: captured once from commit 29c5c08 (release profile with LTO) into `tests/soundgate/baseline/` (JSON and TSV only, committed; audio stays in `out/`, which the gate unit adds to .gitignore; note that `ref/` is ignored by git). A wave that changes sound on purpose passes the wide tolerance; the baseline is replaced only after the owner listens, in its own commit.
+The allowance rule. The difference of two 8-take means of one engine has std s/2 (s the seed-to-seed std), so 2s is about 4 standard errors of the null difference, and a shift smaller than two takes already differ by is not a change of character. The fixed 3/6 dB keeps stable bands from failing on sub-audible drift. The cap (6 dB mid, 9 dB edge) covers bands whose takes are bimodal (a take has notes in the band or not), where s is large and 2s would admit any shift: in the wave-3 baseline-mean, harmony 160 Hz has s = 9.6 dB (2s = 19.3), doubles 125 Hz 7.2, guitar 100 Hz 6.5; 19 of 210 stem bands in 100 Hz-10 kHz had 2s > 6 dB, none outside it had 2s > 9 dB. A robust spread (median absolute deviation) was rejected: on bimodal bands it is either larger than s (harmony 160 Hz, 14.1 dB) or the majority's spread (guitar 100 Hz, 0.6 dB). Mean gated RMS 1.5 dB holds: the largest seed-to-seed RMS std in the baseline is 0.48 dB (harmony_guitar; mix 0.32), a null std of at most 0.24 dB for the difference of two means. Because the seeds are fixed, an engine that renders the same takes compares at delta 0 plus its own change; a composition change that alters the takes can move a bimodal band by more than the cap and then needs a listen and a re-baseline.
+
+`--strict`: for refactors that must not change the samples. In addition to the mean gate, seeds 1234 and 2718 are compared one by one against `tests/soundgate/baseline/sS/` (or `--against DIR`'s `sS`) with `soundgate compare` at 0.5 dB in 100 Hz-10 kHz and 1 dB elsewhere, and per-seed pitch (fraction within 50 cents >= base - 0.03, octave errors <= base + 2).
+
+Baselines: `tests/soundgate/baseline-mean/` (`ltas-mean.json`, `vow.txt`, `helmholtz.txt`) for the mean gate and `tests/soundgate/baseline/sS/` (`ltas.json`, `lead.pitch.json`, `notes.json`, `render.json` of seeds 1234 and 2718) for `--strict`; JSON and text only, committed; audio stays in `out/` (ignored by git). `scripts/gate.sh --capture-baseline LABEL` writes both from one run. The first baseline was captured from commit 29c5c08 (release profile with LTO); the multi-seed baselines were captured at wave 3.
+
+Re-baselining. The rule was: the baseline is replaced only after the owner listens, in its own commit. For this rewrite the owner waived it: renders are sent to him for listening at each sound-changing wave, and he asked for a rough about-right check, not a gate on each baseline change. A wave that changes the sound on purpose re-captures the baselines at wave close, from the tree with the whole wave merged, in its own commit, and the renders go to the owner.
 
 ## 13. Rewrite plan
 

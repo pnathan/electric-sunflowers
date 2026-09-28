@@ -2,7 +2,7 @@
 //! follows the measured curve.
 
 use dsp::fft::{RealFft, C32};
-use instruments::body::Body;
+use instruments::body::{Body, F_CROSS, MIN_GROUP};
 use sfcore::random::{tag, Rng};
 use sfcore::SR_F;
 
@@ -39,12 +39,13 @@ fn body_level_extrapolates_12_db_per_octave() {
 /// 1/3-octave band powers of the IR spectrum against the curve power
 /// averaged over the same bins, both in dB, averaged over 8 seeds and both
 /// channels. The mean offset is removed. Every body from its lowest full
-/// band to 8 kHz: within 1.5 dB above 300 Hz (measured worst 0.8 dB) and
-/// 2.5 dB below, where the fixed low modes are one draw of 1-3 modes per
-/// 1/12 octave (measured worst 2.0 dB, guitar 160 Hz). The group energy
-/// constraint and the removal of each group's onset step and DC (design
-/// 5.6) keep the bands on the curve; the earlier model's onset skirts put
-/// the harp 4-8 dB above its curve from 3 to 8 kHz.
+/// band (79 Hz guitar and harp, 250 Hz violin) to 8 kHz: within 1.5 dB above
+/// 300 Hz (measured worst 0.8 dB) and 2.5 dB below, where the fixed low
+/// modes are one draw of 3-6 modes per energy group (measured worst 2.2 dB
+/// guitar at 159 Hz, 2.4 dB harp at 200 Hz). The group energy constraint
+/// and the removal of each group's onset step and DC (design 5.6) keep the
+/// bands on the curve; the earlier model's onset skirts put the harp 4-8 dB
+/// above its curve from 3 to 8 kHz.
 #[test]
 fn body_spectrum_follows_curve() {
     let n = 32768;
@@ -53,10 +54,10 @@ fn body_spectrum_follows_curve() {
     let mut spec = vec![C32::default(); fft.spectrum_len()];
     let mut time = vec![0.0f32; n];
     let df = SR_F / n as f64;
-    let centres: Vec<f64> = (0..).map(|k| 100.0 * 2f64.powf(k as f64 / 3.0)).take_while(|&f| f <= 8100.0).collect();
+    let centres: Vec<f64> = (-1..).map(|k| 100.0 * 2f64.powf(k as f64 / 3.0)).take_while(|&f| f <= 8100.0).collect();
     for body in BODIES {
         let (lo, hi, tol) = match body {
-            Body::Guitar | Body::Harp => (100.0, 8100.0, 1.5),
+            Body::Guitar | Body::Harp => (79.0, 8100.0, 1.5),
             Body::Violin => (250.0, 8100.0, 1.5),
         };
         let mut pow = vec![0.0f64; centres.len()];
@@ -89,6 +90,7 @@ fn body_spectrum_follows_curve() {
         let mean = dev.iter().map(|d| d.1).sum::<f64>() / dev.len() as f64;
         let worst = dev.iter().map(|d| (d.1 - mean).abs()).fold(0.0, f64::max);
         println!("{body:?}: worst 1/3-octave deviation {worst:.2} dB");
+        println!("  {}", dev.iter().map(|&(fc, d)| format!("{fc:.0}:{:+.2}", d - mean)).collect::<Vec<_>>().join(" "));
         for &(fc, d) in &dev {
             // Below the crossover: one fixed draw of 1-3 modes per 1/12
             // octave, so a wider tolerance.
@@ -176,5 +178,59 @@ fn body_channels_are_decorrelated() {
         }
         let mean = acc / 16.0;
         assert!(mean < 0.25, "{body:?}: mean |L/R correlation| {mean:.3}");
+    }
+}
+
+
+/// Energy groups (design 5.6) over 32 seeds: each holds at least
+/// `MIN_GROUP` modes, lies on one side of `F_CROSS`, keeps at least 5% of
+/// its drawn power through the step and DC removal, and has a gain under
+/// 100. Measured: kept >= 0.105, gain median 2.2-2.8, 99.9th percentile
+/// 18-29, max 51 (harp, a 5-mode group at 1 kHz whose modes cancel in
+/// time). Before the minimum group size, 1-mode groups at the bottom and
+/// under 13 kHz kept 0 of their power and took gains near 5e17: rounding
+/// residue scaled to the group energy.
+#[test]
+fn body_groups_are_well_posed() {
+    for body in BODIES {
+        for seed in 0..32u64 {
+            let (taps, groups) = body.taps_with_groups(&mut Rng::stream(seed, tag("test.body.groups")));
+            assert!(taps.iter().all(|c| c.iter().all(|x| x.is_finite())));
+            for g in &groups {
+                let at = format!("{body:?} seed {seed} {:.0}-{:.0} Hz", g.f_lo, g.f_hi);
+                assert!(g.modes >= MIN_GROUP, "{at}: {} modes", g.modes);
+                assert_eq!(g.f_lo < F_CROSS, g.f_hi < F_CROSS, "{at}: crosses F_CROSS");
+                for c in 0..2 {
+                    assert!(g.kept[c] >= 0.05, "{at} ch {c}: kept {:.3}", g.kept[c]);
+                    assert!(g.gain[c] > 0.0 && g.gain[c] < 100.0, "{at} ch {c}: gain {:.3e}", g.gain[c]);
+                }
+            }
+        }
+    }
+}
+
+/// The low groups (below `F_CROSS`) of guitar and harp are the body's own:
+/// identical for every seed, starting at the lowest mode (70-80 Hz guitar,
+/// 60-70 Hz harp), each keeping at least 20% of its drawn power (measured
+/// 0.21-0.99) at a gain under 20 (measured 1.0-14.7), so their amplitudes
+/// and phases come from the draw, not from rounding.
+#[test]
+fn body_low_groups_are_fixed_and_well_posed() {
+    for body in [Body::Guitar, Body::Harp] {
+        let low = |seed: u64| {
+            let (_, g) = body.taps_with_groups(&mut Rng::stream(seed, tag("test.body.low")));
+            g.into_iter().filter(|g| g.f_hi < F_CROSS).collect::<Vec<_>>()
+        };
+        let first = low(0);
+        assert!(first.len() >= 10, "{body:?}: {} low groups", first.len());
+        assert!(first[0].f_lo < body.spec().f_min + 10.0, "{body:?}: lowest mode {:.1} Hz", first[0].f_lo);
+        for g in &first {
+            for c in 0..2 {
+                assert!(g.kept[c] >= 0.2 && g.gain[c] < 20.0, "{body:?} {:.0} Hz ch {c}: kept {:.3} gain {:.2}", g.f_lo, g.kept[c], g.gain[c]);
+            }
+        }
+        for seed in 1..8u64 {
+            assert_eq!(low(seed), first, "{body:?} seed {seed}: low groups differ");
+        }
     }
 }

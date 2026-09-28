@@ -10,7 +10,8 @@
 //! - `soundgate mean OUT DIR...`: summarise DIR/ltas.json (and
 //!   DIR/lead.pitch.json when every DIR has one) over seeds; write OUT.
 //! - `soundgate compare-mean BASE NEW [--bands]`: take-robust comparison of
-//!   two summaries (see `soundgate::mean`); exit 1 on any failure.
+//!   two summaries (see `soundgate::mean`: fixed 3/6 dB or 2 x base sd,
+//!   capped at 6/9 dB; mean RMS 1.5 dB); exit 1 on any failure.
 
 use clap::{Parser, Subcommand};
 use soundgate::compare::{compare_ltas, compare_pitch, table, LtasFile, Tolerances};
@@ -68,6 +69,12 @@ enum Cmd {
         /// A band also passes within K times the base seed-to-seed std.
         #[arg(long, default_value_t = 2.0)]
         k: f64,
+        /// Cap of the K x std allowance for bands 100 Hz-10 kHz, dB.
+        #[arg(long, default_value_t = soundgate::mean::CAP_MID_DB)]
+        cap_mid: f64,
+        /// Cap of the K x std allowance for the other bands, dB.
+        #[arg(long, default_value_t = soundgate::mean::CAP_EDGE_DB)]
+        cap_edge: f64,
         /// Print every band of every file.
         #[arg(long)]
         bands: bool,
@@ -210,7 +217,7 @@ fn cmd_mean(out: &Path, dirs: &[PathBuf]) -> Result<bool, String> {
 }
 
 fn cmd_compare_mean(base: &Path, new: &Path, tol: BandTol, bands: bool) -> Result<bool, String> {
-    if !(tol.mid_db >= 0.0 && tol.edge_db >= 0.0 && tol.k >= 0.0) {
+    if !(tol.mid_db >= 0.0 && tol.edge_db >= 0.0 && tol.k >= 0.0 && tol.cap_mid_db >= 0.0 && tol.cap_edge_db >= 0.0) {
         return Err("tolerances must be non-negative".into());
     }
     let b: MeanFile = read_json(base)?;
@@ -224,12 +231,15 @@ fn cmd_compare_mean(base: &Path, new: &Path, tol: BandTol, bands: bool) -> Resul
         }
     }
     println!(
-        "seeds base {} new {}; band limit max({}/{} dB, {} x base sd)",
+        "seeds base {} new {}; band limit max({}/{} dB, min({} x base sd, {}/{} dB)); rms {} dB",
         b.seeds.len(),
         n.seeds.len(),
         tol.mid_db,
         tol.edge_db,
-        tol.k
+        tol.k,
+        tol.cap_mid_db,
+        tol.cap_edge_db,
+        soundgate::mean::MEAN_RMS_DB
     );
     print!("{}", mean_table(&rows));
     let mut ok = !rows.is_empty() && rows.iter().all(|r| r.fails.is_empty());
@@ -264,9 +274,12 @@ fn main() -> ExitCode {
         Cmd::Pitch { wav, notes } => cmd_pitch(&wav, &notes),
         Cmd::PitchCompare { base, new } => cmd_pitch_compare(&base, &new),
         Cmd::Mean { out, dirs } => cmd_mean(&out, &dirs),
-        Cmd::CompareMean { base, new, tol_mid, tol_edge, k, bands } => {
-            cmd_compare_mean(&base, &new, BandTol { mid_db: tol_mid, edge_db: tol_edge, k }, bands)
-        }
+        Cmd::CompareMean { base, new, tol_mid, tol_edge, k, cap_mid, cap_edge, bands } => cmd_compare_mean(
+            &base,
+            &new,
+            BandTol { mid_db: tol_mid, edge_db: tol_edge, k, cap_mid_db: cap_mid, cap_edge_db: cap_edge },
+            bands,
+        ),
     };
     match r {
         Ok(true) => ExitCode::SUCCESS,

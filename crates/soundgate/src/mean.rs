@@ -12,30 +12,53 @@
 //! Band rule (`BandTol`): a band passes when |mean_new - mean_base| is
 //! within the fixed tolerance (3 dB for 100 Hz-10 kHz, 6 dB elsewhere, the
 //! "about right" limits of docs/engine-design.md section 12) OR within
-//! `k` (2) times the base engine's own seed-to-seed std in that band.
-//! Reasoning: for one engine, the mean of N takes has standard error
-//! s/sqrt(N), so the difference of two N-take means of the same engine has
-//! std s*sqrt(2/N) (s/2 for N = 8). A 2s allowance is then about 4 standard
-//! errors of the null difference; with ~300 band tests per run the false
-//! alarm rate stays near 2%. It is also the natural reading of "about
-//! right": a shift smaller than two takes of one engine already differ by is
-//! not a change of character. The fixed tolerance keeps stable bands (small
-//! s) from failing on sub-audible drift.
+//! `k` (2) times the base engine's own seed-to-seed std in that band, the
+//! latter capped at `cap_mid_db` (6 dB, 100 Hz-10 kHz) and `cap_edge_db`
+//! (9 dB elsewhere): allowed = min(max(fixed, k sd), cap).
+//! Reasoning for 2 sd: for one engine, the mean of N takes has standard
+//! error s/sqrt(N), so the difference of two N-take means of the same
+//! engine has std s*sqrt(2/N) (s/2 for N = 8). A 2s allowance is then about
+//! 4 standard errors of the null difference; with ~300 band tests per run
+//! the false alarm rate stays near 2%. It is also the natural reading of
+//! "about right": a shift smaller than two takes of one engine already
+//! differ by is not a change of character. The fixed tolerance keeps
+//! stable bands (small s) from failing on sub-audible drift.
+//! Reasoning for the cap: the std model assumes takes scatter about one
+//! level. Where takes are bimodal (a take either has notes in the band or
+//! not), s is large and 2s admits shifts no listener calls "about right".
+//! Baseline-mean of wave 3 (8 seeds): harmony 160 Hz s = 9.6 dB (2s = 19.3;
+//! takes at -29..-33 and -45..-53 dB), doubles 125 Hz 7.2, guitar 100 Hz
+//! 6.5 (5 takes at -30, 3 at -41..-45). 19 of 210 stem bands in 100 Hz-10
+//! kHz had 2s > 6 dB; no edge band had 2s > 9 dB (worst 8.3, bass 40 Hz),
+//! so the edge cap only bounds future spreads. A robust spread (1.4826
+//! times the median absolute deviation) was rejected: on the same bimodal
+//! bands it is 14.1 dB on harmony 160 Hz (larger than s) and 0.6 dB on
+//! guitar 100 Hz (the 5-take majority), so it neither caps nor measures the
+//! take spread. The cap is 2x the fixed tolerance: the widest shift the
+//! gate accepts in any band is 6 / 9 dB.
 //!
-//! Level rules: the mean gated RMS of each file within 2 dB, the mean active
-//! fraction within 15 points, every seed's mix peak 0.89 +- 0.002, no
-//! NaN/inf. Pitch (YIN, `pitch`): pooled over seeds, the fraction within 50
-//! cents may drop by at most 0.03, and octave errors per seed may rise by at
-//! most 1 on average (the per-seed rule allowed +2 on one take; the mean of
-//! 8 takes has a third of the take noise).
+//! Level rules: the mean gated RMS of each file within 1.5 dB (section 12;
+//! the largest seed-to-seed std in baseline-mean is 0.48 dB, harmony_guitar, and
+//! 0.32 dB on the mix, so the null difference of two 8-take means has std
+//! at most 0.24 dB and 1.5 dB holds), the mean active fraction within 15
+//! points, every seed's mix peak 0.89 +- 0.002, no NaN/inf. Pitch (YIN,
+//! `pitch`): pooled over seeds, the fraction within 50 cents may drop by at
+//! most 0.03, and octave errors per seed may rise by at most 1 on average
+//! (the per-seed rule allowed +2 on one take; the mean of 8 takes has a
+//! third of the take noise).
 
-use crate::compare::{is_mid, LtasFile, MIX_PEAK, MIX_PEAK_TOL, PITCH_FRACTION_DROP, REL_FLOOR_DB};
+use crate::compare::{is_mid, LtasFile, MIX_PEAK, MIX_PEAK_TOL, MIX_RMS_DB, PITCH_FRACTION_DROP, REL_FLOOR_DB};
 use crate::ltas::NOMINAL_HZ;
 use crate::pitch::PitchReport;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const MEAN_RMS_DB: f64 = 2.0;
+/// Mean gated RMS limit per file, dB: the per-seed mix limit of section 12.
+pub const MEAN_RMS_DB: f64 = MIX_RMS_DB;
+/// Default cap of the spread allowance, 100 Hz-10 kHz, dB.
+pub const CAP_MID_DB: f64 = 6.0;
+/// Default cap of the spread allowance outside 100 Hz-10 kHz, dB.
+pub const CAP_EDGE_DB: f64 = 9.0;
 pub const MEAN_ACTIVE_POINTS: f64 = 15.0;
 pub const OCTAVE_PER_SEED_RISE: f64 = 1.0;
 
@@ -140,19 +163,25 @@ pub fn summarise(labels: Vec<String>, runs: &[LtasFile], pitch: &[PitchReport]) 
     Ok(MeanFile { centres_hz: NOMINAL_HZ.to_vec(), seeds: labels, files, pitch })
 }
 
-/// Band tolerance: fixed limits, or `k` times the base seed-to-seed std.
+/// Band tolerance: fixed limits, or `k` times the base seed-to-seed std
+/// up to a cap.
 #[derive(Clone, Copy, Debug)]
 pub struct BandTol {
     pub mid_db: f64,
     pub edge_db: f64,
     pub k: f64,
+    /// Cap of the allowance in 100 Hz-10 kHz, dB.
+    pub cap_mid_db: f64,
+    /// Cap of the allowance in the other bands, dB.
+    pub cap_edge_db: f64,
 }
 
 impl BandTol {
-    /// Allowed |delta| in band `i` given the base std there.
+    /// Allowed |delta| in band `i` given the base std there:
+    /// `min(max(fixed, k sd), cap)`, never below the fixed tolerance.
     pub fn allowed(&self, i: usize, base_std: f64) -> f64 {
-        let fixed = if is_mid(i) { self.mid_db } else { self.edge_db };
-        fixed.max(self.k * base_std)
+        let (fixed, cap) = if is_mid(i) { (self.mid_db, self.cap_mid_db) } else { (self.edge_db, self.cap_edge_db) };
+        fixed.max((self.k * base_std).min(cap))
     }
 }
 
@@ -329,7 +358,7 @@ mod tests {
         LtasFile { centres_hz: NOMINAL_HZ.to_vec(), files }
     }
 
-    const TOL: BandTol = BandTol { mid_db: 3.0, edge_db: 6.0, k: 2.0 };
+    const TOL: BandTol = BandTol { mid_db: 3.0, edge_db: 6.0, k: 2.0, cap_mid_db: 6.0, cap_edge_db: 9.0 };
 
     #[test]
     fn mean_std_and_floor() {
@@ -347,14 +376,47 @@ mod tests {
     fn spread_widens_the_band_tolerance() {
         // base: bands alternate -20/-30 over seeds, sd 5.77 dB (4 seeds)
         let base = summarise(vec![], &[run(-20.0, 0.89), run(-30.0, 0.89), run(-20.0, 0.89), run(-30.0, 0.89)], &[]).unwrap();
-        // new: mean shifted by 8 dB (-17 vs -25): beyond 3/6 dB, within 2 sd
-        let new = summarise(vec![], &[run(-17.0, 0.89), run(-17.0, 0.89)], &[]).unwrap();
+        // new: mean shifted by 5 dB (-20 vs -25): beyond 3 dB, within 2 sd
+        // and under the 6 dB cap
+        let new = summarise(vec![], &[run(-20.0, 0.89), run(-20.0, 0.89)], &[]).unwrap();
         assert!(compare_means(&base, &new, &TOL).iter().all(|r| r.fails.is_empty()));
         // stable base (sd 0): the fixed tolerance applies
         let base = summarise(vec![], &[run(-25.0, 0.89), run(-25.0, 0.89)], &[]).unwrap();
         let rows = compare_means(&base, &new, &TOL);
         assert!(rows.iter().all(|r| !r.fails.is_empty()));
-        assert_eq!(rows[0].worst.as_ref().unwrap().delta, 8.0);
+        assert_eq!(rows[0].worst.as_ref().unwrap().delta, 5.0);
+    }
+
+    #[test]
+    fn spread_allowance_is_capped() {
+        // mid band 10 (1 kHz), edge band 0 (25 Hz)
+        assert!(is_mid(10) && !is_mid(0));
+        assert_eq!(TOL.allowed(10, 0.5), 3.0);
+        assert_eq!(TOL.allowed(10, 2.0), 4.0);
+        assert_eq!(TOL.allowed(10, 9.6), 6.0);
+        assert_eq!(TOL.allowed(0, 2.0), 6.0);
+        assert_eq!(TOL.allowed(0, 4.0), 8.0);
+        assert_eq!(TOL.allowed(0, 20.0), 9.0);
+        // a cap under the fixed tolerance never tightens it
+        let t = BandTol { cap_mid_db: 1.0, cap_edge_db: 1.0, ..TOL };
+        assert_eq!(t.allowed(10, 9.6), 3.0);
+        // bimodal base: sd 10 dB, a 7 dB shift fails although within 2 sd
+        let base = summarise(vec![], &[run(-10.0, 0.89), run(-30.0, 0.89), run(-10.0, 0.89), run(-30.0, 0.89)], &[]).unwrap();
+        let new = summarise(vec![], &[run(-13.0, 0.89), run(-13.0, 0.89)], &[]).unwrap();
+        let rows = compare_means(&base, &new, &TOL);
+        let lead = rows.iter().find(|r| r.file == "lead").unwrap();
+        assert!(!lead.failed_bands.is_empty() && lead.failed_bands.iter().all(|&i| is_mid(i)));
+    }
+
+    #[test]
+    fn mean_rms_limit_is_1_5_db() {
+        let base = summarise(vec![], &[run(-20.0, 0.89)], &[]).unwrap();
+        let mut new = base.clone();
+        new.files.get_mut("mix").unwrap().gated_rms_mean += 1.4;
+        assert!(compare_means(&base, &new, &TOL).iter().all(|r| r.fails.is_empty()));
+        new.files.get_mut("mix").unwrap().gated_rms_mean += 0.2;
+        let rows = compare_means(&base, &new, &TOL);
+        assert!(rows.iter().find(|r| r.file == "mix").unwrap().fails.iter().any(|f| f.starts_with("rms")));
     }
 
     #[test]

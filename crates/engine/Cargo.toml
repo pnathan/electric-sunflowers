@@ -14,14 +14,3 @@ voice = { path = "../voice" }
 arrange = { path = "../arrange" }
 serde_json.workspace = true
 rayon = "1.10"
-
-[features]
-# Keep a copy of every raw track in RenderedSong::raw_tracks, for the stems
-# probe and the threaded check only. Off by default: a default-on feature
-# would be re-enabled for the sunflower binary by workspace feature
-# unification, doubling peak memory.
-capture_raw = []
-
-[[test]]
-name = "threaded_parity"
-required-features = ["capture_raw"]

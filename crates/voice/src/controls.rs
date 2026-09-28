@@ -1,820 +1,710 @@
-//! Articulation: per-frame control tracks (voicing, aspiration, frication,
-//! formants, pitch) from sung notes, by synthesis by rule with targets and
-//! transitions (Holmes, Mattingly and Shearme 1964; Klatt 1987). CV formant
-//! transitions start from the consonant locus (Delattre, Liberman and
-//! Cooper 1955).
+//! Frame-rate control tracks for the voice synthesiser, one frame per HOP
+//! samples (689 Hz), from the segment plan of `crate::articulation`.
+//!
+//! Tracks are built for a `Window` of the song's frame grid, one phrase at
+//! a time (`Articulation::phrase`), so the cost and memory follow the sung
+//! frames, not the song length. All frame arithmetic is on absolute frames
+//! and clipped to the window. Pipeline per window:
+//!
+//! 0. `plan_syllables` for the phrase's notes and every earlier note that
+//!    still writes frames inside the window (at least the note before the
+//!    phrase: its pause, and the breath in it, lead into the phrase).
+//! 1. `rasterise`: each segment writes its fields into the frames it
+//!    covers, in start order (a later segment overwrites only its own
+//!    fields).
+//! 2. `shape_dynamics`: per-note swell (notes over 0.5 s, 0.9 + 0.16 sin)
+//!    and a 40% fade over the last 45% of a phrase-final note.
+//! 3. Zero-phase one-pole smoothing (`dsp::onepole::zero_phase_smooth`) of
+//!    every track except pitch; time constants in `SMOOTH_*` and the
+//!    singer's `av_tau`.
+//! 4. `pitch_track`: the note's MIDI pitch from its onset to the next
+//!    onset, a 1.1 semitone scoop over 70 ms into phrase-initial notes, the
+//!    grace pitch over min(110 ms, 25%) of a note, then a one-sided
+//!    one-pole glide (time constant `glide`) so the pitch arrives late and
+//!    settles.
+//! 5. `add_vibrato`: sinusoidal vibrato on notes of 0.4 s or more, starting
+//!    220 ms into the note and rising over 380 ms by smoothstep, 15% deeper
+//!    on phrase-final notes, envelope smoothed (50 ms); rate wobbles 6% at
+//!    0.11 Hz. Start phase uniform from the singer's control stream.
+//! 6. `add_drift`: a leaky second-order random walk (dsp::stochastic,
+//!    step 0.004, leak 0.985, position leak 0.998, limit 0.12 semitone)
+//!    plus the singer's detune. The walk and the vibrato phase run on
+//!    from one window to the next.
 
-use sfcore::math::{clamp, smoothstep};
+use std::f64::consts::{PI, TAU};
+use std::ops::Range;
+
+use dsp::onepole::zero_phase_smooth;
+use dsp::stochastic::RandomWalk;
+use sfcore::math::{one_pole_coeff_tau, smoothstep};
 use sfcore::random::Rng;
-use sfcore::tuning::Tuning;
+use sfcore::{HOP, SR_F};
 use song::events::VocalNote;
-use song::Phoneme;
 
+use crate::articulation::{plan_syllables, syllables, Segment, Span, Syllable};
 use crate::params::VoiceParams;
-use crate::phoneme::{consonant, vowel_formants, ConsClass, Consonant, Locus};
 use crate::synth::VoiceSettings;
 
+/// Control frames per second.
+pub const FRAME_RATE: f64 = SR_F / HOP as f64;
+/// Notes whose frames end this close before a window's start are planned
+/// in it too, s (covers frame rounding).
+const WINDOW_MARGIN: f64 = 0.05;
+/// Pause planned after the song's last note, s (`plan_syllables`).
+const LAST_PAUSE: f64 = 0.5;
 
-/// A syllable split into onset, nucleus and coda.
+/// Zero-phase smoothing time constants, s.
+const SMOOTH_F1: f64 = 0.016;
+const SMOOTH_F2: f64 = 0.018;
+const SMOOTH_F3: f64 = 0.02;
+const SMOOTH_NASAL: f64 = 0.02;
+const SMOOTH_ASPIRATION: f64 = 0.006;
+const SMOOTH_FRICATION: f64 = 0.002;
+const SMOOTH_B1X: f64 = 0.006;
+const SMOOTH_NOISE_BAND: f64 = 0.004;
+const SMOOTH_VIBRATO: f64 = 0.05;
+
+/// Breath noise level of a `Segment::Breath`.
+const BREATH_AH: f32 = 0.045;
+/// Pitch scoop into a phrase-initial note: semitones below, seconds.
+const SCOOP_DEPTH: f32 = 1.1;
+const SCOOP_TIME: f64 = 0.07;
+/// Longest grace note, s, and its largest share of the note.
+const GRACE_TIME: f64 = 0.11;
+const GRACE_SHARE: f64 = 0.25;
+/// Pitch held after the last note, s.
+const LAST_HOLD: f64 = 0.3;
+/// Vibrato: shortest note, onset delay, rise time (s), phrase-end depth.
+const VIBRATO_MIN_NOTE: f64 = 0.4;
+const VIBRATO_DELAY: f64 = 0.22;
+const VIBRATO_RISE: f64 = 0.38;
+const VIBRATO_PHRASE_END: f64 = 1.15;
+/// Vibrato envelope below which no vibrato is added, semitones.
+const VIBRATO_FLOOR: f32 = 1e-6;
+/// Vibrato rate wobble: depth and angular rate (rad/s).
+const RATE_WOBBLE: f64 = 0.06;
+const RATE_WOBBLE_W: f64 = 0.7;
+/// Pitch drift walk: step, velocity leak, position leak, limit (semitones).
+const DRIFT: (f64, f64, f64, f64) = (0.004, 0.985, 0.998, 0.12);
+
+/// Per-frame controls the synthesiser reads, all of one length.
 #[derive(Clone, Debug, Default)]
-pub struct SplitPh {
-    pub on: Vec<Phoneme>,
-    pub nu: Vec<Phoneme>,
-    pub co: Vec<Phoneme>,
-}
-
-/// Onset consonants, the nucleus (first vowel through last vowel, with
-/// anything between), and coda consonants. With no vowel the nucleus is
-/// /ah/ and every phoneme is coda.
-pub fn split_ph(ph: &[Phoneme]) -> SplitPh {
-    let mut i0: i32 = -1;
-    let mut i1: i32 = -1;
-    for (i, p) in ph.iter().enumerate() {
-        if p.is_vowel() {
-            if i0 < 0 {
-                i0 = i as i32;
-            }
-            i1 = i as i32;
-        }
-    }
-    if i0 < 0 {
-        return SplitPh { on: vec![], nu: vec![Phoneme::Ah], co: ph.to_vec() };
-    }
-    let i0 = i0 as usize;
-    let i1 = i1 as usize;
-    SplitPh {
-        on: ph[..i0].to_vec(),
-        nu: ph[i0..=i1].to_vec(),
-        co: ph[i1 + 1..].to_vec(),
-    }
-}
-
-/// Kind of a nucleus target.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NucKind {
-    Vowel,
-    Sonorant,
-    Nasal,
-}
-
-impl NucKind {
-    fn seg(self) -> SegKind {
-        match self {
-            NucKind::Vowel => SegKind::Vow,
-            NucKind::Sonorant => SegKind::Son,
-            NucKind::Nasal => SegKind::Nas,
-        }
-    }
-}
-
-/// One formant target of a nucleus.
-#[derive(Clone, Copy, Debug)]
-pub struct NucTarget {
-    pub f: [f64; 3],
-    pub k: NucKind,
-    /// Voicing amplitude of a sonorant or nasal target.
-    pub av: Option<f64>,
-}
-
-const AH: [f64; 3] = match vowel_formants(Phoneme::Ah) {
-    Some(f) => f,
-    None => [640.0, 1190.0, 2390.0],
-};
-
-/// The formant targets of a nucleus: a diphthong gives its two vowel
-/// targets, a sonorant or nasal inside the nucleus gives its own; other
-/// consonants give none. An empty result is /ah/.
-pub fn nuc_targets(nu: &[Phoneme]) -> Vec<NucTarget> {
-    let mut out = Vec::new();
-    for &p in nu {
-        if let Some(pair) = p.diphthong_targets() {
-            for v in pair {
-                if let Some(f) = vowel_formants(v) {
-                    out.push(NucTarget { f, k: NucKind::Vowel, av: None });
-                }
-            }
-        } else if let Some(f) = vowel_formants(p) {
-            out.push(NucTarget { f, k: NucKind::Vowel, av: None });
-        } else if let Some(c) = consonant(p) {
-            let k = match c.class {
-                ConsClass::Sonorant => Some(NucKind::Sonorant),
-                ConsClass::Nasal => Some(NucKind::Nasal),
-                _ => None,
-            };
-            if let Some(k) = k {
-                out.push(NucTarget { f: c.formants, k, av: Some(c.av) });
-            }
-        }
-    }
-    if out.is_empty() {
-        out.push(NucTarget { f: AH, k: NucKind::Vowel, av: None });
-    }
-    out
-}
-
-/// A consonant's nominal duration in seconds: stops are closure plus a 12
-/// ms burst plus 24 ms aspiration when voiceless in an onset; affricates
-/// closure plus 8 ms burst plus frication; a coda nasal 85 ms; others their
-/// table duration. Vowels have none.
-pub fn cons_dur(p: Phoneme, coda: bool) -> f64 {
-    let Some(c) = consonant(p) else {
-        return 0.0;
-    };
-    match c.class {
-        ConsClass::Stop => c.closure + 0.012 + if coda || c.voiced { 0.0 } else { 0.024 },
-        ConsClass::Affricate => c.closure + 0.008 + c.fric_dur,
-        ConsClass::Nasal if coda => 0.085,
-        _ => c.dur,
-    }
-}
-
-/// Per-frame control tracks, one frame per HOP samples.
-pub struct VoiceControls {
+pub struct ControlTracks {
+    /// Voicing amplitude.
     pub av: Vec<f32>,
+    /// Aspiration (and breath) noise amplitude.
     pub ah: Vec<f32>,
+    /// Frication noise amplitude.
     pub af: Vec<f32>,
+    /// Frication band centre, Hz.
     pub ff: Vec<f32>,
+    /// Frication bandwidth, Hz.
     pub fbw: Vec<f32>,
+    /// F1-F3 targets, Hz.
     pub f1: Vec<f32>,
     pub f2: Vec<f32>,
     pub f3: Vec<f32>,
+    /// Nasality 0-1 (widens B1-B3).
     pub nas: Vec<f32>,
-    pub m: Vec<f32>,
-    pub vb: Vec<f32>,
+    /// Pitch, fractional MIDI.
+    pub midi: Vec<f32>,
+    /// Extra F1 bandwidth during aspiration, Hz.
     pub b1x: Vec<f32>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SegKind {
-    Vow,
-    Son,
-    Nas,
-    Fric,
-    Asp,
-    Aspr,
-    Burst,
-    Clos,
-    Sil,
-    Breath,
-}
+impl ControlTracks {
+    /// `frames` frames at rest: silent, neutral formants, pitch 0.
+    pub fn neutral(frames: usize) -> ControlTracks {
+        let mut c = ControlTracks::default();
+        c.reset(frames);
+        c
+    }
 
-#[derive(Clone, Debug)]
-struct Seg {
-    t0: f64,
-    t1: f64,
-    k: SegKind,
-    f: [f64; 3],
-    av: Option<f64>,
-    af: Option<f64>,
-    ff: Option<f64>,
-    fbw: Option<f64>,
-    ah: Option<f64>,
-    b1x: Option<f64>,
-    vb: Option<f64>,
-    nas: Option<f64>,
-}
-
-/// A segment with every optional control unset.
-fn blank(k: SegKind, f: [f64; 3]) -> Seg {
-    Seg { t0: 0.0, t1: 0.0, k, f, av: None, af: None, ff: None, fbw: None, ah: None, b1x: None, vb: None, nas: None }
-}
-
-/// Per-note onset and coda timing.
-struct NoteInfo {
-    sp: SplitPh,
-    on: Vec<f64>,
-    co: Vec<f64>,
-    on_s: f64,
-    on_start: f64,
-}
-
-/// Control tracks of `n_f` frames for one singer's notes: segments per
-/// note (onset consonants, CV transition, nucleus, coda, silence or a
-/// breath before a phrase), rasterised per frame, then per-note swell and
-/// phrase-end fade, pitch with scoop and grace, zero-phase smoothing, a
-/// one-sided pitch glide, vibrato and a random-walk drift.
-pub fn voice_controls(
-    notes: &[VocalNote],
-    p: &VoiceParams,
-    n_f: usize,
-    settings: &VoiceSettings,
-    r: &mut Rng,
-    tuning: &Tuning,
-) -> VoiceControls {
-    let fr = sfcore::SR_F / sfcore::HOP as f64;
-
-    let mut av = vec![0.0f32; n_f];
-    let mut ah = vec![0.0f32; n_f];
-    let mut af = vec![0.0f32; n_f];
-    let mut ff = vec![4000.0f32; n_f];
-    let mut fbw = vec![3000.0f32; n_f];
-    let mut f1 = vec![500.0f32; n_f];
-    let mut f2 = vec![1500.0f32; n_f];
-    let mut f3 = vec![2500.0f32; n_f];
-    let mut nas = vec![0.0f32; n_f];
-    let mut m = vec![0.0f32; n_f];
-    let mut vb = vec![0.0f32; n_f];
-    let mut b1x = vec![0.0f32; n_f];
-
-    let sc = |f: [f64; 3]| -> [f64; 3] { [f[0] * p.f1s, f[1] * p.fs, f[2] * p.fs] };
-
-    let mut segs: Vec<Seg> = Vec::new();
-    let put = |segs: &mut Vec<Seg>, t0: f64, t1: f64, seg: Seg| {
-        if t1 > t0 + 1e-4 {
-            let mut s = seg;
-            s.t0 = t0;
-            s.t1 = t1;
-            segs.push(s);
-        }
-    };
-    // pass 1: onset timing
-    let mut info: Vec<NoteInfo> = notes
-        .iter()
-        .map(|n| {
-            let sp = split_ph(&n.phones);
-            let cs = p.cons_scale;
-            let on: Vec<f64> = sp.on.iter().map(|&ph| cons_dur(ph, false) * cs).collect();
-            let co: Vec<f64> = sp.co.iter().map(|&ph| cons_dur(ph, true) * cs).collect();
-            NoteInfo { sp, on, co, on_s: 1.0, on_start: 0.0 }
-        })
-        .collect();
-
-    for k in 1..notes.len() {
-        let n = &notes[k];
-        let pv = &notes[k - 1];
-        let (single_td, pv_co_empty) = {
-            let i = &info[k];
-            let pi = &info[k - 1];
-            let single_td = i.sp.on.len() == 1 && matches!(i.sp.on[0], Phoneme::T | Phoneme::D);
-            (single_td, pi.sp.co.is_empty())
+    /// Set every track to `frames` frames at rest, reusing the buffers.
+    pub fn reset(&mut self, frames: usize) {
+        let set = |v: &mut Vec<f32>, x: f32| {
+            v.clear();
+            v.resize(frames, x);
         };
-        if single_td && !n.stress && !n.phrase_start && pv_co_empty && n.t0 - pv.t1 < 0.15 {
-            info[k].sp.on = vec![Phoneme::Dx];
-            info[k].on = vec![cons_dur(Phoneme::Dx, false)];
-        }
+        set(&mut self.av, 0.0);
+        set(&mut self.ah, 0.0);
+        set(&mut self.af, 0.0);
+        set(&mut self.ff, 4000.0);
+        set(&mut self.fbw, 3000.0);
+        set(&mut self.f1, 500.0);
+        set(&mut self.f2, 1500.0);
+        set(&mut self.f3, 2500.0);
+        set(&mut self.nas, 0.0);
+        set(&mut self.midi, 0.0);
+        set(&mut self.b1x, 0.0);
     }
 
-    for k in 0..notes.len() {
-        let n = &notes[k];
-        let d: f64 = info[k].on.iter().sum();
-        let avail = if k > 0 { (n.t0 - notes[k - 1].t0) * 0.45 } else { 0.3 };
-        let s = if d > avail && d > 0.0 { avail / d } else { 1.0 };
-        info[k].on_s = s;
-        info[k].on_start = n.t0 - d * s;
+    pub fn len(&self) -> usize {
+        self.av.len()
     }
 
-    for k in 0..notes.len() {
-        let n = &notes[k];
-        let vt = nuc_targets(&info[k].sp.nu);
-        let vf0 = sc(vt[0].f);
-        let vfl = sc(vt[vt.len() - 1].f);
+    pub fn is_empty(&self) -> bool {
+        self.av.is_empty()
+    }
+}
 
-        // onset consonants
-        let mut t = info[k].on_start;
-        let on_ph = &info[k].sp.on;
-        let on_dur = &info[k].on;
-        let on_s = info[k].on_s;
-        for (j, &ph) in on_ph.iter().enumerate() {
-            let d = on_dur[j] * on_s;
-            emit_cons(&mut segs, &put, ph, t, t + d, vf0, n.amp as f64, false, p, tuning, &sc);
-            t += d;
-        }
-        let lc = info[k].sp.on.last().and_then(|&ph| consonant(ph));
-        let loc_f: Option<[f64; 3]> =
-            lc.filter(|c| matches!(c.class, ConsClass::Stop | ConsClass::Affricate)).map(|c| match c.locus {
-                Locus::At(loc) => sc(loc),
-                Locus::Velar => [250.0 * p.f1s, (2300.0f64).min(vf0[1] * 1.1), vf0[2]],
-            });
+/// Frames `start..start + len` of the song's frame grid (frame i starts
+/// at sample i HOP).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window {
+    pub start: usize,
+    pub len: usize,
+}
 
-        // coda
-        let nx = notes.get(k + 1);
-        let mut coda_end = n.t1;
-        if let Some(nx) = nx {
-            if info[k + 1].on_start < n.t1 + 0.03 {
-                coda_end = info[k + 1].on_start.min((n.t0 + 0.06).max(n.t1));
-            }
-            let _ = nx;
-        }
-        let mut d2: f64 = info[k].co.iter().sum();
-        let lim = (coda_end - n.t0) * 0.4;
-        let s2 = if d2 > lim && d2 > 0.0 { lim / d2 } else { 1.0 };
-        d2 *= s2;
-        let coda_start = coda_end - d2;
-
-        // nucleus
-        let vlen = coda_start - n.t0;
-        let mut n_start = n.t0;
-        if tuning.vf.trans != 0.0 {
-            if let Some(loc_f) = loc_f {
-                if vt[0].k == NucKind::Vowel {
-                    let tt = (0.05f64).min((coda_start - n.t0) * 0.4);
-                    let s = 5;
-                    for j in 0..s {
-                        let a = (j as f64 + 0.5) / s as f64;
-                        let e = 1.0 - (1.0 - a).powf(1.6);
-                        let f: [f64; 3] = [0, 1, 2].map(|q| loc_f[q] + (vf0[q] - loc_f[q]) * e);
-                        put(
-                            &mut segs,
-                            n.t0 + tt * j as f64 / s as f64,
-                            n.t0 + tt * (j as f64 + 1.0) / s as f64,
-                            Seg { av: Some(n.amp as f64 * (0.7 + 0.3 * a)), ..blank(SegKind::Vow, f) },
-                        );
-                    }
-                    n_start = n.t0 + tt;
-                }
-            }
-        }
-        if vt.len() == 1 {
-            put(
-                &mut segs,
-                n_start,
-                coda_start,
-                Seg {
-                    av: Some(n.amp as f64 * vt[0].av.unwrap_or(1.0)),
-                    nas: Some(if vt[0].k == NucKind::Nasal { 1.0 } else { 0.0 }),
-                    ..blank(vt[0].k.seg(), sc(vt[0].f))
-                },
-            );
-        } else {
-            let tail = clamp(vlen * 0.3, 0.05, 0.18);
-            let each = tail / (vt.len() - 1) as f64;
-            put(
-                &mut segs,
-                n_start,
-                coda_start - tail,
-                Seg { av: Some(n.amp as f64), ..blank(SegKind::Vow, sc(vt[0].f)) },
-            );
-            for j in 1..vt.len() {
-                let a = coda_start - tail + (j - 1) as f64 * each;
-                put(
-                    &mut segs,
-                    a,
-                    a + each,
-                    Seg {
-                        av: Some(n.amp as f64 * vt[j].av.unwrap_or(1.0)),
-                        nas: Some(if vt[j].k == NucKind::Nasal { 1.0 } else { 0.0 }),
-                        ..blank(vt[j].k.seg(), sc(vt[j].f))
-                    },
-                );
-            }
-        }
-        t = coda_start;
-        let co_ph = &info[k].sp.co;
-        let co_dur = &info[k].co;
-        for (j, &ph) in co_ph.iter().enumerate() {
-            let d = co_dur[j] * s2;
-            emit_cons(&mut segs, &put, ph, t, t + d, vfl, n.amp as f64, true, p, tuning, &sc);
-            t += d;
-        }
-
-        // gap until next onset
-        let next_on = if let Some(_nx) = nx { info[k + 1].on_start } else { coda_end + 0.5 };
-        if next_on > coda_end + 0.01 {
-            let nf = if let Some(_nx) = nx {
-                sc(nuc_targets(&info[k + 1].sp.nu)[0].f)
-            } else {
-                vfl
-            };
-            if nx.map(|nx| nx.phrase_start).unwrap_or(false) && next_on - coda_end > 0.4 && settings.breath_pauses {
-                put(&mut segs, coda_end, next_on - 0.28, blank(SegKind::Sil, nf));
-                put(
-                    &mut segs,
-                    next_on - 0.28,
-                    next_on - 0.04,
-                    blank(SegKind::Breath, sc([620.0, 1200.0, 2400.0])),
-                );
-                put(&mut segs, next_on - 0.04, next_on, blank(SegKind::Sil, nf));
-            } else {
-                put(&mut segs, coda_end, next_on, blank(SegKind::Sil, nf));
-            }
-        }
+impl Window {
+    /// The whole song from frame 0.
+    pub fn song(len: usize) -> Window {
+        Window { start: 0, len }
     }
 
-    segs.sort_by(|a, b| a.t0.total_cmp(&b.t0));
-    for s in &segs {
-        let i0 = (f64::round(s.t0 * fr) as isize).max(0) as usize;
-        let i1 = ((f64::round(s.t1 * fr) as isize).max(0) as usize).min(n_f);
-        for i in i0..i1 {
-            f1[i] = (s.f[0]) as f32;
-            f2[i] = (s.f[1]) as f32;
-            f3[i] = (s.f[2]) as f32;
-            match s.k {
-                SegKind::Vow | SegKind::Son | SegKind::Nas => {
-                    av[i] = (s.av.unwrap_or(0.0)) as f32;
-                    nas[i] = (s.nas.unwrap_or(0.0)) as f32;
-                }
-                SegKind::Fric => {
-                    av[i] = (s.av.unwrap_or(0.0)) as f32;
-                    af[i] = (s.af.unwrap_or(0.0)) as f32;
-                    ff[i] = (s.ff.unwrap_or(0.0)) as f32;
-                    fbw[i] = (s.fbw.unwrap_or(0.0)) as f32;
-                }
-                SegKind::Asp | SegKind::Aspr => {
-                    ah[i] = (s.ah.unwrap_or(0.0)) as f32;
-                    b1x[i] = (s.b1x.unwrap_or(0.0)) as f32;
-                }
-                SegKind::Burst => {
-                    af[i] = (s.af.unwrap_or(0.0)) as f32;
-                    ff[i] = (s.ff.unwrap_or(0.0)) as f32;
-                    fbw[i] = (s.fbw.unwrap_or(0.0)) as f32;
-                    ah[i] = (s.ah.unwrap_or(0.0)) as f32;
-                    b1x[i] = (s.b1x.unwrap_or(0.0)) as f32;
-                }
-                SegKind::Clos => {
-                    av[i] = (s.av.unwrap_or(0.0)) as f32;
-                    vb[i] = (s.vb.unwrap_or(0.0)) as f32;
-                }
-                SegKind::Breath => {
-                    ah[i] = 0.045;
-                }
-                SegKind::Sil => {}
-            }
-        }
+    /// Nearest absolute frame of time `t` (saturating; NaN gives 0).
+    #[inline]
+    pub fn frame(t: f64) -> isize {
+        (t * FRAME_RATE).round() as isize
     }
 
-    // dynamics per note: swell and phrase-end fade; pitch track
-    for k in 0..notes.len() {
-        let n = &notes[k];
-        let i0 = f64::round(n.t0 * fr) as isize;
-        let i1 = f64::round(n.t1 * fr) as isize;
-        let len = (1isize).max(i1 - i0) as f64;
+    /// Absolute frames `a..b` as indices into this window, clipped.
+    #[inline]
+    pub fn clip(&self, a: isize, b: isize) -> Range<usize> {
+        let s = self.start as isize;
+        let len = self.len as isize;
+        let lo = a.saturating_sub(s).clamp(0, len);
+        let hi = b.saturating_sub(s).clamp(lo, len);
+        lo as usize..hi as usize
+    }
+
+    /// Absolute frame of window index `i`.
+    #[inline]
+    fn abs(&self, i: usize) -> isize {
+        (self.start + i) as isize
+    }
+}
+
+/// The segments of `plan` written into `out`, reset to `w.len` neutral
+/// frames. Each kind writes F1-F3 and its own fields only; later segments
+/// overwrite earlier ones.
+pub fn rasterise(plan: &[(Span, Segment)], w: Window, out: &mut ControlTracks) {
+    let c = out;
+    c.reset(w.len);
+    for (span, seg) in plan {
+        let r = w.clip(Window::frame(span.t0).max(0), Window::frame(span.t1).max(0));
+        if r.is_empty() {
+            continue;
+        }
+        let f = seg.formants();
+        c.f1[r.clone()].fill(f[0] as f32);
+        c.f2[r.clone()].fill(f[1] as f32);
+        c.f3[r.clone()].fill(f[2] as f32);
+        match *seg {
+            Segment::Vowel { av, .. } | Segment::Sonorant { av, .. } => {
+                c.av[r.clone()].fill(av as f32);
+                c.nas[r].fill(0.0);
+            }
+            Segment::Nasal { av, .. } => {
+                c.av[r.clone()].fill(av as f32);
+                c.nas[r].fill(1.0);
+            }
+            Segment::Fricative { av, af, ff, fbw, .. } => {
+                c.av[r.clone()].fill(av as f32);
+                c.af[r.clone()].fill(af as f32);
+                c.ff[r.clone()].fill(ff as f32);
+                c.fbw[r].fill(fbw as f32);
+            }
+            Segment::Aspiration { ah, b1x, .. } => {
+                c.ah[r.clone()].fill(ah as f32);
+                c.b1x[r].fill(b1x as f32);
+            }
+            Segment::Burst { af, ff, fbw, ah, .. } => {
+                c.af[r.clone()].fill(af as f32);
+                c.ff[r.clone()].fill(ff as f32);
+                c.fbw[r.clone()].fill(fbw as f32);
+                c.ah[r.clone()].fill(ah as f32);
+                c.b1x[r].fill(0.0);
+            }
+            Segment::Closure { av, .. } => c.av[r].fill(av as f32),
+            Segment::Breath { .. } => c.ah[r].fill(BREATH_AH),
+            Segment::Silence { .. } => {}
+        }
+    }
+}
+
+/// `dsp::onepole::zero_phase_smooth` of each track with its own
+/// coefficient, bit for bit, with the tracks' recurrences interleaved in
+/// one loop so they overlap in the pipeline. The tracks must have equal
+/// lengths (every `ControlTracks` track does).
+pub fn zero_phase_smooth_lanes<const N: usize>(tracks: [&mut [f32]; N], a: [f64; N]) {
+    let n = tracks.first().map_or(0, |t| t.len());
+    assert!(tracks.iter().all(|t| t.len() == n), "zero_phase_smooth_lanes: tracks of unequal length");
+    if n == 0 {
+        return;
+    }
+    let mut y: [f64; N] = std::array::from_fn(|l| tracks[l][0] as f64);
+    for i in 0..n {
+        for l in 0..N {
+            y[l] += a[l] * (tracks[l][i] as f64 - y[l]);
+            tracks[l][i] = y[l] as f32;
+        }
+    }
+    let mut y: [f64; N] = std::array::from_fn(|l| tracks[l][n - 1] as f64);
+    for i in (0..n).rev() {
+        for l in 0..N {
+            y[l] += a[l] * (tracks[l][i] as f64 - y[l]);
+            tracks[l][i] = y[l] as f32;
+        }
+    }
+}
+
+/// Per-note swell and phrase-end fade on the voicing track `av` of window
+/// `w`, for `notes`.
+pub fn shape_dynamics(av: &mut [f32], notes: &[VocalNote], w: Window) {
+    for n in notes {
         let dur = n.t1 - n.t0;
-        let i0u = i0.max(0) as usize;
-        let i1u = i1.max(0) as usize;
-        for i in i0u..i1u.min(n_f) {
-            let x = (i as f64 - i0 as f64) / len;
-            let mut e = if dur > 0.5 { 0.9 + 0.16 * f64::sin(std::f64::consts::PI * (x * 1.1).min(1.0)) } else { 1.0 };
+        if dur <= 0.5 && !n.phrase_end {
+            continue;
+        }
+        let i0 = Window::frame(n.t0);
+        let i1 = Window::frame(n.t1);
+        let len = (i1 - i0).max(1) as f64;
+        for i in w.clip(i0, i1) {
+            let x = (w.abs(i) - i0) as f64 / len;
+            let mut e = if dur > 0.5 { 0.9 + 0.16 * (PI * (x * 1.1).min(1.0)).sin() } else { 1.0 };
             if n.phrase_end {
                 e *= 1.0 - 0.4 * smoothstep(0.55, 1.0, x);
             }
             av[i] = (av[i] as f64 * e) as f32;
         }
-        let s0 = (f64::round(info[k].on_start * fr) as isize).max(0) as usize;
-        let e0 = if let Some(_nx) = notes.get(k + 1) {
-            f64::round(info[k + 1].on_start * fr) as isize
-        } else {
-            (n_f as isize).min(i1 + f64::round(0.3 * fr) as isize)
-        };
-        let e0 = e0.max(0) as usize;
-        for i in s0..e0.min(n_f) {
-            m[i] = n.midi;
-        }
-        if n.phrase_start && settings.scoop {
-            let s_end = (n_f).min(i0u + f64::round(0.07 * fr) as usize);
-            for i in s0..s_end {
-                m[i] = n.midi - 1.1;
-            }
-        }
-        if let Some(grace) = n.grace {
-            let g_end = n_f.min(i0u + f64::round((0.11f64).min(dur * 0.25) * fr) as usize);
-            for i in i0u..g_end {
-                m[i] = grace;
-            }
-        }
     }
-
-    // backfill any leading zeros in M
-    let mut first_m = 0.0f32;
-    for &v in &m {
-        if v != 0.0 {
-            first_m = v;
-            break;
-        }
-    }
-    let mut last_m = first_m;
-    for i in 0..n_f {
-        if m[i] != 0.0 {
-            last_m = m[i];
-        } else {
-            m[i] = last_m;
-        }
-    }
-
-    let smooth = |a: &mut [f32], tau: f64| {
-        let al = 1.0 - f64::exp(-1.0 / (fr * tau));
-        if a.is_empty() {
-            return;
-        }
-        let mut y = a[0] as f64;
-        for v in a.iter_mut() {
-            y += al * (*v as f64 - y);
-            *v = (y) as f32;
-        }
-        let mut y = a[a.len() - 1] as f64;
-        for v in a.iter_mut().rev() {
-            y += al * (*v as f64 - y);
-            *v = (y) as f32;
-        }
-    };
-    smooth(&mut f1, 0.016);
-    smooth(&mut f2, 0.018);
-    smooth(&mut f3, 0.02);
-    smooth(&mut nas, 0.02);
-    smooth(&mut av, settings.av_tau);
-    smooth(&mut ah, 0.006);
-    smooth(&mut af, 0.002);
-    smooth(&mut vb, 0.008);
-    smooth(&mut b1x, 0.006);
-    smooth(&mut ff, 0.004);
-    smooth(&mut fbw, 0.004);
-
-    // pitch glide (one-sided so the note arrives, then settles)
-    {
-        let al = 1.0 - f64::exp(-1.0 / (fr * settings.glide));
-        if !m.is_empty() {
-            let mut y = m[0] as f64;
-            for v in m.iter_mut() {
-                y += al * (*v as f64 - y);
-                *v = (y) as f32;
-            }
-        }
-    }
-
-    // vibrato + drift
-    let mut vph = r.uniform() * std::f64::consts::TAU;
-    let mut drift = 0.0f64;
-    let mut dv = 0.0f64;
-    let vd = p.vib_depth * settings.vibrato_scale;
-    let mut vib = vec![0.0f32; n_f];
-    for k in 0..notes.len() {
-        let n = &notes[k];
-        let dur = n.t1 - n.t0;
-        if dur < 0.4 {
-            continue;
-        }
-        let a = f64::round((n.t0 + 0.22) * fr) as isize;
-        let b = (n_f as isize).min(f64::round(n.t1 * fr) as isize);
-        let au = a.max(0) as usize;
-        let bu = b.max(0) as usize;
-        for i in au..bu.min(n_f) {
-            vib[i] = (vd * smoothstep(0.0, 0.38 * fr, i as f64 - a as f64) * if n.phrase_end { 1.15 } else { 1.0 }) as f32;
-        }
-    }
-    smooth(&mut vib, 0.05);
-    let rate = p.vib_rate * settings.vibrato_rate_scale;
-    for i in 0..n_f {
-        vph += 2.0 * std::f64::consts::PI * rate * (1.0 + 0.06 * f64::sin(i as f64 / fr * 0.7)) / fr;
-        dv += r.gauss() * 0.004;
-        dv *= 0.985;
-        drift += dv;
-        drift *= 0.998;
-        let v = m[i] as f64 + vib[i] as f64 * f64::sin(vph) + clamp(drift, -0.12, 0.12) + settings.detune;
-        m[i] = (v) as f32;
-    }
-
-    VoiceControls { av, ah, af, ff, fbw, f1, f2, f3, nas, m, vb, b1x }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn emit_cons(
-    segs: &mut Vec<Seg>,
-    put: &dyn Fn(&mut Vec<Seg>, f64, f64, Seg),
-    ph: Phoneme,
-    t0: f64,
-    t1: f64,
-    vf: [f64; 3],
-    amp: f64,
-    coda: bool,
-    p: &VoiceParams,
-    tuning: &Tuning,
-    sc: &dyn Fn([f64; 3]) -> [f64; 3],
+/// Pitch of notes `range` into `out` (window `w`, one value per frame):
+/// note pitch from its onset to the next note's onset (0.3 s past the end
+/// for the song's last note), scoop, grace, frames before the first onset
+/// set to its pitch and gaps holding the last, then the one-sided glide.
+/// `syl` from `articulation::syllables` for all of `notes`.
+pub fn pitch_track(
+    notes: &[VocalNote],
+    syl: &[Syllable],
+    range: Range<usize>,
+    settings: &VoiceSettings,
+    w: Window,
+    out: &mut [f32],
 ) {
-    let Some(c): Option<&Consonant> = consonant(ph) else {
-        return;
-    };
-
-    match c.class {
-        ConsClass::Sonorant | ConsClass::Nasal => {
-            let nasal = c.class == ConsClass::Nasal;
-            let f = sc(c.formants);
-            let f = [0, 1, 2].map(|i| f[i] * 0.75 + vf[i] * 0.25);
-            let k = if nasal { SegKind::Nas } else { SegKind::Son };
-            put(segs, t0, t1, Seg { av: Some(amp * c.av), nas: Some(if nasal { 1.0 } else { 0.0 }), ..blank(k, f) });
-            return;
-        }
-        ConsClass::Fricative => {
-            put(
-                segs,
-                t0,
-                t1,
-                Seg {
-                    av: Some(if c.voiced { amp * c.vv } else { 0.0 }),
-                    af: Some(c.af * amp),
-                    ff: Some(c.ff),
-                    fbw: Some(c.bw),
-                    ..blank(SegKind::Fric, vf)
-                },
-            );
-            return;
-        }
-        ConsClass::Aspirate => {
-            put(segs, t0, t1, Seg { ah: Some(0.5 * amp), ..blank(SegKind::Asp, vf) });
-            return;
-        }
-        ConsClass::Stop | ConsClass::Affricate => {}
-    }
-    let loc = match c.locus {
-        Locus::At(loc) => sc(loc),
-        Locus::Velar => [250.0 * p.f1s, (2300.0f64).min(vf[1] * 1.1), vf[2]],
-    };
-    let cf = [0, 1, 2].map(|i| loc[i] * 0.6 + vf[i] * 0.4);
-    // Velar bursts follow the vowel: high for front vowels, low for back.
-    let ff = match c.locus {
-        Locus::At(_) => c.ff,
-        Locus::Velar if vf[1] > 1500.0 => 3000.0,
-        Locus::Velar => 1800.0,
-    };
-
-    if c.class == ConsClass::Stop && tuning.vf.legacy != 0.0 {
-        let cl = (t1 - t0) * (c.closure / cons_dur(ph, coda));
-        put(segs, t0, t0 + cl, Seg { av: Some(if c.voiced { amp * 0.1 } else { 0.0 }), ..blank(SegKind::Clos, cf) });
-        let b = t0 + cl;
-        put(
-            segs,
-            b,
-            b + 0.012,
-            Seg {
-                af: Some(if coda { 0.4 } else { 0.7 } * amp * tuning.vf.burst),
-                ff: Some(ff),
-                fbw: Some(c.bw),
-                ah: Some(0.12 * amp),
-                ..blank(SegKind::Burst, cf)
-            },
-        );
-        if !coda && !c.voiced {
-            put(
-                segs,
-                b + 0.012,
-                t1,
-                Seg { ah: Some(0.4 * amp * tuning.vf.asp), b1x: Some(320.0), ..blank(SegKind::Aspr, vf) },
-            );
-        }
-        return;
-    }
-    if c.class == ConsClass::Stop {
-        let cl = (t1 - t0) * (c.closure / cons_dur(ph, coda));
-        put(
-            segs,
-            t0,
-            t0 + cl,
-            Seg {
-                vb: Some(if c.voiced { amp * tuning.vbg * if c.flap { 1.3 } else { 1.0 } } else { 0.0 }),
-                ..blank(SegKind::Clos, cf)
-            },
-        );
-        let b = t0 + cl;
-        let bd = if c.voiced { 0.005 } else { 0.007 };
-        let af_val = if coda {
-            0.12
-        } else if c.flap {
-            0.05
-        } else if c.voiced {
-            tuning.bd_v
-        } else {
-            tuning.bd_t
+    let m = out;
+    m.fill(0.0);
+    let range = range.start.min(notes.len())..range.end.min(notes.len()).min(syl.len());
+    for k in range {
+        let (n, s) = (&notes[k], &syl[k]);
+        let i0 = Window::frame(n.t0).max(0);
+        let start = Window::frame(s.onset_start).max(0);
+        let end = match syl.get(k + 1) {
+            Some(ns) => Window::frame(ns.onset_start),
+            None => Window::frame(n.t1) + Window::frame(LAST_HOLD),
         };
-        put(
-            segs,
-            b,
-            b + bd,
-            Seg {
-                af: Some(af_val * amp * tuning.bst),
-                ff: Some(ff),
-                fbw: Some(c.bw * 0.7),
-                ah: Some(if c.voiced { 0.03 } else { 0.05 } * amp),
-                b1x: Some(250.0),
-                ..blank(SegKind::Burst, cf)
-            },
-        );
-        if !coda && !c.voiced {
-            let f = [0, 1, 2].map(|i| if i == 0 { vf[i] } else { vf[i] * 0.97 });
-            put(segs, b + bd, t1, Seg { ah: Some(0.6 * amp * tuning.aspg), b1x: Some(320.0), ..blank(SegKind::Aspr, f) });
-        } else if !coda && c.voiced && t1 > b + bd {
-            let f = [0, 1, 2].map(|i| cf[i] + (vf[i] - cf[i]) * 0.3);
-            put(segs, b + bd, t1, Seg { av: Some(amp * 0.55), ..blank(SegKind::Vow, f) });
+        m[w.clip(start, end)].fill(n.midi);
+        if n.phrase_start && settings.scoop {
+            m[w.clip(start, i0 + Window::frame(SCOOP_TIME).max(0))].fill(n.midi - SCOOP_DEPTH);
         }
-        return;
+        if let Some(grace) = n.grace {
+            let g = Window::frame(GRACE_TIME.min((n.t1 - n.t0) * GRACE_SHARE)).max(0);
+            m[w.clip(i0, i0 + g)].fill(grace);
+        }
     }
-    // Affricate.
-    let tot = t1 - t0;
-    let cl = tot * c.closure / cons_dur(ph, coda);
-    put(segs, t0, t0 + cl, Seg { av: Some(if c.voiced { amp * 0.1 } else { 0.0 }), ..blank(SegKind::Clos, cf) });
-    let burst_dur = tot * 0.008 / cons_dur(ph, coda);
-    put(
-        segs,
-        t0 + cl,
-        t0 + cl + burst_dur,
-        Seg { af: Some(0.6 * amp), ff: Some(c.ff), fbw: Some(c.bw), ..blank(SegKind::Burst, cf) },
-    );
-    put(
-        segs,
-        t0 + cl + burst_dur,
-        t1,
-        Seg {
-            af: Some(c.af * amp),
-            ff: Some(c.ff),
-            fbw: Some(c.bw),
-            av: Some(if c.voiced { amp * 0.3 } else { 0.0 }),
-            ..blank(SegKind::Fric, vf)
-        },
-    );
+
+    let mut last = m.iter().copied().find(|&v| v != 0.0).unwrap_or(0.0);
+    for v in m.iter_mut() {
+        if *v != 0.0 {
+            last = *v;
+        } else {
+            *v = last;
+        }
+    }
+
+    // One-sided glide: the pitch arrives after the note starts.
+    if let Some(&first) = m.first() {
+        let a = one_pole_coeff_tau(settings.glide, FRAME_RATE);
+        let mut y = first as f64;
+        for v in m.iter_mut() {
+            y += a * (*v as f64 - y);
+            *v = y as f32;
+        }
+    }
+}
+
+/// Vibrato generator: its phase runs on across windows.
+#[derive(Clone, Debug)]
+pub struct Vibrato {
+    /// Depth, semitones.
+    pub depth: f64,
+    /// Rate, Hz.
+    pub rate: f64,
+    /// Current phase, radians.
+    pub phase: f64,
+    /// Envelope scratch.
+    env: Vec<f32>,
+}
+
+impl Vibrato {
+    pub fn new(depth: f64, rate: f64, phase: f64) -> Vibrato {
+        Vibrato { depth, rate, phase, env: Vec::new() }
+    }
+
+    /// Add vibrato for `notes` to `midi` (window `w`). See the module doc
+    /// for the envelope.
+    pub fn add(&mut self, midi: &mut [f32], notes: &[VocalNote], w: Window) {
+        let env = &mut self.env;
+        env.clear();
+        env.resize(midi.len(), 0.0);
+        for n in notes {
+            if n.t1 - n.t0 < VIBRATO_MIN_NOTE {
+                continue;
+            }
+            let a = Window::frame(n.t0 + VIBRATO_DELAY);
+            let d = self.depth * if n.phrase_end { VIBRATO_PHRASE_END } else { 1.0 };
+            for i in w.clip(a.max(0), Window::frame(n.t1)) {
+                env[i] = (d * smoothstep(0.0, VIBRATO_RISE * FRAME_RATE, (w.abs(i) - a) as f64)) as f32;
+            }
+        }
+        zero_phase_smooth(env, one_pole_coeff_tau(SMOOTH_VIBRATO, FRAME_RATE));
+        // Phase advance per frame: rate (1 + 0.06 sin(w t)) / FRAME_RATE at
+        // absolute frame time t; the wobble sine comes from a rotating
+        // phasor, and sin(phase) is evaluated only where the envelope is
+        // audible.
+        let dph = TAU * self.rate / FRAME_RATE;
+        let (sw, cw) = (RATE_WOBBLE_W / FRAME_RATE).sin_cos();
+        let (mut ws, mut wc) = (w.start as f64 * RATE_WOBBLE_W / FRAME_RATE).sin_cos();
+        let mut ph = self.phase;
+        for (m, &e) in midi.iter_mut().zip(env.iter()) {
+            ph += dph * (1.0 + RATE_WOBBLE * ws);
+            (ws, wc) = (ws * cw + wc * sw, wc * cw - ws * sw);
+            if e > VIBRATO_FLOOR {
+                *m = (*m as f64 + e as f64 * ph.sin()) as f32;
+            }
+        }
+        self.phase = ph % TAU;
+    }
+}
+
+/// Add slow pitch drift (one step of `walk` per frame, deviates from
+/// `rng`) and a constant `detune` in semitones to `midi`.
+pub fn add_drift(midi: &mut [f32], walk: &mut RandomWalk, rng: &mut Rng, detune: f64) {
+    for m in midi.iter_mut() {
+        *m = (*m as f64 + walk.step(rng) + detune) as f32;
+    }
+}
+
+/// The pitch drift walk of `add_drift`.
+pub fn drift_walk() -> RandomWalk {
+    let (step, leak, w_leak, limit) = DRIFT;
+    RandomWalk::leaky(step, leak, w_leak, limit)
+}
+
+/// One singer's articulation state: syllables of all notes, the vibrato
+/// phase and drift walk that run across phrases, and reused buffers.
+pub struct Articulation<'a> {
+    notes: &'a [VocalNote],
+    syl: Vec<Syllable>,
+    p: VoiceParams,
+    settings: VoiceSettings,
+    rng: Rng,
+    vibrato: Vibrato,
+    drift: RandomWalk,
+    plan: Vec<(Span, Segment)>,
+}
+
+impl<'a> Articulation<'a> {
+    /// For `notes` (in time order) sung with resolved parameters `p`
+    /// (settings applied). `rng` is the singer's control stream: one
+    /// uniform draw now (vibrato phase), then one normal draw per rendered
+    /// frame (drift).
+    pub fn new(notes: &'a [VocalNote], p: &VoiceParams, settings: &VoiceSettings, mut rng: Rng) -> Self {
+        let phase = rng.uniform() * TAU;
+        Articulation {
+            notes,
+            syl: syllables(notes, p),
+            p: *p,
+            settings: *settings,
+            rng,
+            vibrato: Vibrato::new(p.vib_depth * settings.vibrato_scale, p.vib_rate * settings.vibrato_rate_scale, phase),
+            drift: drift_walk(),
+            plan: Vec::new(),
+        }
+    }
+
+    /// Time note `k` first sounds: its first onset consonant, s.
+    pub fn onset_start(&self, k: usize) -> Option<f64> {
+        self.syl.get(k).map(|s| s.onset_start)
+    }
+
+    /// Last time note `k` writes a control frame, s: its pause (and a
+    /// breath in it) and its pitch run to the next note's onset.
+    fn reach(&self, k: usize) -> f64 {
+        let t1 = self.notes[k].t1;
+        match self.syl.get(k + 1) {
+            Some(ns) => t1.max(ns.onset_start),
+            None => t1 + LAST_HOLD.max(LAST_PAUSE),
+        }
+    }
+
+    /// Control tracks of window `w` for the phrase of notes `range` into
+    /// `out`. Every earlier note that still writes frames at or after the
+    /// window's start is planned too (at least the note before `range`,
+    /// whose pause and breath lead into the phrase), so a window clipped
+    /// to start inside the previous phrase matches the whole-song tracks.
+    pub fn phrase(&mut self, range: Range<usize>, w: Window, out: &mut ControlTracks) {
+        let end = range.end.min(self.notes.len()).min(self.syl.len());
+        let t_start = w.start as f64 / FRAME_RATE - WINDOW_MARGIN;
+        let mut lo = range.start.min(end).saturating_sub(1);
+        while lo > 0 && self.reach(lo - 1) >= t_start {
+            lo -= 1;
+        }
+        let range = lo..end;
+        let notes = self.notes.get(range.clone()).unwrap_or(&[]);
+        plan_syllables(self.notes, &self.syl, range.clone(), &self.p, &self.settings, &mut self.plan);
+        rasterise(&self.plan, w, out);
+        shape_dynamics(&mut out.av, notes, w);
+
+        let taus = [
+            SMOOTH_F1,
+            SMOOTH_F2,
+            SMOOTH_F3,
+            SMOOTH_NASAL,
+            self.settings.av_tau,
+            SMOOTH_ASPIRATION,
+            SMOOTH_FRICATION,
+            SMOOTH_B1X,
+            SMOOTH_NOISE_BAND,
+            SMOOTH_NOISE_BAND,
+        ];
+        let c = &mut *out;
+        zero_phase_smooth_lanes(
+            [&mut c.f1, &mut c.f2, &mut c.f3, &mut c.nas, &mut c.av, &mut c.ah, &mut c.af, &mut c.b1x, &mut c.ff, &mut c.fbw],
+            taus.map(|t| one_pole_coeff_tau(t, FRAME_RATE)),
+        );
+
+        pitch_track(self.notes, &self.syl, range, &self.settings, w, &mut out.midi);
+        self.vibrato.add(&mut out.midi, notes, w);
+        add_drift(&mut out.midi, &mut self.drift, &mut self.rng, self.settings.detune);
+    }
+}
+
+/// Control tracks of `frames` frames from frame 0 for all of `notes`: one
+/// window over the whole song (tests and probes; the synthesiser renders
+/// phrase by phrase).
+pub fn control_tracks(
+    notes: &[VocalNote],
+    p: &VoiceParams,
+    settings: &VoiceSettings,
+    frames: usize,
+    rng: Rng,
+) -> ControlTracks {
+    let mut out = ControlTracks::default();
+    Articulation::new(notes, p, settings, rng).phrase(0..notes.len(), Window::song(frames), &mut out);
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::params::voice_params;
+    use song::{Phoneme, Voice};
 
-    fn s(v: &str) -> Phoneme {
-        Phoneme::from_symbol(v).expect("known symbol")
-    }
-    fn ph(v: &[&str]) -> Vec<Phoneme> {
-        v.iter().map(|x| s(x)).collect()
-    }
-
-    #[test]
-    fn split_ph_basic_cvc() {
-        let sp = split_ph(&ph(&["k", "ae", "t"]));
-        assert_eq!(sp.on, vec![s("k")]);
-        assert_eq!(sp.nu, vec![s("ae")]);
-        assert_eq!(sp.co, vec![s("t")]);
-    }
-
-    #[test]
-    fn split_ph_no_vowel_falls_back_to_ah() {
-        let sp = split_ph(&ph(&["s", "t"]));
-        assert!(sp.on.is_empty());
-        assert_eq!(sp.nu, vec![s("ah")]);
-        assert_eq!(sp.co, vec![s("s"), s("t")]);
+    fn note(t0: f64, t1: f64, midi: f32, phones: &[Phoneme]) -> VocalNote {
+        VocalNote {
+            t0,
+            t1,
+            midi,
+            phones: phones.to_vec(),
+            amp: 0.9,
+            stress: true,
+            phrase_start: false,
+            phrase_end: false,
+            grace: None,
+        }
     }
 
-    #[test]
-    fn split_ph_diphthong_and_onset_cluster() {
-        let sp = split_ph(&ph(&["s", "t", "aa", "ih", "n"]));
-        assert_eq!(sp.on, vec![s("s"), s("t")]);
-        // "aa" and "ih" are both vowels; run spans i0..=i1.
-        assert_eq!(sp.nu, vec![s("aa"), s("ih")]);
-        assert_eq!(sp.co, vec![s("n")]);
+    fn song() -> Vec<VocalNote> {
+        use Phoneme::*;
+        let mut v = vec![
+            note(0.5, 1.4, 50.0, &[Dh, Ax]),
+            note(1.5, 2.2, 52.0, &[R, Ih]),
+            note(2.25, 2.4, 55.0, &[V, Er]),
+            note(2.45, 3.6, 57.0, &[S, T, R, Ay, K]),
+            note(4.5, 5.0, 53.0, &[Ch, Ey, N, Jh]),
+            note(5.0, 6.2, 48.0, &[Hh, Ow, L, D, Z]),
+        ];
+        v[0].phrase_start = true;
+        v[4].phrase_start = true;
+        v[3].phrase_end = true;
+        v[5].phrase_end = true;
+        v[4].grace = Some(51.0);
+        v
     }
 
-    #[test]
-    fn cons_dur_stop_voiceless_onset_adds_aspiration_margin() {
-        // "t": stop, voiceless (v=0), cl=0.045 -> onset (coda=false): +0.024
-        let d = cons_dur(Phoneme::T, false);
-        assert!((d - (0.045 + 0.012 + 0.024)).abs() < 1e-12, "{d}");
+    fn frame(t: f64) -> usize {
+        Window::frame(t).max(0) as usize
     }
 
-    #[test]
-    fn cons_dur_stop_voiced_no_aspiration_margin() {
-        // "d": voiced (v=1) -> the (coda? 0 : v?0:0.024) term is 0 either way
-        let d = cons_dur(Phoneme::D, false);
-        assert!((d - (0.05 + 0.012)).abs() < 1e-12, "{d}");
+    fn frames_for(notes: &[VocalNote]) -> usize {
+        frame(notes.last().map_or(0.0, |n| n.t1) + 1.0)
     }
 
     #[test]
-    fn cons_dur_stop_coda_drops_aspiration_margin() {
-        let on = cons_dur(Phoneme::T, false);
-        let co = cons_dur(Phoneme::T, true);
-        assert!(co < on);
-        assert!((co - (0.045 + 0.012)).abs() < 1e-12);
+    fn tracks_are_finite_for_every_voice() {
+        let notes = song();
+        let n = frames_for(&notes);
+        for voice in [Voice::Bass, Voice::Baritone, Voice::Tenor, Voice::Alto, Voice::Soprano] {
+            let settings = VoiceSettings::default();
+            let p = settings.apply(voice_params(voice));
+            let c = control_tracks(&notes, &p, &settings, n, Rng::from_seed(7));
+            for t in [&c.av, &c.ah, &c.af, &c.ff, &c.fbw, &c.f1, &c.f2, &c.f3, &c.nas, &c.midi, &c.b1x] {
+                assert_eq!(t.len(), n);
+                assert!(t.iter().all(|x| x.is_finite()), "{voice:?}");
+            }
+            assert!(c.av.iter().any(|&x| x > 0.5));
+            assert!(c.midi.iter().all(|&m| (40.0..65.0).contains(&m)), "{voice:?}");
+        }
     }
 
     #[test]
-    fn cons_dur_affricate() {
-        // "ch": cl=0.04, fr=0.07 -> cl+0.008+fr
-        let d = cons_dur(Phoneme::Ch, false);
-        assert!((d - (0.04 + 0.008 + 0.07)).abs() < 1e-12, "{d}");
+    fn empty_and_degenerate_input() {
+        let settings = VoiceSettings::default();
+        let p = voice_params(Voice::Tenor);
+        let c = control_tracks(&[], &p, &settings, 10, Rng::from_seed(1));
+        assert_eq!(c.len(), 10);
+        let c = control_tracks(&song(), &p, &settings, 0, Rng::from_seed(1));
+        assert!(c.is_empty());
+        let bad = [note(-3.0, -1.0, 50.0, &[]), note(1e6, 1e6 + 1.0, 50.0, &[Phoneme::T])];
+        let c = control_tracks(&bad, &p, &settings, 100, Rng::from_seed(1));
+        assert!(c.midi.iter().chain(&c.av).all(|x| x.is_finite()));
+    }
+
+    /// Without vibrato and drift, the pitch sits within 5 cents of the note
+    /// in the middle 60% of each long note without a grace note.
+    #[test]
+    fn pitch_track_hits_the_note() {
+        let notes = song();
+        let settings = VoiceSettings::default();
+        let p = voice_params(Voice::Baritone);
+        let syl = syllables(&notes, &p);
+        let mut m = vec![0.0; frames_for(&notes)];
+        pitch_track(&notes, &syl, 0..notes.len(), &settings, Window::song(m.len()), &mut m);
+        for n in notes.iter().filter(|n| n.t1 - n.t0 >= 0.4 && n.grace.is_none()) {
+            let d = n.t1 - n.t0;
+            for i in frame(n.t0 + 0.2 * d)..frame(n.t1 - 0.2 * d) {
+                assert!((m[i] - n.midi).abs() < 0.05, "note {} frame {i}: {}", n.midi, m[i]);
+            }
+        }
+        // The scoop starts the first phrase below the note; the grace note
+        // starts at its grace pitch and ends on the note.
+        assert!(m[frame(notes[0].t0)] < notes[0].midi - 0.3);
+        let g = &notes[4];
+        let low = m[frame(g.t0)..frame(g.t0 + 0.11)].iter().copied().fold(f32::MAX, f32::min);
+        assert!(low < g.midi - 1.5, "grace low {low}");
+        assert!((m[frame(g.t1 - 0.15)] - g.midi).abs() < 0.05);
+    }
+
+    /// Vibrato is absent for the first 150 ms of a note and full depth in
+    /// its sustain.
+    #[test]
+    fn vibrato_onset_is_delayed() {
+        let n = note(0.5, 2.5, 52.0, &[Phoneme::Aa]);
+        let frames = frame(3.5);
+        let mut m = vec![52.0f32; frames];
+        let w = Window::song(frames);
+        Vibrato::new(0.3, 5.5, 0.0).add(&mut m, std::slice::from_ref(&n), w);
+        let dev = |a: f64, b: f64| (frame(a)..frame(b)).map(|i| (m[i] - 52.0).abs()).fold(0.0f32, f32::max);
+        assert!(dev(0.5, 0.65) < 0.03, "early {}", dev(0.5, 0.65));
+        let late = dev(1.4, 2.3);
+        assert!((late - 0.3).abs() < 0.02, "sustain {late}");
+        // Short notes get none.
+        let mut m = vec![52.0f32; frames];
+        Vibrato::new(0.3, 5.5, 0.0).add(&mut m, &[note(0.5, 0.85, 52.0, &[])], w);
+        assert!(m.iter().all(|&x| x == 52.0));
+    }
+
+    /// Tracks built on the clipped phrase spans of `synth::phrase_spans`
+    /// (as the synthesiser renders them) against one window over the whole
+    /// song, over every frame of every span. Segment tracks agree up to the
+    /// smoothers' restart at a span edge, which falls in a pause (formants
+    /// are compared only where a source sounds); pitch
+    /// agrees within twice the drift limit (vibrato off: its phase runs
+    /// only over rendered frames).
+    fn check_spans(notes: &[VocalNote], voice: Voice) {
+        let n = frames_for(notes);
+        let settings = VoiceSettings { vibrato_scale: 0.0, ..VoiceSettings::default() };
+        let p = settings.apply(voice_params(voice));
+        let whole = control_tracks(notes, &p, &settings, n, Rng::from_seed(9));
+        let mut art = Articulation::new(notes, &p, &settings, Rng::from_seed(9));
+        let spans = crate::synth::phrase_spans(notes, &art, n);
+        assert!(spans.len() > 1);
+        let mut c = ControlTracks::default();
+        for (g, s) in spans {
+            let w = Window { start: s.start, len: s.len() };
+            art.phrase(g, w, &mut c);
+            for i in 0..w.len {
+                let j = w.start + i;
+                // Formants and nasality matter only where a source sounds.
+                let heard = whole.av[j] > 0.01 || whole.ah[j] > 0.002 || whole.af[j] > 0.002;
+                for (name, a, b, tol) in [
+                    ("av", &c.av, &whole.av, 0.02),
+                    ("ah", &c.ah, &whole.ah, 0.01),
+                    ("af", &c.af, &whole.af, 0.01),
+                    ("f1", &c.f1, &whole.f1, 30.0),
+                    ("f2", &c.f2, &whole.f2, 60.0),
+                    ("nas", &c.nas, &whole.nas, 0.05),
+                ] {
+                    if !heard && matches!(name, "f1" | "f2" | "nas") {
+                        continue;
+                    }
+                    assert!((a[i] - b[j]).abs() <= tol, "{voice:?} {name} frame {j} (span {s:?}): {} vs {}", a[i], b[j]);
+                }
+                assert!((c.midi[i] - whole.midi[j]).abs() < 0.25, "midi frame {j}: {} vs {}", c.midi[i], whole.midi[j]);
+            }
+        }
     }
 
     #[test]
-    fn cons_dur_nasal_coda_is_fixed() {
-        assert_eq!(cons_dur(Phoneme::N, true), 0.085);
-        assert_ne!(cons_dur(Phoneme::N, false), 0.085);
+    fn phrase_windows_agree_with_whole_song() {
+        check_spans(&song(), Voice::Alto);
     }
 
+    /// A 0.35 s phrase gap puts the next phrase's lead (0.7 s) inside this
+    /// phrase's short final notes; the span edge must not silence them.
     #[test]
-    fn cons_dur_of_a_vowel_is_zero() {
-        assert_eq!(cons_dur(Phoneme::Aa, false), 0.0);
+    fn clipped_spans_keep_the_notes_before_a_short_gap() {
+        let mut v = vec![
+            note(0.5, 1.5, 50.0, &[Phoneme::Aa]),
+            note(1.5, 1.7, 52.0, &[Phoneme::Aa]),
+            note(1.7, 1.9, 53.0, &[Phoneme::Aa]),
+            note(2.25, 3.0, 55.0, &[Phoneme::Aa]),
+            note(3.35, 3.5, 57.0, &[Phoneme::T, Phoneme::Aa]),
+            note(3.5, 3.62, 55.0, &[Phoneme::D, Phoneme::Aa, Phoneme::T]),
+            note(3.97, 4.6, 52.0, &[Phoneme::S, Phoneme::Aa]),
+        ];
+        v[0].phrase_start = true;
+        v[2].phrase_end = true;
+        v[3].phrase_start = true;
+        v[3].phrase_end = true;
+        v[4].phrase_start = true;
+        v[5].phrase_end = true;
+        v[6].phrase_start = true;
+        v[6].phrase_end = true;
+        for voice in [Voice::Baritone, Voice::Soprano] {
+            check_spans(&v, voice);
+        }
     }
 
+    /// Drift stays inside its 0.12 semitone limit.
     #[test]
-    fn nuc_targets_plain_vowel() {
-        let t = nuc_targets(&ph(&["ae"]));
-        assert_eq!(t.len(), 1);
-        assert_eq!(t[0].k, NucKind::Vowel);
-    }
-
-    #[test]
-    fn nuc_targets_diphthong_expands_to_two() {
-        let t = nuc_targets(&ph(&["ay"]));
-        assert_eq!(t.len(), 2);
-        assert_eq!(t[0].k, NucKind::Vowel);
-        assert_eq!(t[1].k, NucKind::Vowel);
-    }
-
-    #[test]
-    fn nuc_targets_empty_falls_back_to_ah() {
-        let t = nuc_targets(&[]);
-        assert_eq!(t.len(), 1);
-        assert_eq!(Some(t[0].f), vowel_formants(Phoneme::Ah));
+    fn drift_is_bounded() {
+        let mut m = vec![60.0f32; 100_000];
+        add_drift(&mut m, &mut drift_walk(), &mut Rng::from_seed(3), 0.0);
+        assert!(m.iter().all(|&x| (x - 60.0).abs() <= 0.1201));
+        assert!(m.iter().any(|&x| (x - 60.0).abs() > 0.01));
     }
 }

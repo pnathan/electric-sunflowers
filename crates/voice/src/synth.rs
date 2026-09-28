@@ -2,15 +2,14 @@
 //! formant cascade (`tract`) and the noise sources, driven by per-frame
 //! control tracks (`controls`), rendered phrase by phrase.
 //!
-//! Per sample, with av, ah, af, vb, f0 ramped linearly across each HOP
-//! frame:
+//! Per sample, with av, ah, af, f0 ramped linearly across each HOP frame:
 //!
 //! ```text
 //! (pulse, flow) = source(f0, av)
 //! n             = white noise in [-1, 1)
 //! breath        = lowpass_2.6k(n) * 1.9 * breath * av * (0.18 + 0.9 flow)
 //! x             = pulse * av + (n * ah * 0.9 * 0.8 + breath) * 0.55
-//! out           = dc(cascade(x) + 2.2 bandpass(n' * af) + 2.2 voicebar(pulse * vb))
+//! out           = dc(cascade(x) + 2.2 bandpass(n' * af))
 //! ```
 //!
 //! Aspiration is raw white noise into the cascade; only breath noise is
@@ -24,9 +23,9 @@
 //! gain 0.01, limits 2% and 2.5%). F1 is floored at 1.06 f0. Bandwidths:
 //! B1 = 60 + 80 breath + 50 nasal + b1x, B2 = 90 + 170 nasal, B3 = 130 +
 //! 220 nasal. A frame in which every level is below 1e-5 and the tract is
-//! quiet is skipped and the resonators are reset. Frication and voice-bar
-//! filters run only in frames where they are active or still ringing; the
-//! choice is made per frame by a monomorphised inner loop.
+//! quiet is skipped and the resonators are reset. The frication filter
+//! runs only in frames where it is active or still ringing; the choice is
+//! made per frame by a monomorphised inner loop.
 //!
 //! Random streams (sfcore::random, per singer seed): `voice.source`
 //! (jitter, shimmer), `voice.noise` (aspiration, breath, frication),
@@ -40,15 +39,15 @@ use dsp::onepole::OnePole;
 use dsp::stochastic::RandomWalk;
 use sfcore::math::mtof;
 use sfcore::random::{tag, Rng, Tag};
-use sfcore::tuning::Tuning;
 use sfcore::{HOP, SR_F};
 use song::events::{SingStyle, VocalNote};
 use song::Voice;
 
-use crate::controls::{voice_controls, VoiceControls};
+use crate::controls::{Articulation, ControlTracks, Window};
 use crate::glottal::GlottalSource;
 use crate::params::{voice_params, VoiceParams};
 use crate::tract::{Formants, Tract, MAX_HIGH};
+use crate::tuning::{ASPIRATION_GAIN, BREATH_LP_HZ, TILT_SCALE};
 
 
 const SOURCE: Tag = tag("voice.source");
@@ -56,12 +55,6 @@ const NOISE: Tag = tag("voice.noise");
 const FORMANT: Tag = tag("voice.formant");
 const CONTROLS: Tag = tag("voice.controls");
 
-/// Spectral tilt corner = voice tilt times this.
-pub const TILT_SCALE: f64 = 1.25;
-/// Aspiration noise gain.
-pub const ASPIRATION_GAIN: f64 = 0.8;
-/// Breath-noise low-pass corner, Hz.
-pub const BREATH_LP_HZ: f64 = 2600.0;
 /// Extra F1 bandwidth per unit of the b1x track (F1 damping in aspiration).
 const B1X_GAIN: f64 = 1.0;
 /// Level below which a control counts as off.
@@ -178,7 +171,6 @@ struct Frame {
     av: (f64, f64),
     ah: (f64, f64),
     af: (f64, f64),
-    vb: (f64, f64),
     f0: (f64, f64),
 }
 
@@ -208,7 +200,7 @@ impl VoiceSynth {
     }
 
     /// Formants of frame `m` (fundamental `f0` Hz) with the current wobble.
-    fn formants(&self, ctl: &VoiceControls, m: usize, f0: f64) -> Formants {
+    fn formants(&self, ctl: &ControlTracks, m: usize, f0: f64) -> Formants {
         let nas = ctl.nas[m] as f64;
         Formants {
             f: [
@@ -225,12 +217,12 @@ impl VoiceSynth {
     }
 
     /// Render frames `frames` of `ctl` into `out`; `out[0]` is the first
-    /// sample of frame `frames.start`. Writes min(out.len(), frames * HOP)
-    /// samples; silent frames are written as zeros. Frames at or past the
-    /// last control frame are not rendered (the tracks have n_f frames and
-    /// frame m ramps to m + 1).
-    pub fn render_frames(&mut self, ctl: &VoiceControls, frames: Range<usize>, out: &mut [f32]) {
-        let n_f = ctl.av.len().min(ctl.m.len());
+    /// sample of frame `frames.start` (indices into `ctl`). Writes
+    /// min(out.len(), frames * HOP) samples; silent frames are written as
+    /// zeros. Frames at or past the last control frame are not rendered
+    /// (frame m ramps to m + 1).
+    pub fn render_frames(&mut self, ctl: &ControlTracks, frames: Range<usize>, out: &mut [f32]) {
+        let n_f = ctl.av.len().min(ctl.midi.len());
         let last = frames.end.min(n_f.saturating_sub(1));
         let mut m = frames.start;
         let mut f0_next: Option<(usize, f64)> = None;
@@ -242,9 +234,9 @@ impl VoiceSynth {
             let s1 = (s0 + HOP).min(out.len());
             let dst = &mut out[s0..s1];
             let lv = |t: &[f32]| (t[m], t[m + 1]);
-            let (av, ah, af, vb) = (lv(&ctl.av), lv(&ctl.ah), lv(&ctl.af), lv(&ctl.vb));
+            let (av, ah, af) = (lv(&ctl.av), lv(&ctl.ah), lv(&ctl.af));
             let off = |x: (f32, f32)| x.0 < SILENT && x.1 < SILENT;
-            if off(av) && off(ah) && off(af) && off(vb) && self.tract.is_quiet() {
+            if off(av) && off(ah) && off(af) && self.tract.is_quiet() {
                 self.tract.reset_resonators();
                 dst.fill(0.0);
                 m += 1;
@@ -255,9 +247,9 @@ impl VoiceSynth {
             // the next, so it is carried over.
             let f0a = match f0_next {
                 Some((k, f)) if k == m => f,
-                _ => mtof(ctl.m[m] as f64),
+                _ => mtof(ctl.midi[m] as f64),
             };
-            let f0b = mtof(ctl.m[m + 1] as f64);
+            let f0b = mtof(ctl.midi[m + 1] as f64);
             f0_next = Some((m + 1, f0b));
 
             // Formants: jump to frame m after a reset, ramp to frame m + 1.
@@ -277,17 +269,12 @@ impl VoiceSynth {
             } else {
                 self.tract.reset_frication();
             }
-            let vbar_on = vb.0 > 1e-6 || vb.1 > 1e-6 || self.tract.voice_bar_level() > 1e-8;
-            if !vbar_on {
-                self.tract.reset_voice_bar();
-            }
 
             let d = |x: (f32, f32)| (x.0 as f64, x.1 as f64);
             let fr = Frame {
                 av: d(av),
                 ah: d(ah),
                 af: d(af),
-                vb: d(vb),
                 f0: (f0a, f0b),
             };
             let n = dst.len();
@@ -295,11 +282,10 @@ impl VoiceSynth {
             if fric_on {
                 self.noise.fill_bipolar(&mut self.fric[..n]);
             }
-            match (fric_on, vbar_on) {
-                (false, false) => self.hop::<false, false>(&fr, dst),
-                (true, false) => self.hop::<true, false>(&fr, dst),
-                (false, true) => self.hop::<false, true>(&fr, dst),
-                (true, true) => self.hop::<true, true>(&fr, dst),
+            if fric_on {
+                self.hop::<true>(&fr, dst);
+            } else {
+                self.hop::<false>(&fr, dst);
             }
             m += 1;
         }
@@ -308,23 +294,21 @@ impl VoiceSynth {
     }
 
     /// One frame of samples in three passes: source and noise into the
-    /// excitation (and the frication and voice-bar inputs), the cascade
-    /// over the block, then the output stage. `FRIC` and `VBAR` select the
-    /// frication and voice-bar paths at compile time.
+    /// excitation (and the frication input), the cascade over the block,
+    /// then the output stage. `FRIC` selects the frication path at compile
+    /// time.
     #[inline(always)]
-    fn hop<const FRIC: bool, const VBAR: bool>(&mut self, fr: &Frame, out: &mut [f32]) {
+    fn hop<const FRIC: bool>(&mut self, fr: &Frame, out: &mut [f32]) {
         let n = out.len().min(HOP);
         let k = 1.0 / HOP as f64;
         let ramp = |x: (f64, f64)| (x.0, (x.1 - x.0) * k);
         let (av, dav) = ramp(fr.av);
         let (ah, dah) = ramp(fr.ah);
         let (af, daf) = ramp(fr.af);
-        let (vb, dvb) = ramp(fr.vb);
         let breath = self.breath;
         let mut lp = self.breath_lp;
         let mut exc = [0.0f64; HOP];
         let mut fin = [0.0f64; HOP];
-        let mut vin = [0.0f64; HOP];
         let (asp, fric) = (&self.asp, &self.fric);
         self.source.run(n, ramp(fr.f0), (av, dav), &mut self.source_rng, |j, pulse, flow| {
             let t = j as f64;
@@ -335,13 +319,10 @@ impl VoiceSynth {
             if FRIC {
                 fin[j] = fric[j] as f64 * (af + daf * t);
             }
-            if VBAR {
-                vin[j] = pulse * (vb + dvb * t);
-            }
         });
         self.breath_lp = lp;
         self.tract.cascade_block(&mut exc[..n]);
-        self.tract.finish_block::<FRIC, VBAR>(&exc[..n], &fin[..n], &vin[..n], &mut out[..n]);
+        self.tract.finish_block::<FRIC>(&exc[..n], &fin[..n], &mut out[..n]);
         self.tract.flush_denormals();
     }
 }
@@ -365,10 +346,51 @@ pub fn phrases(notes: &[VocalNote]) -> Vec<Range<usize>> {
     out
 }
 
+/// Frame span of each phrase of `notes` on a grid of `n_f` frames, as
+/// (note range, frame range) pairs: `PHRASE_LEAD` before the first note to
+/// `PHRASE_TAIL` after the last, clipped so spans never overlap. Where the
+/// next phrase's lead reaches back before this phrase's last note ends,
+/// the boundary moves to the middle of the pause between that end and the
+/// next phrase's first onset: both windows plan that pause alike (silence,
+/// or a breath), so the smoothers restart where the tracks are flat, not
+/// inside a note.
+pub(crate) fn phrase_spans(notes: &[VocalNote], art: &Articulation, n_f: usize) -> Vec<(Range<usize>, Range<usize>)> {
+    let fr = SR_F / HOP as f64;
+    let frame_at = |t: f64, up: bool| -> usize {
+        let x = t * fr;
+        let x = if up { x.ceil() } else { x.floor() };
+        if x.is_finite() && x > 0.0 { (x as usize).min(n_f) } else { 0 }
+    };
+    let groups = phrases(notes);
+    let mut spans = Vec::with_capacity(groups.len());
+    let mut prev_end = 0usize;
+    for (i, g) in groups.iter().enumerate() {
+        let t0 = notes[g.start].t0;
+        let t1 = notes[g.clone()].iter().map(|n| n.t1).fold(t0, f64::max);
+        let start = frame_at(t0 - PHRASE_LEAD, false).max(prev_end);
+        let mut end = frame_at(t1 + PHRASE_TAIL, true);
+        if let Some(nx) = groups.get(i + 1) {
+            let next_t0 = notes[nx.start].t0;
+            let mut b = next_t0 - PHRASE_LEAD;
+            if b < t1 {
+                let on = art.onset_start(nx.start).unwrap_or(next_t0).min(next_t0);
+                b = 0.5 * (t1 + on.max(t1));
+            }
+            end = end.min(frame_at(b, false).max(start));
+        }
+        if end > start {
+            spans.push((g.clone(), start..end));
+            prev_end = end;
+        }
+    }
+    spans
+}
+
 /// Render one singer: `notes` sung by `voice` with `settings`, random
 /// streams from `seed`, song length `len` samples. Each phrase (a maximal
 /// run of notes without a gap of 0.3 s or more, plus 0.7 s before and 0.5 s
-/// after) is rendered into a reused scratch buffer and passed to
+/// after) gets its own control tracks (`controls::Articulation`), is
+/// rendered into a reused scratch buffer and passed to
 /// `emit(start_sample, samples)`. Emitted ranges are disjoint, in time
 /// order, and lie inside 0..len.
 pub fn render_phrases(
@@ -380,7 +402,7 @@ pub fn render_phrases(
     emit: impl FnMut(usize, &[f32]),
 ) {
     let p = settings.apply(voice_params(voice));
-    render_phrases_with(notes, &p, settings, seed, len, &Tuning::default(), emit);
+    render_phrases_with(notes, &p, settings, seed, len, emit);
 }
 
 /// `render_phrases` with resolved parameters `p` (the settings' scales on
@@ -392,7 +414,6 @@ pub(crate) fn render_phrases_with(
     settings: &VoiceSettings,
     seed: u64,
     len: usize,
-    tuning: &Tuning,
     mut emit: impl FnMut(usize, &[f32]),
 ) {
     if notes.is_empty() || len == 0 {
@@ -404,38 +425,18 @@ pub(crate) fn render_phrases_with(
         Cow::Borrowed(notes)
     };
     let n_f = len.div_ceil(HOP) + 2;
-    let mut ctl_rng = Rng::stream(seed, CONTROLS);
-    let ctl = voice_controls(&notes, p, n_f, settings, &mut ctl_rng, tuning);
     let mut synth = VoiceSynth::new(p, settings.n_high as usize, seed);
 
-    // Frame ranges per phrase, clipped so they never overlap.
-    let fr = SR_F / HOP as f64;
-    let frame_at = |t: f64, up: bool| -> usize {
-        let x = t * fr;
-        let x = if up { x.ceil() } else { x.floor() };
-        if x.is_finite() && x > 0.0 { (x as usize).min(n_f) } else { 0 }
-    };
-    let groups = phrases(&notes);
-    let mut spans: Vec<Range<usize>> = Vec::with_capacity(groups.len());
-    let mut prev_end = 0usize;
-    for (i, g) in groups.iter().enumerate() {
-        let t0 = notes[g.start].t0;
-        let t1 = notes[g.clone()].iter().map(|n| n.t1).fold(t0, f64::max);
-        let start = frame_at(t0 - PHRASE_LEAD, false).max(prev_end);
-        let mut end = frame_at(t1 + PHRASE_TAIL, true);
-        if let Some(nx) = groups.get(i + 1) {
-            end = end.min(frame_at(notes[nx.start].t0 - PHRASE_LEAD, false).max(start));
-        }
-        if end > start {
-            spans.push(start..end);
-            prev_end = end;
-        }
-    }
+    let mut art = Articulation::new(&notes, p, settings, Rng::stream(seed, CONTROLS));
+    let spans = phrase_spans(&notes, &art, n_f);
 
-    let longest = spans.iter().map(|s| s.len()).max().unwrap_or(0) * HOP;
+    // Control tracks per phrase: the span plus the frame its last frame
+    // ramps to.
+    let mut ctl = ControlTracks::default();
+    let longest = spans.iter().map(|(_, s)| s.len()).max().unwrap_or(0) * HOP;
     let mut scratch = vec![0.0f32; longest];
     let mut prev_end = 0usize;
-    for s in spans {
+    for (g, s) in spans {
         if s.start > prev_end {
             synth.reset();
         }
@@ -444,9 +445,10 @@ pub(crate) fn render_phrases_with(
         if s0 >= len {
             break;
         }
+        art.phrase(g, Window { start: s.start, len: s.len() + 1 }, &mut ctl);
         let n = (s.len() * HOP).min(len - s0);
         let buf = &mut scratch[..n];
-        synth.render_frames(&ctl, s, buf);
+        synth.render_frames(&ctl, 0..s.len(), buf);
         emit(s0, buf);
     }
 }

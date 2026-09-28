@@ -4,7 +4,6 @@ pub mod body;
 pub mod dynamics;
 pub mod fft;
 pub mod filter;
-pub mod mix;
 pub mod noise;
 pub mod pan;
 pub mod pluck;

@@ -1,25 +1,16 @@
-//! Sound gate stems: renders the demo song and writes each processed track
-//! (after the channel strip: EQ, level to 0.1 active RMS, lead and harmony
-//! compression; before pan and sends) as 32-bit float WAV, then the full
-//! mix. Also writes notes.json (lead vocal notes: t0, t1, midi after
-//! transposition) and render.json (wall time per stage).
+//! Sound gate stems: renders the demo song and writes each processed stem
+//! (after the channel strip, level applied, before pan and sends) as 32-bit
+//! float WAV named by track, then the full mix as mix.wav. Also writes
+//! notes.json (lead vocal notes: t0, t1, midi after transposition) and
+//! render.json (wall time per stage).
 //!
-//! Usage: cargo run --release -p engine --features capture_raw --example stems -- --seed S --out DIR
-//!
-//! The channel strip repeats `dsp::mix::compute_track` from its public parts
-//! (`eq_for`, `bq`/`run_bq`, `active_rms`, `compress`), since the processed
-//! tracks are private to `dsp::mix::Render`.
+//! Usage: cargo run --release -p engine --example stems -- --seed S --out DIR
 
-#[cfg(not(feature = "capture_raw"))]
-fn main() {
-    eprintln!(
-        "stems: needs the engine feature capture_raw (raw tracks are only kept with it).\n\
-         run: cargo run --release -p engine --features capture_raw --example stems -- --seed S --out DIR"
-    );
-    std::process::exit(2);
-}
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
-#[cfg(feature = "capture_raw")]
+use engine::{demo_song, mix, render, NoProgress, Stem, TrackId};
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("stems: {e}");
@@ -27,9 +18,8 @@ fn main() {
     }
 }
 
-/// Writes interleaved 32-bit IEEE float WAV (format tag 3) by hand.
-#[cfg(feature = "capture_raw")]
-fn write_f32_wav(path: &std::path::Path, chs: &[&[f32]], sr: u32) -> std::io::Result<()> {
+/// Writes interleaved 32-bit IEEE float WAV (format tag 3).
+fn write_f32_wav(path: &Path, chs: &[&[f32]], sr: u32) -> std::io::Result<()> {
     use std::io::Write;
     let nch = chs.len() as u16;
     let frames = chs.first().map_or(0, |c| c.len());
@@ -55,56 +45,7 @@ fn write_f32_wav(path: &std::path::Path, chs: &[&[f32]], sr: u32) -> std::io::Re
     w.flush()
 }
 
-/// The strip of `dsp::mix::compute_track`, without the lead slapback.
-/// Returns `None` for a silent track.
-#[cfg(feature = "capture_raw")]
-fn strip(key: &str, mut chs: Vec<Vec<f32>>) -> Option<Vec<Vec<f32>>> {
-    use dsp::dynamics::{compress, db_of};
-    use dsp::filter::{bq, run_bq};
-    use dsp::mix::{active_rms, eq_for};
-    use sfcore::js;
-
-    for &(ty, f, q, g) in eq_for(key) {
-        let co = bq(ty, f, q, g);
-        for c in chs.iter_mut() {
-            run_bq(c, &co);
-        }
-    }
-    let mut rms = 0.0f64;
-    for c in &chs {
-        rms = js::max(rms, active_rms(c));
-    }
-    if rms < 1e-6 {
-        return None;
-    }
-    let g0 = 0.1 / rms;
-    for c in chs.iter_mut() {
-        for v in c.iter_mut() {
-            *v = js::f32r(*v as f64 * g0) as f32;
-        }
-    }
-    if key == "lead" || key == "harmony" {
-        for c in chs.iter_mut() {
-            compress(c, db_of(0.1) + 1.0, 3.0, 0.008, 0.15, Some(6.0));
-        }
-    }
-    Some(chs)
-}
-
-#[cfg(feature = "capture_raw")]
-fn file_name(key: &str) -> &str {
-    match key {
-        "hg" => "harmony_guitar",
-        k => k,
-    }
-}
-
-#[cfg(feature = "capture_raw")]
 fn run() -> Result<(), String> {
-    use sfcore::tuning::Tuning;
-    use std::path::PathBuf;
-    use std::time::Instant;
-
     let mut seed: u32 = 1234;
     let mut out: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
@@ -121,54 +62,62 @@ fn run() -> Result<(), String> {
     let out = out.ok_or("--out DIR is required")?;
     std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     let sr = sfcore::SR as u32;
+    sfcore::fp::init_pool(None);
 
-    let (song, _) = song::normalize_value(&engine::demo_song()).map_err(|e| format!("demo song: {e}"))?;
+    let song = demo_song();
     let t = Instant::now();
-    let mut rendered = engine::render_song_threaded(&song, seed, None, &Tuning::default());
+    let (prepared, stems) = render(song, seed as u64, None, &NoProgress);
     let render_s = t.elapsed().as_secs_f64();
 
-    let notes: Vec<serde_json::Value> = rendered
-        .prepared
-        .comp
-        .lead
-        .iter()
-        .map(|n| serde_json::json!({ "t0": n.t0, "t1": n.t1, "midi": n.midi }))
-        .collect();
+    let notes: Vec<serde_json::Value> =
+        prepared.comp.lead.iter().map(|n| serde_json::json!({ "t0": n.t0, "t1": n.t1, "midi": n.midi })).collect();
     let p = out.join("notes.json");
     std::fs::write(&p, serde_json::to_string_pretty(&notes).map_err(|e| e.to_string())? + "\n")
         .map_err(|e| format!("{}: {e}", p.display()))?;
 
     let t = Instant::now();
-    let raw = std::mem::take(&mut rendered.raw_tracks);
     let mut written = Vec::new();
-    for (key, chs) in raw {
-        let Some(chs) = strip(key, chs) else { continue };
+    let mut blocks = serde_json::Map::new();
+    for id in TrackId::ALL {
+        let Some(ps) = stems.get(id) else { continue };
+        let chs: Vec<Vec<f32>> = ps
+            .audio
+            .channels()
+            .iter()
+            .map(|c| c.to_dense().into_iter().map(|v| v * ps.level).collect())
+            .collect();
         let refs: Vec<&[f32]> = chs.iter().map(|c| c.as_slice()).collect();
-        let p = out.join(format!("{}.wav", file_name(key)));
+        debug_assert_eq!(refs.len(), if matches!(ps.audio, Stem::Mono(_)) { 1 } else { 2 });
+        let p = out.join(format!("{}.wav", id.name()));
         write_f32_wav(&p, &refs, sr).map_err(|e| format!("{}: {e}", p.display()))?;
-        written.push(file_name(key).to_string());
+        written.push(id.name());
+        let present: usize = ps.audio.channels().iter().map(|c| c.present_blocks()).sum();
+        let total: usize = ps.audio.channels().iter().map(|c| c.block_count()).sum();
+        blocks.insert(id.name().into(), serde_json::json!([present, total]));
     }
-    let strip_s = t.elapsed().as_secs_f64();
+    let write_s = t.elapsed().as_secs_f64();
 
     let t = Instant::now();
-    let (l, r) = engine::mix_threaded(&mut rendered, |_| true, seed);
+    let m = mix(&stems, &song.band, seed as u64);
     let mix_s = t.elapsed().as_secs_f64();
     let p = out.join("mix.wav");
-    write_f32_wav(&p, &[&l, &r], sr).map_err(|e| format!("{}: {e}", p.display()))?;
+    write_f32_wav(&p, &[&m.l, &m.r], sr).map_err(|e| format!("{}: {e}", p.display()))?;
 
     let info = serde_json::json!({
         "seed": seed,
-        "samples": rendered.len,
+        "samples": stems.len,
         "render_s": render_s,
-        "strip_s": strip_s,
+        "stem_write_s": write_s,
         "mix_s": mix_s,
         "stems": written,
+        "blocks_present_total": blocks,
+        "slapback_blocks": stems.slapback.as_ref().map(|s| s.present_blocks()),
     });
     let p = out.join("render.json");
     std::fs::write(&p, serde_json::to_string_pretty(&info).map_err(|e| e.to_string())? + "\n")
         .map_err(|e| format!("{}: {e}", p.display()))?;
     eprintln!(
-        "stems: seed {seed}: render {render_s:.2} s, strip {strip_s:.2} s, mix {mix_s:.2} s, {} stems + mix in {}",
+        "stems: seed {seed}: render {render_s:.2} s, mix {mix_s:.2} s, {} stems + mix in {}",
         written.len(),
         out.display()
     );

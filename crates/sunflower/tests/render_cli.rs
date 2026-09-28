@@ -205,3 +205,55 @@ fn quality_flag_is_accepted_for_ogg() {
     assert!(status.success());
     assert!(out.exists());
 }
+
+/// `RAYON_NUM_THREADS=1` is the sequential path; its output equals the
+/// threaded output byte for byte.
+#[test]
+fn one_thread_equals_many_threads() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut outs = Vec::new();
+    for threads in ["1", "6"] {
+        let out = dir.path().join(format!("t{threads}.wav"));
+        let status = Command::new(bin())
+            .env("RAYON_NUM_THREADS", threads)
+            .args(["render", song_path().to_str().unwrap(), "--seed", "99", "-o", out.to_str().unwrap()])
+            .status()
+            .expect("run sunflower render");
+        assert!(status.success());
+        outs.push(std::fs::read(&out).unwrap());
+    }
+    assert_eq!(outs[0], outs[1], "1 and 6 threads differ");
+}
+
+/// `--no` switches band parts off; `--voice` takes the voice names.
+#[test]
+fn band_and_voice_flags() {
+    let dir = tempfile::tempdir().unwrap();
+    let full = dir.path().join("full.wav");
+    let bare = dir.path().join("bare.wav");
+    let song = song_path();
+    let run = |out: &std::path::Path, extra: &[&str]| {
+        let mut args = vec!["render", song.to_str().unwrap(), "--seed", "5", "--voice", "tenor", "-o", out.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        let status = Command::new(bin()).args(&args).status().expect("run sunflower render");
+        assert!(status.success());
+    };
+    run(&full, &[]);
+    run(&bare, &["--no", "drums", "--no", "bass", "--no", "harmonyGuitar"]);
+    let (a, b) = (read_wav(&full), read_wav(&bare));
+    assert_eq!(a.data.len(), b.data.len());
+    assert_ne!(a.data, b.data);
+    assert!(pcm16_peak(&b) > 1000);
+
+    let output = Command::new(bin())
+        .args(["render", song_path().to_str().unwrap(), "--voice", "kazoo", "-o", dir.path().join("x.wav").to_str().unwrap()])
+        .output()
+        .expect("run sunflower render");
+    assert!(!output.status.success());
+}
+
+#[test]
+fn sequential_flag_is_gone() {
+    let output = Command::new(bin()).args(["demo", "--sequential"]).output().expect("run sunflower demo");
+    assert!(!output.status.success());
+}

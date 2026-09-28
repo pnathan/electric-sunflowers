@@ -976,9 +976,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "dsp",
  "engine",
  "export",
+ "rayon",
  "serde_json",
  "sfcore",
  "song",
