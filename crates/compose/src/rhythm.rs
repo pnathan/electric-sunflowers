@@ -1,7 +1,7 @@
 //! Rhythm: places syllables onto the metric grid by dynamic programming.
 //! Ports `placeRhythm` (engine.js).
 
-use crate::theory::Meter;
+use song::MeterGrid;
 use sfcore::js::f32r;
 use sfcore::rng::Rng;
 
@@ -34,14 +34,14 @@ pub struct RhythmResult {
     pub line_beats: f64,
 }
 
-/// placeRhythm(syls, nBars, mi, rng, pr): `syls` gives just the per-syllable
+/// placeRhythm(syls, nBars, grid, rng, pr): `stresses` gives the per-syllable
 /// stress flags the JS function reads (`s.stress`).
-pub fn place_rhythm(stresses: &[bool], n_bars: usize, mi: &Meter, rng: &mut Rng, pr: PrOpts) -> RhythmResult {
+pub fn place_rhythm(stresses: &[bool], n_bars: usize, grid: &MeterGrid, rng: &mut Rng, pr: PrOpts) -> RhythmResult {
     let n = stresses.len();
-    let bar_slots = (mi.bpb * mi.sub) as i64;
+    let bar_slots = grid.slots() as i64;
     let res: i64 = if (n as f64) > n_bars as f64 * bar_slots as f64 * 0.68 { 2 } else { 1 };
     let s_total = n_bars as i64 * bar_slots * res;
-    let beat_slots = mi.sub as i64 * res;
+    let beat_slots = grid.sub as i64 * res;
     let max_last = s_total - beat_slots;
     let st: Vec<i64> = stresses.iter().map(|&b| if b { 1 } else { 0 }).collect();
 
@@ -68,7 +68,7 @@ pub fn place_rhythm(stresses: &[bool], n_bars: usize, mi: &Meter, rng: &mut Rng,
             continue;
         }
         let q = ((s / res) % bar_slots) as usize;
-        let mut v = mi.w[q];
+        let mut v = grid.weights[q] as f64;
         if q == 0 && s > 0 {
             v *= 0.95;
         }
@@ -126,7 +126,7 @@ pub fn place_rhythm(stresses: &[bool], n_bars: usize, mi: &Meter, rng: &mut Rng,
                 return 0.4 - 0.3 * pr.even;
             }
             if g == 3.0 {
-                return (if mi.sub == 3 { 0.45 } else { 0.2 }) + 0.35 * pr.dot;
+                return (if grid.sub == 3 { 0.45 } else { 0.2 }) + 0.35 * pr.dot;
             }
             if g == 4.0 {
                 return 0.05;
@@ -270,15 +270,15 @@ pub fn place_rhythm(stresses: &[bool], n_bars: usize, mi: &Meter, rng: &mut Rng,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theory::meter;
+    use song::Meter;
     use sfcore::rng::rng_for;
 
     #[test]
     fn place_rhythm_basic() {
-        let mi = meter("4/4");
+        let mi = Meter::Four4.grid();
         let stresses = vec![true, false, true, false, true, false, true, false];
         let mut rng = rng_for(1, "test");
-        let r = place_rhythm(&stresses, 2, &mi, &mut rng, PrOpts::default());
+        let r = place_rhythm(&stresses, 2, mi, &mut rng, PrOpts::default());
         assert_eq!(r.onsets.len(), 8);
         assert_eq!(r.durs.len(), 8);
         assert_eq!(r.weights.len(), 8);
@@ -295,13 +295,13 @@ mod tests {
         // the DP unable to complete a path to the last syllable: the JS
         // would yield NaN onsets here. Must not panic, and must fall back
         // to even spacing (weights all 0.5) as the dense-line branch does.
-        let mi = meter("4/4");
+        let mi = Meter::Four4.grid();
         let mut stresses = vec![false];
         for i in 0..14 {
             stresses.push(i % 2 == 0);
         }
         let mut rng = rng_for(1, "test");
-        let r = place_rhythm(&stresses, 1, &mi, &mut rng, PrOpts::default());
+        let r = place_rhythm(&stresses, 1, mi, &mut rng, PrOpts::default());
         assert_eq!(r.onsets.len(), 15);
         assert_eq!(r.durs.len(), 15);
         assert!(r.weights.iter().all(|&w| w == 0.5));
@@ -312,10 +312,10 @@ mod tests {
 
     #[test]
     fn place_rhythm_dense_early_return() {
-        let mi = meter("4/4");
+        let mi = Meter::Four4.grid();
         let stresses: Vec<bool> = (0..40).map(|i| i % 2 == 0).collect();
         let mut rng = rng_for(1, "test");
-        let r = place_rhythm(&stresses, 1, &mi, &mut rng, PrOpts::default());
+        let r = place_rhythm(&stresses, 1, mi, &mut rng, PrOpts::default());
         assert_eq!(r.onsets.len(), 40);
         assert!(r.weights.iter().all(|&w| w == 0.5));
     }

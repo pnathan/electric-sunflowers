@@ -2,9 +2,7 @@
 //! runs the demo song end to end and checks every track that should carry
 //! signal actually does.
 
-use compose::song::normalize_song;
-use engine::demo_song;
-use engine::{mix, render_song};
+use engine::{demo, mix, render_song};
 use sfcore::tuning::Tuning;
 
 fn nonzero_frac(buf: &[f32]) -> f64 {
@@ -17,7 +15,7 @@ fn nonzero_frac(buf: &[f32]) -> f64 {
 
 #[test]
 fn render_song_produces_every_track() {
-    let song = normalize_song(&demo_song()).expect("DEMO_SONG normalizes");
+    let song = demo();
     let tuning = Tuning::default();
     let seed = 1234u32;
 
@@ -58,11 +56,11 @@ fn render_song_runs_on_the_12_bar_blues_form() {
             {"type":"verse","same":true}
         ]
     });
-    let song = normalize_song(&raw).expect("blues literal normalizes");
+    let song = song::normalize_value(&raw).expect("blues literal normalizes").0;
     let tuning = Tuning::default();
     let seed = 7u32;
 
-    let mut rendered = render_song(&song, seed, Some(compose::voices::Voice::Alto), &tuning, None);
+    let mut rendered = render_song(&song, seed, Some(song::Voice::Alto), &tuning, None);
     let (l, r) = mix(&mut rendered, |t| t.always || true, seed);
     assert!(nonzero_frac(&l) > 0.05);
     assert!(nonzero_frac(&r) > 0.05);

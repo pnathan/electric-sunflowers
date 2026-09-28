@@ -8,6 +8,8 @@ w0-verify	6a973e7+dirty	pass	3	1.89	4.73	877	14.21	699	yes
 w1-sfcore	4caf1c2+dirty	pass	3	3.85	4.03	888	11.61	702	yes
 w1-filters	4caf1c2+dirty	pass	3	3.78	3.73	892	11.60	702	yes
 w1-fft	4caf1c2+dirty	pass	3	5.96	3.75	890	11.48	702	yes
-w1	4caf1c2+dirty	fail	3	2.62	3.24	889	8.91	702	yes
 w1	4caf1c2+dirty	pass	3	3.18	3.18	890	8.98	702	yes
 w1-verify	4caf1c2+dirty	pass	3	1.41	3.17	890	9.14	702	yes
+w2	f79f435+dirty	pass	3	3.29	2.94	887	9.27	701	yes
+w2-verify	f79f435+dirty	fail	3	2.81	3.25	889	9.53	702	yes
+w2-verify2	f79f435+dirty	pass	3	2.14	3.22	889	9.40	701	yes

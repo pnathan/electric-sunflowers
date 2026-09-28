@@ -1,8 +1,7 @@
-//! Port of the drums part of engine.js: `drumHit` and `genDrums`
-//! (engine.js lines ~782-822).
+//! Drums: synthesised one-shot voices and the per-kit patterns (brushes,
+//! soft, full), with fills into louder sections.
 
 use compose::form::Form;
-use compose::song::Song;
 use compose::timeline::Timeline;
 use dsp::filter::{bq, run_bq, FilterType};
 use dsp::noise::noise_buf;
@@ -10,14 +9,36 @@ use dsp::pan::add_pan;
 use sfcore::js;
 use sfcore::rng::{rng_for, Rng};
 use sfcore::SR_F;
+use song::{DrumKit, Meter, SectionKind, Song};
 
-/// `drumHit(type,vel,r,extra)`: one percussive one-shot, mono. `extra` is
-/// `None` where JS omits the argument (0/NaN/undefined all fall back the
-/// same way in the branches that use it, via `extra||default`).
-pub fn drum_hit(kind: &str, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f32> {
+/// A drum voice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hit {
+    /// Pitch-swept sine with a click.
+    Kick,
+    /// 188 Hz body plus high-passed noise.
+    Snare,
+    /// Band-passed noise click plus 520 Hz ping (side stick).
+    Rim,
+    /// Brush tap: head tone, snare wires and a 3.8 kHz swish.
+    Tap,
+    /// Brush swirl lasting `extra` seconds (0.5 by default).
+    Swish,
+    /// High-passed noise, 32 ms decay.
+    Hat,
+    Shaker,
+    /// Tom tuned to `extra` Hz (110 by default).
+    Tom,
+    /// Six detuned square partials plus a band-passed ping.
+    Ride,
+}
+
+/// One percussive one-shot, mono, at level `vel`. `extra` is the swish
+/// length or the tom pitch; `None` or 0 means the default.
+pub fn drum_hit(kind: Hit, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f32> {
     let mut s: Vec<f32>;
     match kind {
-        "kick" => {
+        Hit::Kick => {
             let n = js::round(0.45 * SR_F) as usize;
             s = vec![0.0f32; n];
             let mut ph = 0.0f64;
@@ -31,7 +52,7 @@ pub fn drum_hit(kind: &str, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f3
                 *v = js::f32r(x) as f32;
             }
         }
-        "snare" => {
+        Hit::Snare => {
             let n = js::round(0.3 * SR_F) as usize;
             let mut nz = noise_buf(n, r);
             run_bq(&mut nz, &bq(FilterType::Hp, 1400.0, 0.7, 0.0));
@@ -43,7 +64,7 @@ pub fn drum_hit(kind: &str, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f3
                 *v = js::f32r(x) as f32;
             }
         }
-        "rim" => {
+        Hit::Rim => {
             let n = js::round(0.12 * SR_F) as usize;
             s = noise_buf(n, r);
             run_bq(&mut s, &bq(FilterType::Bp, 1800.0, 6.0, 0.0));
@@ -54,7 +75,7 @@ pub fn drum_hit(kind: &str, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f3
                 *v = js::f32r(x) as f32;
             }
         }
-        "tap" => {
+        Hit::Tap => {
             let n = js::round(0.25 * SR_F) as usize;
             let mut nz = noise_buf(n, r);
             run_bq(&mut nz, &bq(FilterType::Bp, 3800.0, 0.9, 0.0));
@@ -74,7 +95,7 @@ pub fn drum_hit(kind: &str, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f3
                 *v = js::f32r(x) as f32;
             }
         }
-        "swish" => {
+        Hit::Swish => {
             let dur = dsp::or_default(extra.unwrap_or(0.0), 0.5);
             let n = js::round(dur * SR_F) as usize;
             s = noise_buf(n, r);
@@ -90,7 +111,7 @@ pub fn drum_hit(kind: &str, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f3
                 s[i] = js::f32r(y) as f32;
             }
         }
-        "hat" => {
+        Hit::Hat => {
             let n = js::round(0.12 * SR_F) as usize;
             s = noise_buf(n, r);
             run_bq(&mut s, &bq(FilterType::Hp, 7200.0, 0.7, 0.0));
@@ -99,7 +120,7 @@ pub fn drum_hit(kind: &str, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f3
                 *v = js::f32r(x) as f32;
             }
         }
-        "shaker" => {
+        Hit::Shaker => {
             let n = js::round(0.12 * SR_F) as usize;
             s = noise_buf(n, r);
             run_bq(&mut s, &bq(FilterType::Bp, 6200.0, 1.3, 0.0));
@@ -109,7 +130,7 @@ pub fn drum_hit(kind: &str, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f3
                 *v = js::f32r(x) as f32;
             }
         }
-        "tom" => {
+        Hit::Tom => {
             let f = dsp::or_default(extra.unwrap_or(0.0), 110.0);
             let n = js::round(0.5 * SR_F) as usize;
             s = vec![0.0f32; n];
@@ -122,7 +143,7 @@ pub fn drum_hit(kind: &str, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f3
                 *v = js::f32r(x) as f32;
             }
         }
-        "ride" => {
+        Hit::Ride => {
             let n = js::round(1.6 * SR_F) as usize;
             let fr: [f64; 6] = [421.0, 601.0, 793.0, 1033.0, 1285.0, 1559.0].map(|x| x * 1.9);
             let mut ph: [f64; 6] = [0.0; 6];
@@ -150,7 +171,6 @@ pub fn drum_hit(kind: &str, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f3
                 *v = js::f32r(x) as f32;
             }
         }
-        other => panic!("unknown drum type {other}"),
     }
     for v in s.iter_mut() {
         *v = js::f32r(*v as f64 * vel) as f32;
@@ -158,17 +178,15 @@ pub fn drum_hit(kind: &str, vel: f64, r: &mut Rng, extra: Option<f64>) -> Vec<f3
     s
 }
 
-/// One `hit(...)` call inside `genDrums`'s inner closure: draws the timing
-/// jitter and velocity jitter from `r` (in that order, matching JS argument
-/// evaluation order) before calling `drumHit`, then pans the result into
-/// `l`/`rbuf`.
+/// Draws the timing jitter and then the velocity jitter from `r`, renders
+/// the hit and pans it into `l`/`rbuf`.
 #[allow(clippy::too_many_arguments)]
 fn hit(
     l: &mut [f32],
     rbuf: &mut [f32],
     tl: &Timeline,
     r: &mut Rng,
-    kind: &str,
+    kind: Hit,
     beat: f64,
     vel: f64,
     pan: f64,
@@ -180,29 +198,30 @@ fn hit(
     add_pan(l, rbuf, js::round(t * SR_F) as i64, &sig, pan, 1.0);
 }
 
-/// `genDrums(song,form,tl,seed)`.
+/// The drum track (stereo); silent for `DrumKit::None`. Kits other than
+/// full play one intensity level lower; bridges at most level 1.
 pub fn gen_drums(song: &Song, form: &Form, tl: &Timeline, seed: u32) -> [Vec<f32>; 2] {
-    let style = song.band.drums.as_str();
+    let style = song.band.drums;
     let len = (tl.end * SR_F).ceil() as usize;
     let mut l = vec![0.0f32; len];
     let mut rbuf = vec![0.0f32; len];
-    if style == "none" {
+    if style == DrumKit::None {
         return [l, rbuf];
     }
     let mut r = rng_for(seed, "drm");
-    let bpb = form.mi.bpb;
-    let sub = form.mi.sub;
-    let meter = song.meter_name.as_str();
+    let bpb = form.bpb();
+    let sub = form.sub();
+    let meter = form.meter;
     let nb = form.bars.len();
 
     for bi in 0..nb {
         let sec_idx = form.bars[bi].sec;
         let sec = &form.sections[sec_idx];
-        let mut i_ = sec.intensity;
-        if style != "full" {
+        let mut i_ = sec.intensity.level();
+        if style != DrumKit::Full {
             i_ -= 1;
         }
-        if sec.type_ == "bridge" {
+        if sec.kind == SectionKind::Bridge {
             i_ = i_.min(1);
         }
         if i_ < 1 {
@@ -211,82 +230,77 @@ pub fn gen_drums(song: &Song, form: &Form, tl: &Timeline, seed: u32) -> [Vec<f32
         let b0 = (bi as i32 * bpb) as f64;
         let last = bi == nb - 1;
         if last {
-            hit(&mut l, &mut rbuf, tl, &mut r, "kick", b0, 0.7, 0.0, None);
-            let ty = if style == "brushes" { "swish" } else { "ride" };
+            hit(&mut l, &mut rbuf, tl, &mut r, Hit::Kick, b0, 0.7, 0.0, None);
+            let ty = if style == DrumKit::Brushes { Hit::Swish } else { Hit::Ride };
             hit(&mut l, &mut rbuf, tl, &mut r, ty, b0, 0.5, 0.35, Some(1.2));
             continue;
         }
         let sec_end = bi + 1 == sec.start_bar + sec.n_bars;
         let fill = sec_end
-            && sec
-                .next
-                .map(|ni| form.sections[ni].intensity > sec.intensity)
-                .unwrap_or(false)
+            && form.sections.get(sec_idx + 1).is_some_and(|nx| nx.intensity > sec.intensity)
             && i_ >= 1;
 
-        if style == "brushes" {
+        if style == DrumKit::Brushes {
             for b in 0..bpb {
                 hit(
                     &mut l,
                     &mut rbuf,
                     tl,
                     &mut r,
-                    "swish",
+                    Hit::Swish,
                     b0 + b as f64,
                     0.35 + 0.1 * i_ as f64,
                     -0.1,
                     Some(tl.beat_dur(b0 + b as f64) * 0.95),
                 );
             }
-            if meter == "4/4" {
-                hit(&mut l, &mut rbuf, tl, &mut r, "tap", b0 + 1.0, 0.5, -0.15, None);
-                hit(&mut l, &mut rbuf, tl, &mut r, "tap", b0 + 3.0, 0.5, -0.15, None);
-                if i_ >= 2 {
-                    hit(&mut l, &mut rbuf, tl, &mut r, "kick", b0, 0.45, 0.0, None);
-                    hit(&mut l, &mut rbuf, tl, &mut r, "kick", b0 + 2.0, 0.35, 0.0, None);
+            match meter {
+                Meter::Four4 => {
+                    hit(&mut l, &mut rbuf, tl, &mut r, Hit::Tap, b0 + 1.0, 0.5, -0.15, None);
+                    hit(&mut l, &mut rbuf, tl, &mut r, Hit::Tap, b0 + 3.0, 0.5, -0.15, None);
+                    if i_ >= 2 {
+                        hit(&mut l, &mut rbuf, tl, &mut r, Hit::Kick, b0, 0.45, 0.0, None);
+                        hit(&mut l, &mut rbuf, tl, &mut r, Hit::Kick, b0 + 2.0, 0.35, 0.0, None);
+                    }
                 }
-            } else if meter == "3/4" {
-                hit(&mut l, &mut rbuf, tl, &mut r, "tap", b0 + 1.0, 0.35, -0.15, None);
-                hit(&mut l, &mut rbuf, tl, &mut r, "tap", b0 + 2.0, 0.35, -0.15, None);
-                if i_ >= 2 {
-                    hit(&mut l, &mut rbuf, tl, &mut r, "kick", b0, 0.45, 0.0, None);
+                Meter::Three4 => {
+                    hit(&mut l, &mut rbuf, tl, &mut r, Hit::Tap, b0 + 1.0, 0.35, -0.15, None);
+                    hit(&mut l, &mut rbuf, tl, &mut r, Hit::Tap, b0 + 2.0, 0.35, -0.15, None);
+                    if i_ >= 2 {
+                        hit(&mut l, &mut rbuf, tl, &mut r, Hit::Kick, b0, 0.45, 0.0, None);
+                    }
                 }
-            } else {
-                hit(&mut l, &mut rbuf, tl, &mut r, "tap", b0 + 1.0, 0.5, -0.15, None);
-                if i_ >= 2 {
-                    hit(&mut l, &mut rbuf, tl, &mut r, "kick", b0, 0.45, 0.0, None);
+                Meter::Six8 => {
+                    hit(&mut l, &mut rbuf, tl, &mut r, Hit::Tap, b0 + 1.0, 0.5, -0.15, None);
+                    if i_ >= 2 {
+                        hit(&mut l, &mut rbuf, tl, &mut r, Hit::Kick, b0, 0.45, 0.0, None);
+                    }
                 }
             }
         } else {
-            let kick_p: Vec<f64> = if meter == "4/4" {
-                if i_ >= 3 {
-                    vec![0.0, 1.5, 2.0]
-                } else {
-                    vec![0.0, 2.0]
-                }
-            } else {
-                vec![0.0]
+            let kick_p: &[f64] = match meter {
+                Meter::Four4 if i_ >= 3 => &[0.0, 1.5, 2.0],
+                Meter::Four4 => &[0.0, 2.0],
+                Meter::Three4 | Meter::Six8 => &[0.0],
             };
-            let sn_p: Vec<f64> = if meter == "4/4" {
-                vec![1.0, 3.0]
-            } else if meter == "3/4" {
-                vec![1.0, 2.0]
-            } else {
-                vec![1.0]
+            let sn_p: &[f64] = match meter {
+                Meter::Four4 => &[1.0, 3.0],
+                Meter::Three4 => &[1.0, 2.0],
+                Meter::Six8 => &[1.0],
             };
-            for &k in &kick_p {
-                hit(&mut l, &mut rbuf, tl, &mut r, "kick", b0 + k, 0.75, 0.0, None);
+            for &k in kick_p {
+                hit(&mut l, &mut rbuf, tl, &mut r, Hit::Kick, b0 + k, 0.75, 0.0, None);
             }
-            let sn = if style == "soft" { "rim" } else { "snare" };
-            let sn_vel = if meter == "3/4" { 0.45 } else { 0.6 };
-            for &k in &sn_p {
+            let sn = if style == DrumKit::Soft { Hit::Rim } else { Hit::Snare };
+            let sn_vel = if meter == Meter::Three4 { 0.45 } else { 0.6 };
+            for &k in sn_p {
                 if fill && k >= (bpb - 1) as f64 {
                     continue;
                 }
                 hit(&mut l, &mut rbuf, tl, &mut r, sn, b0 + k, sn_vel, -0.12, None);
             }
             if i_ >= 2 {
-                let kind = if style == "soft" { "shaker" } else { "hat" };
+                let kind = if style == DrumKit::Soft { Hit::Shaker } else { Hit::Hat };
                 for s in 0..(bpb * sub) {
                     let vel = if s % sub == 0 { 0.55 } else { 0.35 };
                     hit(
@@ -302,9 +316,9 @@ pub fn gen_drums(song: &Song, form: &Form, tl: &Timeline, seed: u32) -> [Vec<f32
                     );
                 }
             }
-            if i_ >= 3 && style == "full" {
+            if i_ >= 3 && style == DrumKit::Full {
                 for b in 0..bpb {
-                    hit(&mut l, &mut rbuf, tl, &mut r, "ride", b0 + b as f64, 0.35, 0.4, None);
+                    hit(&mut l, &mut rbuf, tl, &mut r, Hit::Ride, b0 + b as f64, 0.35, 0.4, None);
                 }
             }
         }
@@ -315,7 +329,7 @@ pub fn gen_drums(song: &Song, form: &Form, tl: &Timeline, seed: u32) -> [Vec<f32
             let freqs = [180.0, 150.0, 120.0, 95.0];
             for k in 0..steps {
                 let f = freqs[k % 4];
-                let kind = if style == "brushes" { "tap" } else { "tom" };
+                let kind = if style == DrumKit::Brushes { Hit::Tap } else { Hit::Tom };
                 hit(
                     &mut l,
                     &mut rbuf,
@@ -329,8 +343,8 @@ pub fn gen_drums(song: &Song, form: &Form, tl: &Timeline, seed: u32) -> [Vec<f32
                 );
             }
         }
-        if bi == sec.start_bar && sec.intensity >= 3 && style != "brushes" {
-            hit(&mut l, &mut rbuf, tl, &mut r, "ride", b0, 0.55, 0.4, None);
+        if bi == sec.start_bar && sec.intensity.level() >= 3 && style != DrumKit::Brushes {
+            hit(&mut l, &mut rbuf, tl, &mut r, Hit::Ride, b0, 0.55, 0.4, None);
         }
     }
     [l, rbuf]

@@ -5,8 +5,8 @@
 use compose::form::Form;
 use compose::melody::LeadNote;
 use compose::prepare::Prepared;
-use compose::song::Song;
 use compose::timeline::Timeline;
+use song::{BreakLead, Pc, SectionKind, Song};
 use dsp::pluck::{pluck, PluckOpts};
 use sfcore::js::pow;
 use sfcore::rng::rng_for;
@@ -50,27 +50,23 @@ pub fn render_harp(song: &Song, form: &Form, tl: &Timeline, seed: u32) -> Vec<Ve
     vec![gen_harp(song, form, tl, seed)]
 }
 
-/// `renderSong`'s violin and harmony-guitar block (engine.js ~927-944).
-/// Returns `(tracks.violin, tracks.hg)`, each the track's raw mono channel.
-///
-/// `break_lead` is `song.breakLead` (engine.js: `song.breakLead||'both'`).
-/// `None` when no style has been applied yet (matching JS's absent
-/// `breakLead`, which falls back to `'both'` below).
+/// The violin and harmony-guitar tracks, each a raw mono channel.
+/// `break_lead` picks who plays the instrumental lead lines: the violin,
+/// the harmony guitar, or both.
 pub fn render_violin_and_harmony_guitar(
     prepared: &Prepared,
     song: &Song,
     seed: u32,
     len: usize,
-    break_lead: Option<&str>,
+    break_lead: BreakLead,
 ) -> (Vec<f32>, Vec<f32>) {
     let form = &prepared.form;
     let tl = &prepared.timeline;
     let lead: &[LeadNote] = &prepared.comp.lead;
-    let bl = break_lead.unwrap_or("both");
 
     // violin: intro/outro/interlude lead, chorus counter-line, bridge long
     // tones, later-verse fills.
-    let inst_v: Vec<ViolinNote> = if bl == "guitar" {
+    let inst_v: Vec<ViolinNote> = if break_lead == BreakLead::Guitar {
         Vec::new()
     } else {
         prepared
@@ -89,9 +85,9 @@ pub fn render_violin_and_harmony_guitar(
             })
             .collect()
     };
-    let ctr = counter_line(form, tl, lead, 67, 86, |s| s.lift, seed, false);
-    let br = counter_line(form, tl, lead, 62, 79, |s| s.type_ == "bridge", seed, true);
-    let fl = fills_for(form, tl, lead, 69, 88, |s| s.type_ == "verse" && s.occ > 0, song, seed);
+    let ctr = counter_line(form, tl, lead, 67, 86, |s| s.is_lift(), seed, false);
+    let br = counter_line(form, tl, lead, 62, 79, |s| s.kind == SectionKind::Bridge, seed, true);
+    let fl = fills_for(form, tl, lead, 69, 88, |s| s.kind == SectionKind::Verse && s.occ > 0, song, seed);
 
     let mut vnotes: Vec<ViolinNote> = inst_v;
     for n in ctr.iter().chain(br.iter()).chain(fl.iter()) {
@@ -104,7 +100,7 @@ pub fn render_violin_and_harmony_guitar(
     let mut hr = rng_for(seed, "hg");
     let mut hg_out = vec![0.0f32; len];
 
-    let inst_g: Vec<(f64, f64, i32, f64)> = if bl == "violin" {
+    let inst_g: Vec<(f64, f64, i32, f64)> = if break_lead == BreakLead::Violin {
         Vec::new()
     } else {
         prepared
@@ -123,7 +119,7 @@ pub fn render_violin_and_harmony_guitar(
             })
             .collect()
     };
-    let fl_g = fills_for(form, tl, lead, 59, 79, |s| s.type_ == "verse", song, seed + 1);
+    let fl_g = fills_for(form, tl, lead, 59, 79, |s| s.kind == SectionKind::Verse, song, seed + 1);
 
     for &(t0, t1, m, v) in &inst_g {
         pluck_hg(&mut hg_out, t0, t1, m, v, &mut hr);
@@ -134,20 +130,20 @@ pub fn render_violin_and_harmony_guitar(
 
     for sg in &tl.segs {
         let sec = &form.sections[sg.sec];
-        if !(sec.lift && sec.lift_idx > 0) {
+        if !sec.is_repeat_lift() {
             continue;
         }
-        let pcs = &sg.chord.pcs;
+        let pcs = form.chord(sg.chord).tones;
         let mut tones: Vec<i32> = Vec::new();
         let mut m = 64i32;
         while m <= 83 && tones.len() < 3 {
-            if pcs.contains(&m.rem_euclid(12)) {
+            if pcs.contains(Pc::new(m)) {
                 tones.push(m);
             }
             m += 1;
         }
         let pat = [0usize, 1, 2, 1];
-        let sub = form.mi.sub;
+        let sub = form.sub();
         let mut b = sg.b0;
         let mut k = 0usize;
         while b < sg.b1 - 1e-6 {

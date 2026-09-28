@@ -1,19 +1,18 @@
-//! Melody: tessitura/contour tables, per-song melody profile, cadence and
-//! shape functions, and the melody/instrumental-lead composer.
-//! Ports `TESS`, `CONTOURS`, `melodyProfile`, `shapeFor`, `cadenceFor` and
-//! `composeMelody` (engine.js lines ~315-386).
+//! Melody: tessitura and contour tables, the per-song melody profile,
+//! cadence and shape functions, and the composer of the sung lines and the
+//! instrumental lead lines.
 
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use sfcore::js::{pow, round, sin};
 use sfcore::rng::{rng_for, Rng};
+use song::{Mode, Pc, PcSet, SectionKind, Song, Syllable};
 
 use crate::form::Form;
-use crate::pitch::{pitch_line, PitchOpts, PitchProf};
+use crate::pitch::{pitch_line, Cadence, PitchOpts, PitchProf};
 use crate::rhythm::{place_rhythm, PrOpts, RhythmResult};
-use crate::song::Song;
-use crate::theory::{local_scale, Chord};
+use crate::theory::local_scale;
 use crate::timeline::Timeline;
 
 const PI: f64 = std::f64::consts::PI;
@@ -36,13 +35,12 @@ pub struct TessSet {
 }
 
 impl TessSet {
-    /// `prof.tess[sec.type]||prof.tess.verse` (verse is the fallback).
-    pub fn get(&self, sec_type: &str) -> SectionTess {
-        match sec_type {
-            "prechorus" => self.prechorus,
-            "chorus" => self.chorus,
-            "bridge" => self.bridge,
-            "inst" => self.inst,
+    /// The entry for a sung section kind; kinds without one use the verse's.
+    pub fn get(&self, kind: SectionKind) -> SectionTess {
+        match kind {
+            SectionKind::Prechorus => self.prechorus,
+            SectionKind::Chorus => self.chorus,
+            SectionKind::Bridge => self.bridge,
             _ => self.verse,
         }
     }
@@ -136,14 +134,14 @@ pub struct ShapeSet {
 }
 
 impl ShapeSet {
-    pub fn get(&self, sec_type: &str) -> Option<ShapePair> {
-        match sec_type {
-            "verse" => Some(self.verse),
-            "prechorus" => Some(self.prechorus),
-            "chorus" => Some(self.chorus),
-            "bridge" => Some(self.bridge),
-            "inst" => Some(self.inst),
-            _ => None,
+    /// The pair for a sung section kind; `None` for intro, interlude, outro.
+    pub fn get(&self, kind: SectionKind) -> Option<ShapePair> {
+        match kind {
+            SectionKind::Verse => Some(self.verse),
+            SectionKind::Prechorus => Some(self.prechorus),
+            SectionKind::Chorus => Some(self.chorus),
+            SectionKind::Bridge => Some(self.bridge),
+            SectionKind::Intro | SectionKind::Interlude | SectionKind::Outro => None,
         }
     }
 }
@@ -223,21 +221,20 @@ pub fn melody_profile(seed: u32, song: &Song) -> MelodyProfile {
     }
 }
 
-/// shapeFor(li,nl,cad,a,prof,type): the per-section-contour shape function.
-/// `prof` and `sec_type` select the contour from `melodyProfile`'s `shape`
-/// table; the instrumental-lead call site passes no profile, which falls
-/// back to the fixed arch/descent shape below (matches JS when prof/type
-/// are absent).
+/// The contour of line `li` (offset in semitones over x in 0..1, amplitude
+/// `a`). `prof` and `kind` select the contour from the profile's shape
+/// table; instrumental lines pass no profile and get a fixed arch.
 pub fn shape_for(
     li: usize,
     _nl: usize,
-    cad: &str,
+    cad: Cadence,
     a: f64,
     prof: Option<&MelodyProfile>,
-    sec_type: &str,
+    kind: Option<SectionKind>,
 ) -> Box<dyn Fn(f64) -> f64> {
-    if cad == "tonic" {
-        let base = prof.and_then(|p| p.shape.get(sec_type)).map(|sp| sp.for_li(li));
+    let pair = prof.zip(kind).and_then(|(p, k)| p.shape.get(k));
+    if cad == Cadence::Tonic {
+        let base = pair.map(|sp| sp.for_li(li));
         return Box::new(move |x| {
             (match base {
                 Some(k) => k.apply(x, a) * 0.6,
@@ -245,8 +242,8 @@ pub fn shape_for(
             }) - a * 1.2 * x
         });
     }
-    if let (Some(p), true) = (prof, prof.and_then(|p| p.shape.get(sec_type)).is_some()) {
-        let k = p.shape.get(sec_type).unwrap().for_li(li);
+    if let Some(sp) = pair {
+        let k = sp.for_li(li);
         return if li % 2 == 1 {
             Box::new(move |x| k.apply(x, a) + 0.8 * x)
         } else {
@@ -259,18 +256,19 @@ pub fn shape_for(
     Box::new(move |x| a * sin(PI * x))
 }
 
-/// cadenceFor(type,li,nl)
-pub fn cadence_for(sec_type: &str, li: usize, nl: usize) -> &'static str {
-    if li == nl - 1 {
-        if sec_type == "bridge" || sec_type == "prechorus" {
-            "open"
+/// Cadence of line `li` of `nl` in a section of `kind`: the last line
+/// closes on the tonic (open in a bridge or prechorus), odd lines are open.
+pub fn cadence_for(kind: SectionKind, li: usize, nl: usize) -> Cadence {
+    if li + 1 == nl {
+        if matches!(kind, SectionKind::Bridge | SectionKind::Prechorus) {
+            Cadence::Open
         } else {
-            "tonic"
+            Cadence::Tonic
         }
     } else if li % 2 == 1 {
-        "open"
+        Cadence::Open
     } else {
-        "none"
+        Cadence::None
     }
 }
 
@@ -281,7 +279,7 @@ pub struct LeadNote {
     pub beat: f64,
     pub dur: f64,
     pub midi: i32,
-    pub syl: crate::song::Syllable,
+    pub syl: Syllable,
     /// index into `Form::lines`
     pub line_idx: usize,
     /// syllable index within the line
@@ -290,7 +288,7 @@ pub struct LeadNote {
     pub phrase_start: bool,
     pub phrase_end: bool,
     pub grace: Option<i32>,
-    /// `n.sec.lift`, copied at push time (JS holds a reference to `sec`).
+    /// The note's section is lifted.
     pub lift: bool,
     pub t0: f64,
     pub t1: f64,
@@ -318,20 +316,40 @@ pub struct Comp {
 struct CacheEntry {
     rh: RhythmResult,
     pitches: Vec<i32>,
-    scales: Vec<Vec<i32>>,
+    scales: Vec<PcSet>,
 }
 
-/// composeMelody(song,form,tl,seed). Mutates `form.lines[*].pitches`/`.rh`,
-/// as JS mutates `L.pitches`/`L.rh` in place.
+/// Chord tones and local scale at each onset of a line starting at `beat0`.
+fn harmony_at(
+    form: &Form,
+    tl: &Timeline,
+    tonic: Pc,
+    mode: Mode,
+    beat0: f64,
+    onsets: &[f64],
+) -> (Vec<PcSet>, Vec<PcSet>) {
+    onsets
+        .iter()
+        .map(|&o| {
+            let c = tl.chord_at(form, beat0 + o + 0.01);
+            (c.tones, local_scale(tonic, mode, c))
+        })
+        .unzip()
+}
+
+/// Composes every sung line (rhythm, then pitch; lines with the same kind,
+/// index and text are composed once) and the instrumental lead lines of
+/// instrumental sections. Sets `form.lines[*].pitches` and `.rh`.
 pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) -> Comp {
-    let bpb = form.mi.bpb;
-    let tonic = (song.key_pc + form.transpose + 120).rem_euclid(12);
-    let mode = song.mode.clone();
+    let bpb = form.bpb();
+    let grid = form.grid();
+    let tonic = (song.key.get() as i32 + form.transpose + 120).rem_euclid(12);
+    let tonic_pc = Pc::new(tonic);
     let t = 60 + tonic - if tonic > 6 { 12 } else { 0 };
     let prof = melody_profile(seed, song);
 
-    let mut cache: HashMap<String, Rc<CacheEntry>> = HashMap::new();
-    let mut first_occ: HashMap<String, Vec<Option<Vec<i32>>>> = HashMap::new();
+    let mut cache: HashMap<(SectionKind, usize, String), Rc<CacheEntry>> = HashMap::new();
+    let mut first_occ: HashMap<SectionKind, Vec<Option<Vec<i32>>>> = HashMap::new();
     let mut lead: Vec<LeadNote> = Vec::new();
     let mut prev_end: Option<i32> = None;
 
@@ -343,39 +361,31 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
         let start_bar = form.lines[li_idx].start_bar;
         let text = form.lines[li_idx].text.clone();
         let syls = form.lines[li_idx].syls.clone();
-        let sec_type = form.sections[sec_idx].type_.clone();
+        let kind = form.sections[sec_idx].kind;
         let nl = form.sections[sec_idx].lines.len();
         let sec_occ = form.sections[sec_idx].occ;
-        let sec_lift = form.sections[sec_idx].lift;
-        let sec_lift_idx = form.sections[sec_idx].lift_idx;
-        let ck = format!("{}|{}|{}", sec_type, li, text);
+        let sec_lift = form.sections[sec_idx].is_lift();
+        let first_lift = matches!(form.sections[sec_idx].lift, Some(l) if l.index == 0);
+        let ck = (kind, li, text);
         let line_beat = start_bar as f64 * bpb as f64;
 
         let entry: Rc<CacheEntry> = match cache.get(&ck) {
             Some(e) => e.clone(),
             None => {
                 let stresses: Vec<bool> = syls.iter().map(|s| s.stress).collect();
-                let mut rr = rng_for(seed, &format!("r|{}|{}", sec_type, li));
-                let rh = place_rhythm(&stresses, n_bars, &form.mi, &mut rr, prof.rh);
-                let chords: Vec<Chord> = rh
-                    .onsets
-                    .iter()
-                    .map(|&o| tl.chord_at(form, line_beat + o + 0.01).clone())
-                    .collect();
-                let scales: Vec<Vec<i32>> = chords.iter().map(|c| local_scale(tonic, &mode, c)).collect();
-                let cad = cadence_for(&sec_type, li, nl);
-                let ts = prof.tess.get(&sec_type);
+                let mut rr = rng_for(seed, &format!("r|{}|{}", kind, li));
+                let rh = place_rhythm(&stresses, n_bars, grid, &mut rr, prof.rh);
+                let (chord_pcs, scales) = harmony_at(form, tl, tonic_pc, song.mode, line_beat, &rh.onsets);
+                let cad = cadence_for(kind, li, nl);
+                let ts = prof.tess.get(kind);
 
-                // JS parity: `if(sec.occ>0&&firstOcc[t]&&firstOcc[t][li])ref=firstOcc[t][li];
-                // else if(li>=2&&sec.lines[li-2].pitches)ref=sec.lines[li-2].pitches;` -- the
-                // else-if is reached whenever the first branch's condition is false, which
-                // includes an occ>0 section whose line li has no first-occurrence entry yet
-                // (a later verse with more lines than the first). Do not nest the li>=2 check
-                // inside the occ==0 case.
+                // Reference line: the same line of the first section of this
+                // kind, else (also for a later section with more lines than
+                // the first) the line two back in this section.
                 let mut reference: Option<Vec<i32>> = None;
                 let mut have_first_occ = false;
                 if sec_occ > 0 {
-                    if let Some(v) = first_occ.get(&sec_type) {
+                    if let Some(v) = first_occ.get(&kind) {
                         if let Some(Some(p)) = v.get(li) {
                             reference = Some(p.clone());
                             have_first_occ = true;
@@ -389,14 +399,13 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
                     }
                 }
 
-                let shape = shape_for(li, nl, cad, ts.a, Some(&prof), &sec_type);
-                let hook = if sec_lift && sec_lift_idx == 0 && li == 0 && prof.hook != 0 {
+                let shape = shape_for(li, nl, cad, ts.a, Some(&prof), Some(kind));
+                let hook = if first_lift && li == 0 && prof.hook != 0 {
                     prof.hook
                 } else {
                     0
                 };
-                let chord_pcs: Vec<Vec<i32>> = chords.iter().map(|c| c.pcs.clone()).collect();
-                let mut prng = rng_for(seed, &format!("p|{}|{}|{}", sec_type, li, sec_occ));
+                let mut prng = rng_for(seed, &format!("p|{}|{}|{}", kind, li, sec_occ));
                 let mut opts = PitchOpts {
                     n: syls.len(),
                     onsets: &rh.onsets,
@@ -427,7 +436,7 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
         form.lines[li_idx].rh = Some(entry.rh.clone());
 
         {
-            let occ_vec = first_occ.entry(sec_type.clone()).or_default();
+            let occ_vec = first_occ.entry(kind).or_default();
             if occ_vec.len() <= li {
                 occ_vec.resize(li + 1, None);
             }
@@ -446,7 +455,7 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
             if i == n - 1 && dur >= 1.5 && gr.next() < 0.55 {
                 let sc = &entry.scales[i];
                 for d in 1..=3 {
-                    if sc.contains(&(midi + d).rem_euclid(12)) {
+                    if sc.contains(Pc::new(midi + d)) {
                         grace = Some(midi + d);
                         break;
                     }
@@ -477,14 +486,14 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
     let inst_chorus_idx = form
         .sections
         .iter()
-        .position(|s| s.type_ == "chorus" && !s.lines.is_empty())
+        .position(|s| s.kind == SectionKind::Chorus && s.is_sung())
         .or_else(|| form.sections.iter().position(|s| !s.lines.is_empty()));
     let tess_c = tess();
     let mut inst: Vec<InstNote> = Vec::new();
     for sec_idx2 in 0..form.sections.len() {
-        let (lines_len, n_bars, start_bar, idx, sec_type, lift) = {
+        let (lines_len, n_bars, start_bar, idx, kind, lift) = {
             let s = &form.sections[sec_idx2];
-            (s.lines.len(), s.n_bars, s.start_bar, s.idx, s.type_.clone(), s.lift)
+            (s.lines.len(), s.n_bars, s.start_bar, sec_idx2, s.kind, s.is_lift())
         };
         let cb = 2 * form.stretch;
         if lines_len != 0 || (n_bars as i32) < cb {
@@ -497,14 +506,9 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
                 (4.0 + (rr.next() * 3.0).floor()) * (if form.stretch == 2 { 1.5 } else { 1.0 }),
             )) as usize;
             let stresses: Vec<bool> = (0..n).map(|i| i % 2 == 0 || i == n - 1).collect();
-            let rh = place_rhythm(&stresses, cb as usize, &form.mi, &mut rr, PrOpts::default());
+            let rh = place_rhythm(&stresses, cb as usize, grid, &mut rr, PrOpts::default());
             let b0 = (start_bar + cb as usize * k) as f64 * bpb as f64;
-            let chords: Vec<Chord> = rh
-                .onsets
-                .iter()
-                .map(|&o| tl.chord_at(form, b0 + o + 0.01).clone())
-                .collect();
-            let scales: Vec<Vec<i32>> = chords.iter().map(|c| local_scale(tonic, &mode, c)).collect();
+            let (chord_pcs, scales) = harmony_at(form, tl, tonic_pc, song.mode, b0, &rh.onsets);
             let reference: Option<Vec<i32>> = inst_chorus_idx.and_then(|ci| {
                 let cl = &form.sections[ci].lines;
                 if cl.is_empty() {
@@ -513,13 +517,16 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u32) ->
                     form.lines[cl[k % cl.len()]].pitches.clone()
                 }
             });
-            let cad = if k == chunks - 1 {
-                if sec_type == "outro" { "tonic" } else { "open" }
+            let cad = if k + 1 == chunks {
+                if kind == SectionKind::Outro {
+                    Cadence::Tonic
+                } else {
+                    Cadence::Open
+                }
             } else {
-                "none"
+                Cadence::None
             };
-            let shape = shape_for(k, chunks, cad, tess_c.inst.a, None, "");
-            let chord_pcs: Vec<Vec<i32>> = chords.iter().map(|c| c.pcs.clone()).collect();
+            let shape = shape_for(k, chunks, cad, tess_c.inst.a, None, None);
             let mut prng = rng_for(seed, &format!("ip|{}|{}", idx, k));
             let mut opts = PitchOpts {
                 n,
@@ -560,23 +567,23 @@ mod tests {
             "key":"C","mode":"major","meter":"4/4","tempo":100,"title":"t",
             "sections":[
                 {"type":"intro","chords":["C","G"]},
-                {"type":"verse","lines":[{"syl":"one *two three *four","chords":"C G"}]},
-                {"type":"chorus","lines":[{"syl":"*five *six *seven *eight","chords":"Am F"}]},
+                {"type":"verse","lines":[{"syl":"one *two three *four","chords":["C G"]}]},
+                {"type":"chorus","lines":[{"syl":"*five *six *seven *eight","chords":["Am F"]}]},
                 {"type":"chorus","same":true}
             ]
         });
         for (k, v) in extra.as_object().unwrap() {
             base.as_object_mut().unwrap().insert(k.clone(), v.clone());
         }
-        crate::song::normalize_song(&base).unwrap()
+        song::normalize_value(&base).unwrap().0
     }
 
     #[test]
     fn cadence_for_matches_js() {
-        assert_eq!(cadence_for("verse", 2, 3), "tonic");
-        assert_eq!(cadence_for("bridge", 2, 3), "open");
-        assert_eq!(cadence_for("verse", 1, 4), "open");
-        assert_eq!(cadence_for("verse", 0, 4), "none");
+        assert_eq!(cadence_for(SectionKind::Verse, 2, 3), Cadence::Tonic);
+        assert_eq!(cadence_for(SectionKind::Bridge, 2, 3), Cadence::Open);
+        assert_eq!(cadence_for(SectionKind::Verse, 1, 4), Cadence::Open);
+        assert_eq!(cadence_for(SectionKind::Verse, 0, 4), Cadence::None);
     }
 
     #[test]
@@ -598,7 +605,7 @@ mod tests {
     fn compose_melody_fills_pitches_and_caches() {
         let s = song(json!({}));
         let mut form = crate::form::build_form(&s, 0);
-        let tl = Timeline::new(&form, s.tempo);
+        let tl = Timeline::new(&form, s.tempo_bpm);
         let comp = compose_melody(&s, &mut form, &tl, 7);
         assert!(!comp.lead.is_empty());
         for l in &form.lines {
@@ -607,7 +614,7 @@ mod tests {
         // the two "same" choruses share text/type/li, so they hit the cache
         // and must produce identical pitches.
         let chorus_lines: Vec<&crate::form::FormLine> =
-            form.lines.iter().filter(|l| form.sections[l.sec].type_ == "chorus").collect();
+            form.lines.iter().filter(|l| form.sections[l.sec].kind == SectionKind::Chorus).collect();
         assert_eq!(chorus_lines.len(), 2);
         assert_eq!(chorus_lines[0].pitches, chorus_lines[1].pitches);
     }

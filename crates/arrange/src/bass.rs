@@ -1,9 +1,10 @@
-//! Port of the bass part of engine.js (`genBass`, engine.js ~696-716).
+//! The bass: roots on chord changes, root-fifth patterns and approach notes
+//! in busier sections, plucked with a sine sub layer.
 
 use crate::guitar::mtof;
 use compose::form::Form;
-use compose::song::Song;
 use compose::timeline::Timeline;
+use song::{Pc, SectionKind, Song};
 use dsp::pluck::{pluck, PluckOpts};
 use sfcore::js::{clamp, exp, f32r, round, sin};
 use sfcore::rng::rng_for;
@@ -16,20 +17,19 @@ struct Note {
     v: f64,
 }
 
-/// `nearest(pc,c)` in JS: the note nearest `c` (a fractional MIDI centre)
-/// whose pitch class is `pc`.
-fn nearest(pc: i32, c: f64) -> i32 {
+/// The lowest note from `round(c) - 6` up whose pitch class is `pc`.
+fn nearest(pc: Pc, c: f64) -> i32 {
     let mut m = round(c) as i32 - 6;
-    while (m.rem_euclid(12)) != pc {
+    while Pc::new(m) != pc {
         m += 1;
     }
     m
 }
 
-/// `genBass(song,form,tl,seed)`.
+/// The bass track.
 pub fn gen_bass(_song: &Song, form: &Form, tl: &Timeline, seed: u32) -> Vec<f32> {
     let mut r = rng_for(seed, "bass");
-    let bpb = form.mi.bpb;
+    let bpb = form.bpb();
     let mut notes: Vec<Note> = Vec::new();
     let segs = &tl.segs;
     let mut prev = 40i32;
@@ -37,19 +37,23 @@ pub fn gen_bass(_song: &Song, form: &Form, tl: &Timeline, seed: u32) -> Vec<f32>
     for si in 0..segs.len() {
         let sg = &segs[si];
         let sec = &form.sections[sg.sec];
-        if sec.type_ == "intro" {
+        if sec.kind == SectionKind::Intro {
             continue;
         }
-        if sec.type_ == "verse" && sec.occ == 0 && sg.b0 < (sec.start_bar as f64 + sec.n_bars as f64 / 2.0) * bpb as f64 {
+        if sec.kind == SectionKind::Verse
+            && sec.occ == 0
+            && sg.b0 < (sec.start_bar as f64 + sec.n_bars as f64 / 2.0) * bpb as f64
+        {
             continue;
         }
-        let intensity = sec.intensity;
-        let root = nearest(sg.chord.bass, clamp(prev as f64, 34.0, 46.0));
+        let intensity = sec.intensity.level();
+        let chord = form.chord(sg.chord);
+        let root = nearest(chord.bass, clamp(prev as f64, 34.0, 46.0));
         prev = root;
         let nxt = segs.get(si + 1);
         let len = sg.b1 - sg.b0;
         let is_last = nxt.is_none();
-        if is_last || intensity <= 1 || sec.type_ == "bridge" {
+        if is_last || intensity <= 1 || sec.kind == SectionKind::Bridge {
             notes.push(Note { b: sg.b0, d: len - 0.1, m: root, v: 0.85 });
             continue;
         }
@@ -60,7 +64,7 @@ pub fn gen_bass(_song: &Song, form: &Form, tl: &Timeline, seed: u32) -> Vec<f32>
             let first = b == sg.b0;
             let mut m = if first {
                 root
-            } else if let Some(fifth) = sg.chord.fifth {
+            } else if let Some(fifth) = chord.fifth {
                 nearest(fifth, root as f64 + 2.0)
             } else {
                 root
@@ -71,7 +75,7 @@ pub fn gen_bass(_song: &Song, form: &Form, tl: &Timeline, seed: u32) -> Vec<f32>
             let d = rem.min(if bpb == 3 { 3.0 } else { 2.0 }) - 0.08;
             if !first && nxt.is_some() && rem <= 2.0 && intensity >= 2 && bpb == 4 {
                 notes.push(Note { b, d: 0.9, m, v: 0.75 });
-                let tr = nearest(nxt.unwrap().chord.bass, root as f64);
+                let tr = nxt.map_or(root, |nx| nearest(form.chord(nx.chord).bass, root as f64));
                 let draw = r.next();
                 let ap = tr + if draw < 0.5 { -1 } else if tr > root { -2 } else { 2 };
                 notes.push(Note { b: b + 1.0, d: 0.9, m: ap, v: 0.7 });

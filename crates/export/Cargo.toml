@@ -8,4 +8,4 @@ publish.workspace = true
 sfcore = { path = "../core" }
 vorbis_rs = "0.5"
 flacenc = "0.4"
-hound = "3.5"
+rayon = "1.10"

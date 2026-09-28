@@ -4,8 +4,7 @@
 //! then exposes `mix` over `dsp::mix::mix_song`.
 
 use compose::prepare::{prepare, Prepared};
-use compose::song::Song;
-use compose::voices::Voice;
+use song::{Song, Voice};
 use dsp::mix::{mix_song, Render, TrackSpec};
 use sfcore::tuning::Tuning;
 use sfcore::SR_F;
@@ -125,8 +124,7 @@ fn render_song_impl(
             });
             s.spawn(|| {
                 sfcore::fp::flush_denormals();
-                let bl = song.break_lead.map(|b| b.as_str());
-                vhg_s = Some(band::render_violin_and_harmony_guitar(&prepared, song, seed, len, bl));
+                vhg_s = Some(band::render_violin_and_harmony_guitar(&prepared, song, seed, len, song.break_lead));
             });
         });
         lead = lead_s.unwrap();
@@ -162,8 +160,7 @@ fn render_song_impl(
 
         step!("Tracking harp and strings", 0.86);
         harp = band::render_harp(song, form, tl, seed);
-        let bl = song.break_lead.map(|b| b.as_str());
-        let (v, h) = band::render_violin_and_harmony_guitar(&prepared, song, seed, len, bl);
+        let (v, h) = band::render_violin_and_harmony_guitar(&prepared, song, seed, len, song.break_lead);
         violin = v;
         hg = h;
     }

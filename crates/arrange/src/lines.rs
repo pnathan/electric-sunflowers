@@ -1,17 +1,15 @@
-//! Port of the lines part of engine.js: `counterLine` and `fillsFor`
-//! (engine.js lines ~741-780). These build note lists for the violin's
-//! counter-melodies/fills and the harmony guitar's fills; they do no
-//! rendering themselves.
+//! Counter-lines and fills: note lists for the violin's counter-melodies
+//! and fills and the harmony guitar's fills. No rendering.
 
 use compose::form::{Form, Sec};
 use compose::melody::LeadNote;
-use compose::song::Song;
 use compose::theory::local_scale;
 use compose::timeline::Timeline;
 use sfcore::js;
 use sfcore::rng::rng_for;
+use song::{Pc, PcSet, Song};
 
-/// One note in a counter-line or fill (`{t0,t1,m,v}` in JS).
+/// One note in a counter-line or fill.
 #[derive(Clone, Copy, Debug)]
 pub struct Note {
     pub t0: f64,
@@ -20,15 +18,9 @@ pub struct Note {
     pub v: f64,
 }
 
-/// `counterLine(form,tl,lead,lo,hi,filter,seed,long)`: a Viterbi-free greedy
-/// walk that threads one note per (sub-)segment through the chord tones in
-/// `[lo,hi]`, steering away from whatever `lead` (the melody, restricted to
-/// notes overlapping the sub-segment) is doing at the same time.
-///
-/// `lead` needs only `.t0`/`.t1`/`.midi`; JS parity: renderSong actually
-/// passes a stripped-down projection (`leadT`) of `comp.lead` carrying just
-/// those three fields, but any slice of notes with them will do, so this
-/// takes `&[LeadNote]` directly.
+/// A greedy walk that threads one note per (sub-)segment through the chord
+/// tones in `[lo,hi]`, preferring steps, following an arch across the
+/// section, and steering clear of the `lead` notes sounding at the time.
 pub fn counter_line(
     form: &Form,
     tl: &Timeline,
@@ -59,26 +51,18 @@ pub fn counter_line(
         } else {
             (js::round((t1_ - t0_) / 1.7) as i32).max(1)
         };
-        let sec_t0 = tl.to_time((sec.start_bar as i32 * form.mi.bpb) as f64);
-        let sec_t1 = tl.to_time(((sec.start_bar + sec.n_bars) as i32 * form.mi.bpb) as f64);
+        let span = sec.beats(&form.meter);
+        let sec_t0 = tl.to_time(span.start);
+        let sec_t1 = tl.to_time(span.end);
+        let chord = form.chord(sg.chord);
 
         for j in 0..n {
             let t0 = t0_ + (t1_ - t0_) * j as f64 / n as f64;
             let t1 = t0_ + (t1_ - t0_) * (j + 1) as f64 / n as f64;
-            let pcs: Vec<i32> = if j == 0 {
-                sg.chord.pcs.clone()
-            } else {
-                let mut s = sg.chord.pcs.clone();
-                if j == n - 1 {
-                    if let Some(nxs) = nx {
-                        for &p in &nxs.chord.pcs {
-                            if !s.contains(&p) {
-                                s.push(p);
-                            }
-                        }
-                    }
-                }
-                s
+            // The last sub-segment may anticipate the next chord.
+            let pcs: PcSet = match nx {
+                Some(nxs) if j > 0 && j == n - 1 => chord.tones.union(form.chord(nxs.chord).tones),
+                _ => chord.tones,
             };
             let voc: Vec<i32> = lead
                 .iter()
@@ -96,7 +80,7 @@ pub fn counter_line(
             let mut best: Option<i32> = None;
             let mut bs = 1e9f64;
             for m in lo..=hi {
-                if !pcs.contains(&(m % 12)) {
+                if !pcs.contains(Pc::new(m)) {
                     continue;
                 }
                 let iv = m - prev;
@@ -117,7 +101,7 @@ pub fn counter_line(
                 if prev_dir != 0 && js::sign(iv as f64) as i32 == -prev_dir && ai > 4 {
                     c -= 0.6;
                 }
-                if !sg.chord.pcs.contains(&(m % 12)) {
+                if !chord.tones.contains(Pc::new(m)) {
                     c += 0.8;
                 }
                 c += (m as f64 - target).abs() * 0.22 + r.next() * 0.7;
@@ -154,14 +138,8 @@ pub fn counter_line(
     notes
 }
 
-/// `fillsFor(form,tl,lead,lo,hi,filter,song,seed)`: a short scalar run
-/// dropped into the gap after each lyric line, landing on a chord tone of
-/// the chord at the run's end.
-///
-/// JS parity: the JS function takes a `lead` parameter that its body never
-/// reads (dead from the original refactor that added the chord-based
-/// targeting); every call site still passes it, so the parameter is kept
-/// here for call-site parity but is unused.
+/// A short descending scalar run in the gap after each lyric line, landing
+/// on a tone of the chord at the run's end. `_lead` is unused.
 pub fn fills_for(
     form: &Form,
     tl: &Timeline,
@@ -174,9 +152,9 @@ pub fn fills_for(
 ) -> Vec<Note> {
     let mut r = rng_for(seed, &format!("fill{lo}"));
     let mut notes: Vec<Note> = Vec::new();
-    let tonic = (song.key_pc + form.transpose + 120).rem_euclid(12);
-    let bpb = form.mi.bpb;
-    let sub = form.mi.sub;
+    let tonic = song.key.transpose(form.transpose);
+    let bpb = form.bpb();
+    let sub = form.sub();
 
     for line in &form.lines {
         let sec = &form.sections[line.sec];
@@ -185,20 +163,13 @@ pub fn fills_for(
         }
         let n = line.syls.len();
         if n == 0 {
-            // JS parity: JS indexes `rh.onsets[n-1]` with `n===0`, giving
-            // `onsets[-1]` (undefined); NaN then propagates through w0/cnt so
-            // the `for(k=0;k<cnt;k++)` loop never runs (`k<NaN` is always
-            // false) and no notes are emitted, but the `r()<0.4` draw just
-            // before that loop still executes unconditionally. Reproduce the
-            // same rng draw and no-notes outcome without indexing an empty
-            // onsets list (which would panic in Rust).
+            // An empty line gets no fill but still takes the run-length
+            // draw, keeping the stream in step.
             let _ = r.next() < 0.4;
             continue;
         }
-        let rh = line
-            .rh
-            .as_ref()
-            .expect("fillsFor requires the line's rhythm to be composed already");
+        // Lines are composed by `prepare`; an uncomposed line gets no fill.
+        let Some(rh) = line.rh.as_ref() else { continue };
         let last_on = (line.start_bar as i32 * bpb) as f64 + rh.onsets[n - 1];
         let line_end = ((line.start_bar + line.n_bars) as i32 * bpb) as f64;
         // JS: `bpb===3?1:1` -- both arms are 1, so the offset is always 1.
@@ -219,11 +190,11 @@ pub fn fills_for(
         }
         let ch_end = tl.chord_at(form, w1 + 0.3);
         let ch0 = tl.chord_at(form, w0 + 0.01);
-        let sc = local_scale(tonic, &song.mode, ch0);
-        let run: Vec<i32> = (lo..=hi).filter(|m| sc.contains(&(m % 12))).collect();
+        let sc = local_scale(tonic, song.mode, ch0);
+        let run: Vec<i32> = (lo..=hi).filter(|&m| sc.contains(Pc::new(m))).collect();
         let mut target = run
             .iter()
-            .position(|&m| ch_end.pcs.contains(&(m % 12)) && m >= lo + 4)
+            .position(|&m| ch_end.tones.contains(Pc::new(m)) && m >= lo + 4)
             .map(|p| p as i32)
             .unwrap_or(-1);
         if target < 0 {
@@ -234,10 +205,7 @@ pub fn fills_for(
         let start_idx = js::clamp((target + cnt - 1 + bump) as f64, 0.0, last_idx as f64) as i32;
 
         for k in 0..cnt {
-            // JS parity: `r()<0.25&&k>0` gates a factor that is `1` either
-            // way (`(cond?1:1)`), so it never changes `b` -- but the RNG
-            // draw itself must still happen in this exact spot for stream
-            // parity, so it is kept even though its result is discarded.
+            // A draw with no effect, kept so the stream stays in step.
             let _ = r.next() < 0.25 && k > 0;
             let b = w0 + k as f64 / sub as f64;
             let idx = js::clamp((start_idx - k) as f64, 0.0, last_idx as f64) as usize;

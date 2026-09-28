@@ -10,6 +10,8 @@
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
+use song::{Band, BreakLead, DrumKit, GuitarPattern, Meter, Mode, Repair, Song};
+
 /// One step of a form's plan, ports a `FORMS[k].steps` entry (`['type', {opts}]`).
 #[derive(Clone, Debug)]
 pub struct FormStep {
@@ -265,53 +267,74 @@ fn build_forms() -> Vec<(&'static str, Form)> {
     m
 }
 
-/// Ports `B(o)`: the band-toggle default object, keys in JS insertion order.
-#[derive(Clone, Debug, Copy)]
-pub struct Band {
-    pub bass: bool,
-    pub harmony_guitar: bool,
-    pub harp: bool,
-    pub violin: bool,
-    pub choir: bool,
-    pub harmonies: bool,
-    pub doubles: bool,
-}
-
-impl Default for Band {
-    fn default() -> Self {
-        Band {
-            bass: true,
-            harmony_guitar: false,
-            harp: false,
-            violin: false,
-            choir: false,
-            harmonies: false,
-            doubles: false,
-        }
-    }
-}
-
 /// Ports one entry of STYLES.
 #[derive(Clone, Debug)]
 pub struct Style {
     pub label: &'static str,
-    pub meters: &'static [&'static str],
-    /// tempo range per meter: (meter, lo, hi), JS `tempo:{'3/4':[lo,hi],...}`
-    pub tempo: &'static [(&'static str, u32, u32)],
-    pub modes: &'static [&'static str],
+    pub meters: &'static [Meter],
+    /// Tempo range per meter: (meter, lo, hi) in beats per minute.
+    pub tempo: &'static [(Meter, u32, u32)],
+    pub modes: &'static [Mode],
     pub idiom: &'static str,
-    pub guitar: &'static str,
-    pub drums: &'static str,
+    pub guitar: GuitarPattern,
+    /// Band parts and drum kit.
     pub band: Band,
     pub forms: &'static [&'static str],
-    /// break-instrument lead: "violin", "guitar", or "both"
-    pub lead: &'static str,
+    /// Lead instrument of instrumental breaks.
+    pub lead: BreakLead,
 }
 
 impl Style {
-    fn tempo_for(&self, meter: &str) -> Option<(u32, u32)> {
+    /// The style's tempo range for `meter`, if it plays in that meter.
+    pub fn tempo_for(&self, meter: Meter) -> Option<(u32, u32)> {
         self.tempo.iter().find(|(m, _, _)| *m == meter).map(|(_, lo, hi)| (*lo, *hi))
     }
+
+    /// Imposes the style's arrangement on `song`: guitar pattern, break
+    /// lead, band parts and drum kit, and the tempo clamped to the style's
+    /// range for the song's meter widened by 10% each way, then rounded.
+    /// Returns a `ClampedTempo` repair when the tempo moves.
+    pub fn apply(&self, song: &mut Song) -> Vec<Repair> {
+        song.guitar = self.guitar;
+        song.break_lead = self.lead;
+        song.band = self.band;
+        let mut rep = Vec::new();
+        if let Some((lo, hi)) = self.tempo_for(song.meter) {
+            let from = song.tempo_bpm;
+            let to = from.max(lo as f64 * 0.9).min(hi as f64 * 1.1).round();
+            if to != from {
+                rep.push(Repair::ClampedTempo { from, to });
+            }
+            song.tempo_bpm = to;
+        }
+        rep
+    }
+}
+
+/// A style id that names no style.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnknownStyle(pub String);
+
+impl std::fmt::Display for UnknownStyle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown style {:?}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownStyle {}
+
+/// The style with id `key`.
+pub fn style(key: &str) -> Result<&'static Style, UnknownStyle> {
+    styles_get(key).ok_or_else(|| UnknownStyle(key.to_string()))
+}
+
+/// Applies style `key` to `song` (see `Style::apply`) and records the id in
+/// `song.style`.
+pub fn apply_style(key: &str, song: &mut Song) -> Result<Vec<Repair>, UnknownStyle> {
+    let s = style(key)?;
+    let rep = s.apply(song);
+    song.style = Some(key.to_string());
+    Ok(rep)
 }
 
 /// Ports STYLES. Keys match the JS object's keys exactly.
@@ -326,13 +349,21 @@ fn styles_get(k: &str) -> Option<&'static Style> {
 
 fn build_styles() -> Vec<(&'static str, Style)> {
     let mut m: Vec<(&'static str, Style)> = Vec::new();
+    // A style's band: the kit, the bass on, every other part off unless named.
     macro_rules! b {
-        () => {
-            Band::default()
-        };
-        ($($field:ident: $val:expr),* $(,)?) => {{
-            let mut band = Band::default();
-            $(band.$field = $val;)*
+        ($drums:expr $(; $($field:ident: $val:expr),* $(,)?)?) => {{
+            #[allow(unused_mut)]
+            let mut band = Band {
+                drums: $drums,
+                bass: true,
+                harmony_guitar: false,
+                harp: false,
+                violin: false,
+                choir: false,
+                harmonies: false,
+                doubles: false,
+            };
+            $($(band.$field = $val;)*)?
             band
         }};
     }
@@ -340,330 +371,308 @@ fn build_styles() -> Vec<(&'static str, Style)> {
         "appalachian",
         Style {
             label: "Appalachian ballad",
-            meters: &["3/4", "4/4"],
-            tempo: &[("3/4", 72, 96), ("4/4", 66, 88)],
-            modes: &["mixolydian", "dorian", "minor", "major"],
+            meters: &[Meter::Three4, Meter::Four4],
+            tempo: &[(Meter::Three4, 72, 96), (Meter::Four4, 66, 88)],
+            modes: &[Mode::Mixolydian, Mode::Dorian, Mode::Minor, Mode::Major],
             idiom: "modal and spare: two or three chords (I, bVII, IV or i, bVII, v), a long story sung plainly",
-            guitar: "fingerpick",
-            drums: "none",
-            band: b!(bass: false, violin: true),
+            guitar: GuitarPattern::Fingerpick,
+            band: b!(DrumKit::None; bass: false, violin: true),
             forms: &["strophic", "refrain"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m.push((
         "oldtime",
         Style {
             label: "Old-time string band",
-            meters: &["4/4"],
-            tempo: &[("4/4", 100, 128)],
-            modes: &["major", "mixolydian"],
+            meters: &[Meter::Four4],
+            tempo: &[(Meter::Four4, 100, 128)],
+            modes: &[Mode::Major, Mode::Mixolydian],
             idiom: "I, IV, V with drive; the fiddle takes the breaks",
-            guitar: "strum",
-            drums: "none",
-            band: b!(harmony_guitar: true, violin: true, harmonies: true),
+            guitar: GuitarPattern::Strum,
+            band: b!(DrumKit::None; harmony_guitar: true, violin: true, harmonies: true),
             forms: &["vcBreaks", "refrain"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m.push((
         "bluegrass",
         Style {
             label: "Bluegrass",
-            meters: &["4/4", "3/4"],
-            tempo: &[("4/4", 108, 140), ("3/4", 100, 132)],
-            modes: &["major"],
+            meters: &[Meter::Four4, Meter::Three4],
+            tempo: &[(Meter::Four4, 108, 140), (Meter::Three4, 100, 132)],
+            modes: &[Mode::Major],
             idiom: "I, IV, V with the occasional II major; high lonesome harmony on the chorus; fiddle and guitar trade breaks",
-            guitar: "strum",
-            drums: "none",
-            band: b!(harmony_guitar: true, violin: true, harmonies: true),
+            guitar: GuitarPattern::Strum,
+            band: b!(DrumKit::None; harmony_guitar: true, violin: true, harmonies: true),
             forms: &["vcBreaks"],
-            lead: "both",
+            lead: BreakLead::Both,
         },
     ));
     m.push((
         "cowboy",
         Style {
             label: "Western and cowboy song",
-            meters: &["3/4", "4/4"],
-            tempo: &[("3/4", 80, 104), ("4/4", 76, 100)],
-            modes: &["major"],
+            meters: &[Meter::Three4, Meter::Four4],
+            tempo: &[(Meter::Three4, 80, 104), (Meter::Four4, 76, 100)],
+            modes: &[Mode::Major],
             idiom: "open-range major harmony, I, IV, V and the II7 on the way home",
-            guitar: "travis",
-            drums: "brushes",
-            band: b!(harmony_guitar: true, violin: true, harmonies: true),
+            guitar: GuitarPattern::Travis,
+            band: b!(DrumKit::Brushes; harmony_guitar: true, violin: true, harmonies: true),
             forms: &["vc", "waltzBreaks", "strophic"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m.push((
         "bakersfield",
         Style {
             label: "Bakersfield country",
-            meters: &["4/4"],
-            tempo: &[("4/4", 112, 144)],
-            modes: &["major", "mixolydian"],
+            meters: &[Meter::Four4],
+            tempo: &[(Meter::Four4, 112, 144)],
+            modes: &[Mode::Major, Mode::Mixolydian],
             idiom: "shuffle-driven I, IV, V with a bVII; a twangy guitar break",
-            guitar: "strum",
-            drums: "full",
-            band: b!(harmony_guitar: true, violin: true, harmonies: true, doubles: true),
+            guitar: GuitarPattern::Strum,
+            band: b!(DrumKit::Full; harmony_guitar: true, violin: true, harmonies: true, doubles: true),
             forms: &["vcBreaks", "vc", "chorusFirst"],
-            lead: "guitar",
+            lead: BreakLead::Guitar,
         },
     ));
     m.push((
         "texas",
         Style {
             label: "Texas songwriter",
-            meters: &["4/4", "3/4"],
-            tempo: &[("4/4", 78, 104), ("3/4", 84, 108)],
-            modes: &["major", "minor"],
+            meters: &[Meter::Four4, Meter::Three4],
+            tempo: &[(Meter::Four4, 78, 104), (Meter::Three4, 84, 108)],
+            modes: &[Mode::Major, Mode::Minor],
             idiom: "plain chords, long verses, detail-heavy storytelling",
-            guitar: "travis",
-            drums: "brushes",
-            band: b!(harmony_guitar: true),
+            guitar: GuitarPattern::Travis,
+            band: b!(DrumKit::Brushes; harmony_guitar: true),
             forms: &["refrain", "strophic", "aaba"],
-            lead: "guitar",
+            lead: BreakLead::Guitar,
         },
     ));
     m.push((
         "cajun",
         Style {
             label: "Cajun waltz",
-            meters: &["3/4"],
-            tempo: &[("3/4", 104, 138)],
-            modes: &["major"],
+            meters: &[Meter::Three4],
+            tempo: &[(Meter::Three4, 104, 138)],
+            modes: &[Mode::Major],
             idiom: "two or three chords (I, V, IV); the fiddle answers the voice",
-            guitar: "strum",
-            drums: "soft",
-            band: b!(violin: true, harmonies: true),
+            guitar: GuitarPattern::Strum,
+            band: b!(DrumKit::Soft; violin: true, harmonies: true),
             forms: &["waltzBreaks"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m.push((
         "zydeco",
         Style {
             label: "Creole and zydeco two-step",
-            meters: &["4/4"],
-            tempo: &[("4/4", 108, 132)],
-            modes: &["major", "mixolydian"],
+            meters: &[Meter::Four4],
+            tempo: &[(Meter::Four4, 108, 132)],
+            modes: &[Mode::Major, Mode::Mixolydian],
             idiom: "I, IV, V with a push; a call you can shout back",
-            guitar: "strum",
-            drums: "full",
-            band: b!(harmony_guitar: true, violin: true, choir: true, harmonies: true, doubles: true),
+            guitar: GuitarPattern::Strum,
+            band: b!(DrumKit::Full; harmony_guitar: true, violin: true, choir: true, harmonies: true, doubles: true),
             forms: &["chorusFirst", "vcBreaks"],
-            lead: "both",
+            lead: BreakLead::Both,
         },
     ));
     m.push((
         "acadian",
         Style {
             label: "Acadian fiddle song",
-            meters: &["6/8", "3/4"],
-            tempo: &[("6/8", 62, 80), ("3/4", 96, 120)],
-            modes: &["major", "mixolydian"],
+            meters: &[Meter::Six8, Meter::Three4],
+            tempo: &[(Meter::Six8, 62, 80), (Meter::Three4, 96, 120)],
+            modes: &[Mode::Major, Mode::Mixolydian],
             idiom: "kitchen-party harmony, I, IV, V; the fiddle leads the dance",
-            guitar: "strum",
-            drums: "soft",
-            band: b!(violin: true, harmonies: true),
+            guitar: GuitarPattern::Strum,
+            band: b!(DrumKit::Soft; violin: true, harmonies: true),
             forms: &["vcBreaks", "refrain"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m.push((
         "broadside",
         Style {
             label: "English broadside ballad",
-            meters: &["6/8", "3/4", "4/4"],
-            tempo: &[("6/8", 52, 68), ("3/4", 80, 104), ("4/4", 76, 98)],
-            modes: &["major", "dorian", "mixolydian"],
+            meters: &[Meter::Six8, Meter::Three4, Meter::Four4],
+            tempo: &[(Meter::Six8, 52, 68), (Meter::Three4, 80, 104), (Meter::Four4, 76, 98)],
+            modes: &[Mode::Major, Mode::Dorian, Mode::Mixolydian],
             idiom: "a tune for a news story or a scandal, simple diatonic harmony",
-            guitar: "fingerpick",
-            drums: "none",
-            band: b!(bass: false, violin: true),
+            guitar: GuitarPattern::Fingerpick,
+            band: b!(DrumKit::None; bass: false, violin: true),
             forms: &["strophic", "refrain"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m.push((
         "scottish",
         Style {
             label: "Scottish ballad",
-            meters: &["3/4", "4/4"],
-            tempo: &[("3/4", 66, 88), ("4/4", 60, 80)],
-            modes: &["dorian", "mixolydian", "minor"],
+            meters: &[Meter::Three4, Meter::Four4],
+            tempo: &[(Meter::Three4, 66, 88), (Meter::Four4, 60, 80)],
+            modes: &[Mode::Dorian, Mode::Mixolydian, Mode::Minor],
             idiom: "modal and dignified: i, bVII, bVI or I, bVII",
-            guitar: "arpeggio",
-            drums: "none",
-            band: b!(harp: true, violin: true),
+            guitar: GuitarPattern::Arpeggio,
+            band: b!(DrumKit::None; harp: true, violin: true),
             forms: &["strophic", "refrain", "aaba"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m.push((
         "irishair",
         Style {
             label: "Irish air",
-            meters: &["3/4", "6/8"],
-            tempo: &[("3/4", 60, 80), ("6/8", 44, 60)],
-            modes: &["major", "dorian", "mixolydian"],
+            meters: &[Meter::Three4, Meter::Six8],
+            tempo: &[(Meter::Three4, 60, 80), (Meter::Six8, 44, 60)],
+            modes: &[Mode::Major, Mode::Dorian, Mode::Mixolydian],
             idiom: "a long-breathed tune over few chords; ornament rather than harmony",
-            guitar: "arpeggio",
-            drums: "none",
-            band: b!(harp: true, violin: true),
+            guitar: GuitarPattern::Arpeggio,
+            band: b!(DrumKit::None; harp: true, violin: true),
             forms: &["strophic", "aaba"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m.push((
         "irishpub",
         Style {
             label: "Irish drinking song",
-            meters: &["6/8", "4/4"],
-            tempo: &[("6/8", 68, 84), ("4/4", 104, 128)],
-            modes: &["major", "mixolydian"],
+            meters: &[Meter::Six8, Meter::Four4],
+            tempo: &[(Meter::Six8, 68, 84), (Meter::Four4, 104, 128)],
+            modes: &[Mode::Major, Mode::Mixolydian],
             idiom: "a chorus the whole room can shout, I, IV, V",
-            guitar: "strum",
-            drums: "soft",
-            band: b!(violin: true, choir: true, harmonies: true, doubles: true),
+            guitar: GuitarPattern::Strum,
+            band: b!(DrumKit::Soft; violin: true, choir: true, harmonies: true, doubles: true),
             forms: &["vc", "chorusFirst", "vcBreaks"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m.push((
         "welsh",
         Style {
             label: "Welsh hymn tune",
-            meters: &["4/4", "3/4"],
-            tempo: &[("4/4", 60, 78), ("3/4", 66, 84)],
-            modes: &["major"],
+            meters: &[Meter::Four4, Meter::Three4],
+            tempo: &[(Meter::Four4, 60, 78), (Meter::Three4, 66, 84)],
+            modes: &[Mode::Major],
             idiom: "four-part hymn harmony, cadences on I, a lift to vi",
-            guitar: "arpeggio",
-            drums: "none",
-            band: b!(harp: true, choir: true, harmonies: true),
+            guitar: GuitarPattern::Arpeggio,
+            band: b!(DrumKit::None; harp: true, choir: true, harmonies: true),
             forms: &["hymn"],
-            lead: "guitar",
+            lead: BreakLead::Guitar,
         },
     ));
     m.push((
         "breton",
         Style {
             label: "Breton dance song",
-            meters: &["4/4", "6/8"],
-            tempo: &[("4/4", 104, 128), ("6/8", 68, 84)],
-            modes: &["dorian", "minor"],
+            meters: &[Meter::Four4, Meter::Six8],
+            tempo: &[(Meter::Four4, 104, 128), (Meter::Six8, 68, 84)],
+            modes: &[Mode::Dorian, Mode::Minor],
             idiom: "modal drone harmony, call and response in the lines",
-            guitar: "strum",
-            drums: "soft",
-            band: b!(violin: true, harmonies: true),
+            guitar: GuitarPattern::Strum,
+            band: b!(DrumKit::Soft; violin: true, harmonies: true),
             forms: &["refrain", "vcBreaks"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m.push((
         "blues",
         Style {
             label: "Delta and Piedmont blues",
-            meters: &["4/4"],
-            tempo: &[("4/4", 70, 100)],
-            modes: &["mixolydian", "major"],
+            meters: &[Meter::Four4],
+            tempo: &[(Meter::Four4, 70, 100)],
+            modes: &[Mode::Mixolydian, Mode::Major],
             idiom: "dominant-seventh harmony, I7, IV7, V7",
-            guitar: "travis",
-            drums: "brushes",
-            band: b!(harmony_guitar: true),
+            guitar: GuitarPattern::Travis,
+            band: b!(DrumKit::Brushes; harmony_guitar: true),
             forms: &["blues12"],
-            lead: "guitar",
+            lead: BreakLead::Guitar,
         },
     ));
     m.push((
         "gospel",
         Style {
             label: "Gospel",
-            meters: &["4/4", "6/8"],
-            tempo: &[("4/4", 72, 104), ("6/8", 50, 66)],
-            modes: &["major"],
+            meters: &[Meter::Four4, Meter::Six8],
+            tempo: &[(Meter::Four4, 72, 104), (Meter::Six8, 50, 66)],
+            modes: &[Mode::Major],
             idiom: "I, IV, V, vi with passing sevenths; a call and a response",
-            guitar: "arpeggio",
-            drums: "soft",
-            band: b!(choir: true, harmonies: true, doubles: true),
+            guitar: GuitarPattern::Arpeggio,
+            band: b!(DrumKit::Soft; choir: true, harmonies: true, doubles: true),
             forms: &["chorusFirst", "vc", "prechorus"],
-            lead: "guitar",
+            lead: BreakLead::Guitar,
         },
     ));
     m.push((
         "revival",
         Style {
             label: "1960s folk revival",
-            meters: &["4/4", "3/4"],
-            tempo: &[("4/4", 92, 124), ("3/4", 92, 116)],
-            modes: &["major", "minor"],
+            meters: &[Meter::Four4, Meter::Three4],
+            tempo: &[(Meter::Four4, 92, 124), (Meter::Three4, 92, 116)],
+            modes: &[Mode::Major, Mode::Minor],
             idiom: "three chords and the truth; a duo harmony on the refrain",
-            guitar: "fingerpick",
-            drums: "none",
-            band: b!(bass: false, harmonies: true),
+            guitar: GuitarPattern::Fingerpick,
+            band: b!(DrumKit::None; bass: false, harmonies: true),
             forms: &["refrain", "vc", "strophic"],
-            lead: "guitar",
+            lead: BreakLead::Guitar,
         },
     ));
     m.push((
         "laurel",
         Style {
             label: "Laurel Canyon",
-            meters: &["4/4", "3/4"],
-            tempo: &[("4/4", 72, 100), ("3/4", 80, 104)],
-            modes: &["major", "mixolydian"],
+            meters: &[Meter::Four4, Meter::Three4],
+            tempo: &[(Meter::Four4, 72, 100), (Meter::Three4, 80, 104)],
+            modes: &[Mode::Major, Mode::Mixolydian],
             idiom: "open tunings and maj7, sus2, add9 colors; stacked harmony",
-            guitar: "arpeggio",
-            drums: "soft",
-            band: b!(harmony_guitar: true, harmonies: true, doubles: true),
+            guitar: GuitarPattern::Arpeggio,
+            band: b!(DrumKit::Soft; harmony_guitar: true, harmonies: true, doubles: true),
             forms: &["vc", "prechorus", "aaba"],
-            lead: "guitar",
+            lead: BreakLead::Guitar,
         },
     ));
     m.push((
         "nashville",
         Style {
             label: "Nashville country waltz",
-            meters: &["3/4"],
-            tempo: &[("3/4", 84, 112)],
-            modes: &["major"],
+            meters: &[Meter::Three4],
+            tempo: &[(Meter::Three4, 84, 112)],
+            modes: &[Mode::Major],
             idiom: "I, IV, V with a II7 and a walk-up; fiddle fills",
-            guitar: "strum",
-            drums: "brushes",
-            band: b!(harmony_guitar: true, violin: true, harmonies: true),
+            guitar: GuitarPattern::Strum,
+            band: b!(DrumKit::Brushes; harmony_guitar: true, violin: true, harmonies: true),
             forms: &["waltzBreaks", "vc"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m.push((
         "americana",
         Style {
             label: "Present-day Americana",
-            meters: &["4/4", "3/4"],
-            tempo: &[("4/4", 72, 112), ("3/4", 84, 110)],
-            modes: &["major", "minor", "mixolydian"],
+            meters: &[Meter::Four4, Meter::Three4],
+            tempo: &[(Meter::Four4, 72, 112), (Meter::Three4, 84, 110)],
+            modes: &[Mode::Major, Mode::Minor, Mode::Mixolydian],
             idiom: "open, ringing harmony; a vi or a bVII where it hurts or lifts",
-            guitar: "strum",
-            drums: "soft",
-            band: b!(harmony_guitar: true, violin: true, harmonies: true, doubles: true),
+            guitar: GuitarPattern::Strum,
+            band: b!(DrumKit::Soft; harmony_guitar: true, violin: true, harmonies: true, doubles: true),
             forms: &["vc", "prechorus", "chorusFirst", "aaba"],
-            lead: "both",
+            lead: BreakLead::Both,
         },
     ));
     m.push((
         "shanty",
         Style {
             label: "Sea shanty",
-            meters: &["4/4", "6/8"],
-            tempo: &[("4/4", 96, 124), ("6/8", 60, 76)],
-            modes: &["major", "dorian"],
+            meters: &[Meter::Four4, Meter::Six8],
+            tempo: &[(Meter::Four4, 96, 124), (Meter::Six8, 60, 76)],
+            modes: &[Mode::Major, Mode::Dorian],
             idiom: "call and response: the shantyman sings a line, the crew answers with a short refrain line; I and V",
-            guitar: "strum",
-            drums: "none",
-            band: b!(bass: false, choir: true, harmonies: true, doubles: true, violin: true),
+            guitar: GuitarPattern::Strum,
+            band: b!(DrumKit::None; bass: false, choir: true, harmonies: true, doubles: true, violin: true),
             forms: &["refrain", "chorusFirst"],
-            lead: "violin",
+            lead: BreakLead::Violin,
         },
     ));
     m
@@ -734,7 +743,8 @@ pub fn style_direction(key: Option<&str>, rand: &mut dyn FnMut() -> f64) -> Dire
     };
     let s = styles_get(k.as_str()).expect("style key resolved above must exist");
     let meter = pick(s.meters, rand);
-    let (lo, hi) = s.tempo_for(meter).expect("style tempo missing for meter");
+    // Every style lists a tempo range for each of its meters.
+    let (lo, hi) = s.tempo_for(meter).unwrap_or((60, 120));
     let form = pick(s.forms, rand);
     let mode = pick(s.modes, rand);
     let world = if rand() < 0.12 {
@@ -763,7 +773,6 @@ pub fn style_direction(key: Option<&str>, rand: &mut dyn FnMut() -> f64) -> Dire
         tempo_hi: hi,
         form,
         guitar: s.guitar,
-        drums: s.drums,
         band: s.band,
         lead: s.lead,
         world,
@@ -781,47 +790,18 @@ pub struct Direction {
     pub style: String,
     pub label: &'static str,
     pub idiom: &'static str,
-    pub mode: &'static str,
-    pub meter: &'static str,
+    pub mode: Mode,
+    pub meter: Meter,
     pub tempo_lo: u32,
     pub tempo_hi: u32,
     pub form: &'static str,
-    pub guitar: &'static str,
-    pub drums: &'static str,
+    pub guitar: GuitarPattern,
+    /// Band parts and drum kit.
     pub band: Band,
-    pub lead: &'static str,
+    pub lead: BreakLead,
     pub world: Option<&'static str>,
 }
 
-/// The arrangement data `applyStyle(song,key)` imposes on a normalized song: guitar
-/// pattern, break-lead instrument, and the full band (with drums folded in), plus the
-/// tempo clamp range. The caller applies these to its own song representation; this
-/// crate does not depend on the compose crate's song type.
-#[derive(Clone, Debug)]
-pub struct StyleArrangement {
-    pub guitar: &'static str,
-    pub break_lead: &'static str,
-    pub band: Band,
-    pub drums: &'static str,
-    /// JS: `clamp(song.tempo, r[0]*0.9, r[1]*1.1)` for the given meter, if the style
-    /// declares a tempo range for it.
-    pub tempo_clamp: Option<(f64, f64)>,
-}
-
-/// Ports the data half of `applyStyle(song,key)`: guitar, breakLead, band (with drums),
-/// and the tempo clamp bounds for `meter`. JS parity: `applyStyle` returns `song`
-/// unchanged (not this struct) when `key` is not a known style; here that is `None`.
-pub fn apply_style(key: &str, meter: &str) -> Option<StyleArrangement> {
-    let s = styles_get(key)?;
-    let tempo_clamp = s.tempo_for(meter).map(|(lo, hi)| (lo as f64 * 0.9, hi as f64 * 1.1));
-    Some(StyleArrangement {
-        guitar: s.guitar,
-        break_lead: s.lead,
-        band: s.band,
-        drums: s.drums,
-        tempo_clamp,
-    })
-}
 
 #[cfg(test)]
 mod parity_tests {
@@ -837,5 +817,54 @@ mod parity_tests {
 
         let r3 = form_text("hymn");
         assert_eq!(r3.text, "1. intro: instrumental, 4 chord entries, no lines\n2. verse 1: 4 lines, 2 chord entries per line\n3. verse 2: 4 lines, 2 chord entries per line\n4. interlude: instrumental, 4 chord entries, no lines\n5. verse 3: 4 lines, 2 chord entries per line\n6. verse 4: 4 lines, 2 chord entries per line\n7. outro: a tag of 1 lyric line (a closing echo of the hook), 2 chord entries per line");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn song_in(meter: &str) -> Song {
+        let raw = serde_json::json!({
+            "meter": meter,
+            "tempo": 100,
+            "sections": [{"type": "verse", "lines": [{"syl": "*one *two", "chords": ["C"]}]}]
+        });
+        song::normalize_value(&raw).expect("test song normalises").0
+    }
+
+    #[test]
+    fn every_style_meter_has_a_tempo_range() {
+        for (k, s) in styles() {
+            for &m in s.meters {
+                assert!(s.tempo_for(m).is_some(), "{k} {m}");
+            }
+            for f in s.forms {
+                assert!(forms_get(f).is_some(), "{k} form {f}");
+            }
+        }
+    }
+
+    // Cowboy in 3/4 plays 80-104 bpm; the clamp is 72-114.4, rounded.
+    #[test]
+    fn apply_clamps_and_rounds_the_tempo() {
+        for (t, want) in [(120.0, 114.0), (60.0, 72.0), (100.0, 100.0)] {
+            let mut s = song_in("3/4");
+            s.tempo_bpm = t;
+            let rep = apply_style("cowboy", &mut s).expect("cowboy exists");
+            assert_eq!(s.tempo_bpm, want, "tempo {t}");
+            assert_eq!(rep.len(), usize::from(t != want));
+            assert_eq!(s.style.as_deref(), Some("cowboy"));
+            assert_eq!(s.break_lead, BreakLead::Violin);
+            assert_eq!(s.guitar, GuitarPattern::Travis);
+            assert_eq!(s.band.drums, DrumKit::Brushes);
+        }
+    }
+
+    #[test]
+    fn unknown_style_is_an_error() {
+        let mut s = song_in("4/4");
+        assert_eq!(apply_style("polka", &mut s), Err(UnknownStyle("polka".into())));
+        assert!(s.style.is_none());
     }
 }

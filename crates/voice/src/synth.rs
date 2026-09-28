@@ -10,7 +10,7 @@ use sfcore::HOP;
 
 use dsp::filter::{bq, BqCoeffs, FilterType};
 
-use compose::voices::VoiceParams;
+use crate::params::VoiceParams;
 
 use crate::controls::{or_falsy, resolve_rng, voice_controls, VoiceControls, VoiceNote, VoiceOpts};
 

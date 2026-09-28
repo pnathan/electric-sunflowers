@@ -6,8 +6,5 @@ publish.workspace = true
 
 [dependencies]
 sfcore = { path = "../core" }
-compose = { path = "../compose" }
+song = { path = "../song" }
 dsp = { path = "../dsp" }
-
-[dev-dependencies]
-serde_json = { workspace = true }

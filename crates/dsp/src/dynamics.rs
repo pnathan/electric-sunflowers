@@ -13,24 +13,26 @@
 //!   produced it, so there are no zipper steps and no added lag. `Link`
 //!   selects mono or stereo linking by max(|L|, |R|).
 //!
-//! Level floor: 20 log10(env + 1e-9), so silence reads about -180 dB.
+//! Level in dB and gain in linear come from `sfcore::math::gain_to_db` and
+//! `db_to_gain`; silence reads `DB_FLOOR` (-200 dB).
+
+use sfcore::math::{db_to_gain, gain_to_db, one_pole_coeff_tau};
 
 /// Samples between gain-computer updates.
 pub const GAIN_PERIOD: usize = 16;
 
-/// dB of a linear amplitude, with a 1e-12 floor.
+/// shim: deleted in wave 5 with its callers in mix.rs and the stems example.
+/// Same as `sfcore::math::gain_to_db`.
+#[doc(hidden)]
+#[inline]
 pub fn db_of(v: f64) -> f64 {
-    20.0 * (v + 1e-12).log10()
+    gain_to_db(v)
 }
 
-/// exp(-1 / (t fs)); t <= 0 or non-finite gives 0 (instant).
-fn time_coef(t: f64, fs: f64) -> f64 {
-    let n = t * fs;
-    if n.is_finite() && n > 0.0 {
-        (-1.0 / n).exp()
-    } else {
-        0.0
-    }
+/// Pole k = exp(-1 / (t fs)) = 1 - `one_pole_coeff_tau`; t <= 0 or
+/// non-finite gives 0 (instant).
+fn pole(t: f64, fs: f64) -> f64 {
+    1.0 - one_pole_coeff_tau(if t.is_finite() { t } else { 0.0 }, fs)
 }
 
 /// Branching one-pole envelope follower on the rectified signal.
@@ -44,7 +46,7 @@ pub struct PeakDetector {
 impl PeakDetector {
     /// Attack and release time constants in seconds.
     pub fn new(attack: f64, release: f64, fs: f64) -> Self {
-        PeakDetector { attack_coef: time_coef(attack, fs), release_coef: time_coef(release, fs), env: 0.0 }
+        PeakDetector { attack_coef: pole(attack, fs), release_coef: pole(release, fs), env: 0.0 }
     }
 
     /// Feed |x| (already rectified); returns the envelope.
@@ -113,11 +115,11 @@ impl Compressor {
 
     /// Detector level of the last sample fed, in dB.
     pub fn level_db(&self) -> f64 {
-        20.0 * (self.det.env + 1e-9).log10()
+        gain_to_db(self.det.env)
     }
 
     fn period_gain(&self) -> f64 {
-        10f64.powf(self.gc.gain_db(self.level_db()) / 20.0)
+        db_to_gain(self.gc.gain_db(self.level_db()))
     }
 
     pub fn reset(&mut self) {

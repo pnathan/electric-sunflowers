@@ -1,9 +1,8 @@
-//! Port of the guitar part of engine.js (`GTUNE`, `guitarVoicing`, `GPAT`,
-//! `genGuitar`, engine.js ~611-694).
+//! The accompaniment guitar: fretboard voicing search, strum and picking
+//! patterns per meter, and the plucked-string rendering with sympathetic
+//! open strings.
 
 use compose::form::Form;
-use compose::song::Song;
-use compose::theory::Chord;
 use compose::timeline::Timeline;
 use dsp::pluck::{pluck, PluckOpts};
 use dsp::truthy;
@@ -11,6 +10,7 @@ use sfcore::js::{pow, round};
 use sfcore::rng::rng_for;
 use sfcore::tuning::Tuning;
 use sfcore::SR_F;
+use song::{Chord, ChordId, DrumKit, GuitarPattern, Meter, Pc, PcSet, SectionKind, Song};
 
 /// `mtof(m)` from engine.js. Shared with bass.rs and harp.rs.
 pub(crate) fn mtof(m: f64) -> f64 {
@@ -19,21 +19,26 @@ pub(crate) fn mtof(m: f64) -> f64 {
 
 const GTUNE: [i32; 6] = [40, 45, 50, 55, 59, 64];
 
-/// One string's fret at a given position search: `opts[s]` in JS.
-fn opts_for(o: i32, pos: i32, pcs: &[i32]) -> Vec<i32> {
+/// Frets on the open string `o` that sound a chord tone at hand position
+/// `pos`: open, or one of the four frets from `pos`.
+fn opts_for(o: i32, pos: i32, pcs: PcSet) -> Vec<i32> {
     let mut a = Vec::new();
     for f in [0, pos, pos + 1, pos + 2, pos + 3] {
-        if f >= 0 && pcs.contains(&((o + f).rem_euclid(12))) && !a.contains(&f) {
+        if f >= 0 && pcs.contains(Pc::new(o + f)) && !a.contains(&f) {
             a.push(f);
         }
     }
     a
 }
 
-/// `rec(s)` in JS `guitarVoicing`: backtracks over strings `bs0+1..6`,
-/// trying each fret option for that string, then "no note on this string",
-/// in that order (order matters: the first candidate to strictly beat `bs`
-/// wins on ties).
+/// Backtracks over strings `bs0+1..6`, trying each fret option for the
+/// string, then no note on it, in that order (the first candidate to beat
+/// the best score strictly wins ties). Scores: -6 per missing essential
+/// tone, -0.6 without the fifth, -6 for a slash chord without its root,
+/// -0.3 per position, +0.45 per open string, -1.6 per muted inner string
+/// (-1.2 the top one), -0.25 per bass-string index, -0.5 for a doubled
+/// third, -2 under four notes; at most four fretted notes spanning three
+/// frets.
 #[allow(clippy::too_many_arguments)]
 fn rec(
     s: usize,
@@ -63,17 +68,17 @@ fn rec(
         };
         let have: u16 = notes.iter().filter_map(|x| x.map(|v| 1u16 << v.rem_euclid(12))).fold(0, |a, b| a | b);
         let mut sc = 0.0f64;
-        for &e in &ch.ess {
-            if have & (1 << e) == 0 {
+        for e in ch.essential.iter() {
+            if have & (1 << e.get()) == 0 {
                 sc -= 6.0;
             }
         }
         if let Some(fifth) = ch.fifth {
-            if have & (1 << fifth) == 0 {
+            if have & (1 << fifth.get()) == 0 {
                 sc -= 0.6;
             }
         }
-        if ch.bass != ch.root && have & (1 << ch.root) == 0 {
+        if ch.bass != ch.root && have & (1 << ch.root.get()) == 0 {
             sc -= 6.0;
         }
         sc -= 0.3 * pos as f64;
@@ -85,7 +90,7 @@ fn rec(
         }
         sc -= 0.25 * bs0 as f64;
         if let Some(third) = ch.third {
-            if notes.iter().filter(|x| x.map(|v| v.rem_euclid(12)) == Some(third)).count() > 1 {
+            if notes.iter().filter(|x| x.map(Pc::new) == Some(third)).count() > 1 {
                 sc -= 0.5;
             }
         }
@@ -106,24 +111,25 @@ fn rec(
     rec(s + 1, cur, opts, ch, bs0, pos, best, bs);
 }
 
-/// `guitarVoicing(ch)`. JS parity: the JS caches results by chord name;
-/// here it is a plain deterministic function (no rng involved), so a cache
-/// is not needed for parity.
+/// The best open-position or barre voicing of `ch` over hand positions
+/// 0-9 with the bass note on one of the three lowest strings: MIDI note per
+/// string, `None` for a muted string. Without a playable shape: root, third
+/// (or fifth) and fifth from C3 up on the middle strings.
 pub fn guitar_voicing(ch: &Chord) -> [Option<i32>; 6] {
-    let pcs: Vec<i32> = if ch.pcs.contains(&ch.bass) { ch.pcs.clone() } else { ch.pcs.iter().cloned().chain(std::iter::once(ch.bass)).collect() };
+    let pcs = ch.tones.with(ch.bass);
     let mut best: Option<[Option<i32>; 6]> = None;
     let mut bs = -1e9f64;
     for pos in 0..=9i32 {
         let opts: [Vec<i32>; 6] = {
             let mut o: [Vec<i32>; 6] = Default::default();
             for i in 0..6 {
-                o[i] = opts_for(GTUNE[i], pos, &pcs);
+                o[i] = opts_for(GTUNE[i], pos, pcs);
             }
             o
         };
         for bs0 in 0..=2usize {
             for &bf in &opts[bs0] {
-                if (GTUNE[bs0] + bf).rem_euclid(12) != ch.bass {
+                if Pc::new(GTUNE[bs0] + bf) != ch.bass {
                     continue;
                 }
                 let mut cur = [None; 6];
@@ -136,16 +142,16 @@ pub fn guitar_voicing(ch: &Chord) -> [Option<i32>; 6] {
         Some(b) => b,
         None => {
             let mut b = [None; 6];
-            let r = 48 + (ch.root - 48).rem_euclid(12);
+            let r = 48 + (ch.root.get() as i32 - 48).rem_euclid(12);
             b[2] = Some(r);
-            b[3] = Some(r + if ch.third.is_some() { (ch.third.unwrap() - ch.root).rem_euclid(12) } else { 7 });
+            b[3] = Some(r + ch.third.map_or(7, |t| ch.root.interval_to(t) as i32));
             b[4] = Some(r + 7);
             b
         }
     }
 }
 
-/// One event on a string (`ev[s]` entries in JS `genGuitar`).
+/// One event on a string: a note, or a stop (damping) at a chord change.
 struct GEvent {
     t: f64,
     m: Option<i32>,
@@ -153,84 +159,136 @@ struct GEvent {
     stop: bool,
 }
 
-type Pattern = &'static [(f64, &'static str, f64)];
+/// One stroke of a pattern.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stroke {
+    /// Full down strum over every sounding string.
+    Down,
+    /// Up strum over the top four strings from string 2 up.
+    Up,
+    /// Light down strum from string 3 up.
+    DownLite,
+    /// Light up strum over the top four strings from string 3 up.
+    UpLite,
+    /// Bass note on the lowest sounding string.
+    Bass,
+    /// Alternate bass: the next sounding string up (at most string 3).
+    AltBass,
+    /// Pick string 3 (G), 4 (B) or 5 (high E), or the nearest sounding one below.
+    G,
+    B,
+    E,
+}
 
-fn gpat(style: &str, meter: &str) -> Pattern {
-    const STRUM_44: Pattern = &[(0.0, "D", 0.85), (2.0, "D", 0.7), (3.0, "U", 0.45), (5.0, "U", 0.5), (6.0, "D", 0.65), (7.0, "U", 0.45)];
-    const STRUM_34: Pattern = &[(0.0, "B", 0.9), (2.0, "D", 0.6), (4.0, "D", 0.6), (5.0, "U", 0.4)];
-    const STRUM_68: Pattern = &[(0.0, "D", 0.85), (2.0, "U", 0.4), (3.0, "D", 0.7), (4.0, "U", 0.4), (5.0, "U", 0.45)];
-    const STRUMLITE_44: Pattern = &[(0.0, "B", 0.85), (2.0, "d", 0.55), (4.0, "B2", 0.75), (6.0, "d", 0.55), (7.0, "u", 0.35)];
-    const STRUMLITE_34: Pattern = &[(0.0, "B", 0.85), (2.0, "d", 0.5), (4.0, "d", 0.5)];
-    const STRUMLITE_68: Pattern = &[(0.0, "B", 0.85), (2.0, "d", 0.45), (3.0, "B2", 0.7), (5.0, "d", 0.45)];
-    const FP_44: Pattern = &[(0.0, "B", 0.85), (1.0, "g", 0.5), (2.0, "b", 0.55), (3.0, "e", 0.6), (4.0, "B2", 0.75), (5.0, "b", 0.5), (6.0, "g", 0.5), (7.0, "b", 0.5)];
-    const FP_34: Pattern = &[(0.0, "B", 0.85), (1.0, "g", 0.5), (2.0, "b", 0.55), (3.0, "e", 0.6), (4.0, "b", 0.5), (5.0, "g", 0.5)];
-    const FP_68: Pattern = &[(0.0, "B", 0.85), (1.0, "g", 0.5), (2.0, "b", 0.55), (3.0, "e", 0.6), (4.0, "b", 0.5), (5.0, "g", 0.5)];
-    const TRAVIS_44: Pattern = &[(0.0, "B", 0.85), (0.0, "e", 0.55), (1.0, "b", 0.45), (2.0, "B2", 0.75), (3.0, "g", 0.5), (4.0, "B", 0.8), (5.0, "e", 0.5), (6.0, "B2", 0.75), (7.0, "b", 0.45)];
-    const TRAVIS_34: Pattern = &[(0.0, "B", 0.85), (0.0, "e", 0.55), (1.0, "b", 0.45), (2.0, "B2", 0.7), (3.0, "g", 0.5), (4.0, "B2", 0.7), (5.0, "b", 0.45)];
-    const TRAVIS_68: Pattern = &[(0.0, "B", 0.85), (0.0, "e", 0.5), (1.0, "g", 0.45), (2.0, "b", 0.5), (3.0, "B2", 0.75), (4.0, "b", 0.45), (5.0, "g", 0.45)];
-    // arpeggio == fingerpick in JS.
-    match (style, meter) {
-        ("strum", "4/4") => STRUM_44,
-        ("strum", "3/4") => STRUM_34,
-        ("strum", "6/8") => STRUM_68,
-        ("strumLite", "4/4") => STRUMLITE_44,
-        ("strumLite", "3/4") => STRUMLITE_34,
-        ("strumLite", "6/8") => STRUMLITE_68,
-        ("fingerpick", "4/4") | ("arpeggio", "4/4") => FP_44,
-        ("fingerpick", "3/4") | ("arpeggio", "3/4") => FP_34,
-        ("fingerpick", "6/8") | ("arpeggio", "6/8") => FP_68,
-        ("travis", "4/4") => TRAVIS_44,
-        ("travis", "3/4") => TRAVIS_34,
-        ("travis", "6/8") => TRAVIS_68,
-        _ => panic!("unknown guitar pattern {style} {meter}"),
+/// Pattern played in a bar: the song's pattern, or a lighter strum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pat {
+    Strum,
+    StrumLite,
+    Fingerpick,
+    Travis,
+}
+
+impl Pat {
+    fn of(g: GuitarPattern) -> Pat {
+        match g {
+            GuitarPattern::Strum => Pat::Strum,
+            GuitarPattern::Fingerpick | GuitarPattern::Arpeggio => Pat::Fingerpick,
+            GuitarPattern::Travis => Pat::Travis,
+        }
     }
 }
 
-/// `genGuitar(song,form,tl,seed)`.
+/// (slot, stroke, velocity); slots are grid steps of the meter.
+type Pattern = &'static [(f64, Stroke, f64)];
+
+fn gpat(pat: Pat, meter: Meter) -> Pattern {
+    use Stroke::{AltBass as B2, Bass as Bs, Down as D, DownLite as Dl, Up as U, UpLite as Ul, B, E, G};
+    const STRUM_44: Pattern = &[(0.0, D, 0.85), (2.0, D, 0.7), (3.0, U, 0.45), (5.0, U, 0.5), (6.0, D, 0.65), (7.0, U, 0.45)];
+    const STRUM_34: Pattern = &[(0.0, Bs, 0.9), (2.0, D, 0.6), (4.0, D, 0.6), (5.0, U, 0.4)];
+    const STRUM_68: Pattern = &[(0.0, D, 0.85), (2.0, U, 0.4), (3.0, D, 0.7), (4.0, U, 0.4), (5.0, U, 0.45)];
+    const STRUMLITE_44: Pattern = &[(0.0, Bs, 0.85), (2.0, Dl, 0.55), (4.0, B2, 0.75), (6.0, Dl, 0.55), (7.0, Ul, 0.35)];
+    const STRUMLITE_34: Pattern = &[(0.0, Bs, 0.85), (2.0, Dl, 0.5), (4.0, Dl, 0.5)];
+    const STRUMLITE_68: Pattern = &[(0.0, Bs, 0.85), (2.0, Dl, 0.45), (3.0, B2, 0.7), (5.0, Dl, 0.45)];
+    const FP_44: Pattern =
+        &[(0.0, Bs, 0.85), (1.0, G, 0.5), (2.0, B, 0.55), (3.0, E, 0.6), (4.0, B2, 0.75), (5.0, B, 0.5), (6.0, G, 0.5), (7.0, B, 0.5)];
+    const FP_34: Pattern = &[(0.0, Bs, 0.85), (1.0, G, 0.5), (2.0, B, 0.55), (3.0, E, 0.6), (4.0, B, 0.5), (5.0, G, 0.5)];
+    const FP_68: Pattern = &[(0.0, Bs, 0.85), (1.0, G, 0.5), (2.0, B, 0.55), (3.0, E, 0.6), (4.0, B, 0.5), (5.0, G, 0.5)];
+    const TRAVIS_44: Pattern = &[
+        (0.0, Bs, 0.85),
+        (0.0, E, 0.55),
+        (1.0, B, 0.45),
+        (2.0, B2, 0.75),
+        (3.0, G, 0.5),
+        (4.0, Bs, 0.8),
+        (5.0, E, 0.5),
+        (6.0, B2, 0.75),
+        (7.0, B, 0.45),
+    ];
+    const TRAVIS_34: Pattern =
+        &[(0.0, Bs, 0.85), (0.0, E, 0.55), (1.0, B, 0.45), (2.0, B2, 0.7), (3.0, G, 0.5), (4.0, B2, 0.7), (5.0, B, 0.45)];
+    const TRAVIS_68: Pattern =
+        &[(0.0, Bs, 0.85), (0.0, E, 0.5), (1.0, G, 0.45), (2.0, B, 0.5), (3.0, B2, 0.75), (4.0, B, 0.45), (5.0, G, 0.45)];
+    match (pat, meter) {
+        (Pat::Strum, Meter::Four4) => STRUM_44,
+        (Pat::Strum, Meter::Three4) => STRUM_34,
+        (Pat::Strum, Meter::Six8) => STRUM_68,
+        (Pat::StrumLite, Meter::Four4) => STRUMLITE_44,
+        (Pat::StrumLite, Meter::Three4) => STRUMLITE_34,
+        (Pat::StrumLite, Meter::Six8) => STRUMLITE_68,
+        (Pat::Fingerpick, Meter::Four4) => FP_44,
+        (Pat::Fingerpick, Meter::Three4) => FP_34,
+        (Pat::Fingerpick, Meter::Six8) => FP_68,
+        (Pat::Travis, Meter::Four4) => TRAVIS_44,
+        (Pat::Travis, Meter::Three4) => TRAVIS_34,
+        (Pat::Travis, Meter::Six8) => TRAVIS_68,
+    }
+}
+
+/// The accompaniment guitar track: one voicing per chord, the song's
+/// pattern per bar (lighter strums in quiet sections, fingerpicking in the
+/// bridge), strings damped at chord changes, sympathetic open strings.
 pub fn gen_guitar(song: &Song, form: &Form, tl: &Timeline, seed: u32, tuning: &Tuning) -> Vec<f32> {
     let mut r = rng_for(seed, "gtr");
-    let bpb = form.mi.bpb;
-    let sub = form.mi.sub;
+    let bpb = form.bpb();
+    let sub = form.sub();
     let mut ev: [Vec<GEvent>; 6] = Default::default();
     let nbars = form.bars.len();
-    // JS parity: JS caches guitarVoicing results by chord name; guitar_voicing
-    // itself is deterministic and side-effect free, so this is a plain
-    // memoization for speed, not needed for output parity.
-    let mut voicing_cache: std::collections::HashMap<String, [Option<i32>; 6]> = std::collections::HashMap::new();
-    let voicing_of = |ch: &Chord, cache: &mut std::collections::HashMap<String, [Option<i32>; 6]>| -> [Option<i32>; 6] {
-        *cache.entry(ch.name.clone()).or_insert_with(|| guitar_voicing(ch))
+    // Voicings memoised per chord (the search is deterministic).
+    let mut voicing_cache: std::collections::HashMap<ChordId, [Option<i32>; 6]> = std::collections::HashMap::new();
+    let voicing_of = |id: ChordId, cache: &mut std::collections::HashMap<ChordId, [Option<i32>; 6]>| -> [Option<i32>; 6] {
+        *cache.entry(id).or_insert_with(|| guitar_voicing(form.chord(id)))
     };
 
     for bi in 0..nbars {
         let bar = &form.bars[bi];
         let sec = &form.sections[bar.sec];
-        let intensity = sec.intensity;
-        let mut style = song.guitar.clone();
-        if style == "strum" && intensity <= 1 {
-            style = "strumLite".to_string();
+        let intensity = sec.intensity.level();
+        let mut style = Pat::of(song.guitar);
+        if style == Pat::Strum && intensity <= 1 {
+            style = Pat::StrumLite;
         }
-        let cond_style = style == "fingerpick" || style == "arpeggio" || style == "travis";
-        if cond_style && intensity >= 3 && song.band.drums != "none" {
-            // JS parity: `r()<0` is always false (r() is in [0,1)), but the
-            // draw is still consumed because JS evaluates it as part of the
-            // `&&` chain.
+        let cond_style = matches!(style, Pat::Fingerpick | Pat::Travis);
+        if cond_style && intensity >= 3 && song.band.drums != DrumKit::None {
+            // A draw that never switches to a strum (uniform draws are >= 0);
+            // it only keeps the stream in step.
             let draw = r.next();
             if draw < 0.0 {
-                style = "strum".to_string();
+                style = Pat::Strum;
             }
         }
-        if sec.type_ == "bridge" && style == "strum" {
-            style = "fingerpick".to_string();
+        if sec.kind == SectionKind::Bridge && style == Pat::Strum {
+            style = Pat::Fingerpick;
         }
-        let pat = gpat(&style, &song.meter_name);
+        let pat = gpat(style, form.meter);
         let last = bi == nbars - 1;
         let vel_s = 0.72 + 0.1 * intensity as f64;
-        let events: Vec<(f64, &str, f64)> = if last { vec![(0.0, "D", 0.8)] } else { pat.to_vec() };
+        const LAST_BAR: Pattern = &[(0.0, Stroke::Down, 0.8)];
+        let events: Pattern = if last { LAST_BAR } else { pat };
 
-        for (slot, kind, vel) in events {
+        for &(slot, kind, vel) in events {
             let beat = bi as f64 * bpb as f64 + slot / sub as f64;
-            let ch = tl.chord_at(form, beat + 0.01);
-            let v = voicing_of(ch, &mut voicing_cache);
+            let v = voicing_of(tl.chord_id_at(form, beat + 0.01), &mut voicing_cache);
             let t = tl.to_time(beat) + (r.next() - 0.5) * 0.012;
             let vv = vel * vel_s * (0.92 + r.next() * 0.16);
             let bass_str: i32 = v.iter().position(|x| x.is_some()).map(|x| x as i32).unwrap_or(-1);
@@ -261,19 +319,21 @@ pub fn gen_guitar(song: &Song, form: &Form, tl: &Timeline, seed: u32, tuning: &T
                 ev[ss as usize].push(GEvent { t, m: v[ss as usize], v: vv, stop: false });
             };
             match kind {
-                "B" => pick(bass_str, &mut ev),
-                "B2" => pick(alt_str, &mut ev),
-                "g" => pick(3, &mut ev),
-                "b" => pick(4, &mut ev),
-                "e" => pick(5, &mut ev),
-                _ => {
-                    let down = kind == "D" || kind == "d";
-                    let lite = kind == "d" || kind == "u";
-                    let mut strs: Vec<usize> = (0..6usize).filter(|&s| v[s].is_some() && (kind == "D" || s >= if lite { 3 } else { 2 })).collect();
+                Stroke::Bass => pick(bass_str, &mut ev),
+                Stroke::AltBass => pick(alt_str, &mut ev),
+                Stroke::G => pick(3, &mut ev),
+                Stroke::B => pick(4, &mut ev),
+                Stroke::E => pick(5, &mut ev),
+                Stroke::Down | Stroke::Up | Stroke::DownLite | Stroke::UpLite => {
+                    let down = matches!(kind, Stroke::Down | Stroke::DownLite);
+                    let lite = matches!(kind, Stroke::DownLite | Stroke::UpLite);
+                    let mut strs: Vec<usize> = (0..6usize)
+                        .filter(|&s| v[s].is_some() && (kind == Stroke::Down || s >= if lite { 3 } else { 2 }))
+                        .collect();
                     if !down {
                         strs.reverse();
                     }
-                    if kind == "U" || kind == "u" {
+                    if matches!(kind, Stroke::Up | Stroke::UpLite) {
                         strs.truncate(4);
                     }
                     let spread = if last { 0.028 } else if down { 0.009 } else { 0.007 };
@@ -290,7 +350,7 @@ pub fn gen_guitar(song: &Song, form: &Form, tl: &Timeline, seed: u32, tuning: &T
     // chord-change stops: a fretted string stops when the chord changes and
     // its note is not in the new voicing.
     for sg in &tl.segs {
-        let v = voicing_of(&sg.chord, &mut voicing_cache);
+        let v = voicing_of(sg.chord, &mut voicing_cache);
         let t = tl.to_time(sg.b0) - 0.015;
         for s in 0..6 {
             ev[s].push(GEvent { t, m: v[s], v: 0.0, stop: true });

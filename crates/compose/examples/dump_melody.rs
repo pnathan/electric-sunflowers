@@ -7,22 +7,11 @@
 
 use compose::melody::melody_profile;
 use compose::prepare::prepare;
-use compose::song::normalize_song;
-use compose::voices::Voice;
+use song::Voice;
 use std::str::FromStr;
 
 fn demo_song_raw() -> serde_json::Value {
-    let manifest = env!("CARGO_MANIFEST_DIR");
-    let out = std::process::Command::new("node")
-        .arg("-e")
-        .arg(format!(
-            "const {{DEMO_SONG}}=require('{}');console.log(JSON.stringify(DEMO_SONG));",
-            format!("{manifest}/../../src/demo.js")
-        ))
-        .output()
-        .expect("node must be available to load src/demo.js");
-    assert!(out.status.success(), "node failed: {}", String::from_utf8_lossy(&out.stderr));
-    serde_json::from_slice(&out.stdout).unwrap()
+    serde_json::from_str(include_str!("../../engine/src/demo.json")).expect("demo.json is JSON")
 }
 
 fn main() {
@@ -57,7 +46,10 @@ fn main() {
         let text = std::fs::read_to_string(target).expect("read song json");
         serde_json::from_str(&text).expect("parse song json")
     };
-    let song = normalize_song(&raw).expect("normalize song");
+    let (song, repairs) = song::normalize_value(&raw).expect("normalize song");
+    for r in &repairs {
+        eprintln!("# repair: {r}");
+    }
     let prof = melody_profile(seed, &song);
     eprintln!(
         "# shape verse={:?} prechorus={:?} chorus={:?} bridge={:?} inst={:?}",
@@ -67,7 +59,7 @@ fn main() {
 
     for n in &prepared.comp.lead {
         let sec_idx = prepared.form.lines[n.line_idx].sec;
-        let sec_type = &prepared.form.sections[sec_idx].type_;
+        let sec_type = prepared.form.sections[sec_idx].kind;
         let sec_occ = prepared.form.sections[sec_idx].occ;
         let li = prepared.form.lines[n.line_idx].li;
         println!(

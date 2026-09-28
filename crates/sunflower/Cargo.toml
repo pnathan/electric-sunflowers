@@ -6,7 +6,7 @@ publish.workspace = true
 
 [dependencies]
 sfcore = { path = "../core" }
-compose = { path = "../compose" }
+song = { path = "../song" }
 dsp = { path = "../dsp" }
 engine = { path = "../engine" }
 songwriter = { path = "../songwriter" }

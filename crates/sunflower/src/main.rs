@@ -2,17 +2,12 @@
 //! CLAUDE.md at the repo root for what the system is; this binary is the
 //! long-lived product the JS page's audio engine is being ported into.
 
-mod style_glue;
-
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use compose::song::{normalize_song, Song};
-use compose::voices::Voice as ComposeVoice;
-use dsp::mix::TRACKS;
 use export::{BitDepth, ExportOpts, Meta};
 use sfcore::tuning::Tuning;
+use song::{Band, Repair, Song, Voice};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
 #[derive(Parser)]
 #[command(name = "sunflower", about = "Render songs for the Singer-Songwriter Bot")]
@@ -184,14 +179,36 @@ fn slugify(s: &str) -> String {
     }
 }
 
-fn parse_voice(v: Option<&str>) -> Result<Option<ComposeVoice>> {
+fn parse_voice(v: Option<&str>) -> Result<Option<Voice>> {
     match v {
         None => Ok(None),
-        Some(s) if s.eq_ignore_ascii_case("auto") => Ok(None),
-        Some(s) => ComposeVoice::from_str(s)
+        Some(s) if s.trim().eq_ignore_ascii_case("auto") => Ok(None),
+        Some(s) => s
+            .parse::<Voice>()
             .map(Some)
-            .map_err(|_| anyhow!("unknown voice {s:?} (want bass, baritone, tenor, alto or soprano)")),
+            .map_err(|_| anyhow!("unknown voice {s:?} (want {} or auto)", Voice::NAMES.join(", "))),
     }
+}
+
+/// Prints each repair `normalize` or a style made as a warning.
+fn warn_repairs(what: &str, repairs: &[Repair]) {
+    for r in repairs {
+        eprintln!("sunflower: warning: {what}: {r}");
+    }
+}
+
+/// Normalises a song reply, printing the repairs as warnings.
+fn normalize(raw: &serde_json::Value, what: &str) -> Result<Song> {
+    let (song, repairs) = song::normalize_value(raw).map_err(|e| anyhow!("{what} failed to normalize: {e}"))?;
+    warn_repairs(what, &repairs);
+    Ok(song)
+}
+
+/// Applies style `key` to `song`, printing the repairs as warnings.
+fn apply_style(song: &mut Song, key: &str) -> Result<()> {
+    let repairs = songwriter::styles::apply_style(key, song).map_err(|e| anyhow!("{e}"))?;
+    warn_repairs(&format!("style {key}"), &repairs);
+    Ok(())
 }
 
 /// A random 32-bit seed, printed so the run can be reproduced. Not
@@ -217,33 +234,49 @@ fn resolve_seed(seed: Option<u32>) -> u32 {
     }
 }
 
-/// Validates `--no` track names against the vocabulary `TRACKS` uses, and
-/// builds the `enabled(spec)` predicate: `spec.always || song`'s own band
-/// flag for that spec, with any `--no`'d name forced off. Errors (does not
-/// panic) on an unknown track name.
+/// Band part names as `--no` takes them and `dsp::mix::TrackSpec::band`
+/// spells them.
+const BAND_TRACK_NAMES: [&str; 8] = ["drums", "bass", "harmonyGuitar", "harp", "violin", "choir", "harmonies", "doubles"];
+
+/// Whether the band part `name` plays. The drum track is always on: a kit
+/// of `DrumKit::None` renders silence.
+fn band_flag(band: &Band, name: &str) -> bool {
+    match name {
+        "drums" => true,
+        "bass" => band.bass,
+        "harmonyGuitar" => band.harmony_guitar,
+        "harp" => band.harp,
+        "violin" => band.violin,
+        "choir" => band.choir,
+        "harmonies" => band.harmonies,
+        "doubles" => band.doubles,
+        _ => false,
+    }
+}
+
+/// Errors (does not panic) on a `--no` name that is not a band part.
 fn validate_no(no: &[String]) -> Result<()> {
     for n in no {
-        if !style_glue::BAND_TRACK_NAMES.contains(&n.as_str()) {
-            bail!(
-                "unknown --no track {n:?} (want one of: {})",
-                style_glue::BAND_TRACK_NAMES.join(", ")
-            );
+        if !BAND_TRACK_NAMES.contains(&n.as_str()) {
+            bail!("unknown --no track {n:?} (want one of: {})", BAND_TRACK_NAMES.join(", "));
         }
     }
     Ok(())
 }
 
+/// The mixer's track predicate: always-on tracks, and band parts the song
+/// turns on and `--no` does not turn off.
 fn build_enabled(song: &Song, no: &[String]) -> Result<impl Fn(&dsp::mix::TrackSpec) -> bool> {
     validate_no(no)?;
     let disabled: Vec<String> = no.to_vec();
-    let song = song.clone();
+    let band = song.band;
     Ok(move |t: &dsp::mix::TrackSpec| {
         if let Some(b) = t.band {
             if disabled.iter().any(|d| d == b) {
                 return false;
             }
         }
-        t.always || t.band.map(|b| style_glue::song_band_flag(&song, b)).unwrap_or(false)
+        t.always || t.band.is_some_and(|b| band_flag(&band, b))
     })
 }
 
@@ -254,7 +287,7 @@ fn build_enabled(song: &Song, no: &[String]) -> Result<impl Fn(&dsp::mix::TrackS
 fn render_and_mix(
     song: &Song,
     seed: u32,
-    voice: Option<ComposeVoice>,
+    voice: Option<Voice>,
     no: &[String],
     sequential: bool,
 ) -> Result<(Vec<f32>, Vec<f32>)> {
@@ -284,8 +317,8 @@ fn render_and_mix(
 fn style_label(song: &Song) -> String {
     song.style
         .as_deref()
-        .and_then(|key| songwriter::styles::styles().iter().find(|(k, _)| *k == key))
-        .map(|(_, s)| s.label.to_string())
+        .and_then(|key| songwriter::styles::style(key).ok())
+        .map(|s| s.label.to_string())
         .unwrap_or_default()
 }
 
@@ -326,8 +359,7 @@ fn cmd_demo(
 ) -> Result<()> {
     let seed = resolve_seed(seed);
     let voice = parse_voice(voice)?;
-    let raw = engine::demo_song();
-    let song = normalize_song(&raw).map_err(|e| anyhow!("demo song failed to normalize: {e}"))?;
+    let song = normalize(&engine::demo_song(), "demo song")?;
     let (l, r) = render_and_mix(&song, seed, voice, &[], sequential)?;
     write_output(out, &l, &r, &song_meta(&song), opts)
 }
@@ -349,9 +381,9 @@ fn cmd_render(
     let raw: serde_json::Value =
         serde_json::from_str(&text).with_context(|| format!("parsing JSON in {}", song_path.display()))?;
     validate_no(no)?;
-    let mut song = normalize_song(&raw).map_err(|e| anyhow!("song failed to normalize: {e}"))?;
+    let mut song = normalize(&raw, "song")?;
     if let Some(key) = style {
-        style_glue::apply_style_to_song(&mut song, key).map_err(|e| anyhow!(e))?;
+        apply_style(&mut song, key)?;
     }
     let (l, r) = render_and_mix(&song, seed, voice, no, sequential)?;
     write_output(out, &l, &r, &song_meta(&song), opts)
@@ -396,16 +428,15 @@ fn cmd_write(
         .with_context(|| format!("saving raw song JSON to {}", json_path.display()))?;
     eprintln!("sunflower: saved raw song JSON to {}", json_path.display());
 
-    let mut song = normalize_song(&raw).map_err(|e| anyhow!("written song failed to normalize: {e}"))?;
-    style_glue::apply_style_to_song(&mut song, &dir.style)
-        .map_err(|e| anyhow!("applying style {:?} to the written song: {e}", dir.style))?;
+    let mut song = normalize(&raw, "written song")?;
+    apply_style(&mut song, &dir.style).with_context(|| format!("applying style {:?} to the written song", dir.style))?;
 
     println!("title: {}", song.title);
     println!("style: {} ({})", dir.style, dir.label);
     println!("form: {}", dir.form);
-    println!("key: {} {}", pc_name(song.key_pc), song.mode);
-    println!("meter: {}", song.meter_name);
-    println!("tempo: {:.0}", song.tempo);
+    println!("key: {} {}", song.key, song.mode);
+    println!("meter: {}", song.meter);
+    println!("tempo: {:.0}", song.tempo_bpm);
 
     let (l, r) = render_and_mix(&song, seed, voice_enum, &[], sequential)?;
     write_output(&out, &l, &r, &song_meta(&song), opts)
@@ -447,16 +478,25 @@ fn cmd_styles() -> Result<()> {
     Ok(())
 }
 
-fn pc_name(pc: i32) -> &'static str {
-    const NAMES: [&str; 12] =
-        ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-    NAMES[pc.rem_euclid(12) as usize]
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-// Silence an unused-import warning: TRACKS is referenced only through
-// dsp::mix::TRACKS below in tests / future track listing, kept for the
-// `--no` help text's vocabulary check to stay honest against TRACKS itself.
-#[allow(dead_code)]
-fn _assert_track_count() {
-    debug_assert_eq!(TRACKS.len(), style_glue::BAND_TRACK_NAMES.len() + 2);
+    #[test]
+    fn band_names_cover_the_mixer_tracks() {
+        for t in dsp::mix::TRACKS.iter() {
+            match t.band {
+                Some(b) => assert!(BAND_TRACK_NAMES.contains(&b), "{b}"),
+                None => assert!(t.always),
+            }
+        }
+    }
+
+    #[test]
+    fn drums_stay_on_for_a_silent_kit() {
+        let band = Band { drums: song::DrumKit::None, ..Band::default() };
+        assert!(band_flag(&band, "drums"));
+        assert!(!band_flag(&band, "harp"));
+        assert!(!band_flag(&band, "bogus"));
+    }
 }

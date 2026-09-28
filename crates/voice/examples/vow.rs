@@ -2,15 +2,27 @@
 //! sustained vowels (200 Hz-2.5 kHz), against the baritone voice. Prints the
 //! same "mean vowel distance(200-2.5k) dB" line for comparison with node.
 
-use compose::voices::{voice_params, Voice};
+use song::{Phoneme, Voice};
 use dsp::fft::{RealFft, C32};
 use sfcore::rng::rng_for;
 use sfcore::tuning::Tuning;
 use sfcore::SR_F;
 use voice::controls::{VoiceNote, VoiceOpts};
 use voice::synth::render_voice;
+use voice::voice_params;
 
-const VW: [&str; 10] = ["iy", "ih", "eh", "ae", "aa", "ao", "ow", "uw", "ah", "er"];
+const VW: [Phoneme; 10] = [
+    Phoneme::Iy,
+    Phoneme::Ih,
+    Phoneme::Eh,
+    Phoneme::Ae,
+    Phoneme::Aa,
+    Phoneme::Ao,
+    Phoneme::Ow,
+    Phoneme::Uw,
+    Phoneme::Ah,
+    Phoneme::Er,
+];
 const BANDS: [f64; 17] = [
     200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0, 8000.0,
 ];
@@ -35,7 +47,7 @@ fn main() {
             t0: t,
             t1: t + 1.2,
             midi: 52,
-            ph: Some(vec!["hh".to_string(), v.to_string()]),
+            ph: Some(vec![Phoneme::Hh, v]),
             nu: None,
             amp: 1.0,
             phrase_start: false,

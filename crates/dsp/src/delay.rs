@@ -5,8 +5,11 @@
 //!
 //! Read convention for `DelayLine`: push first, then read. After `push(x[n])`,
 //! `read_int(d)` returns `x[n - d]`; `read_int(0)` is the sample just pushed.
-//! A delay beyond the capacity wraps to newer samples (no panic, wrong value);
-//! size the line with `new(max_delay)` for the largest delay the caller reads.
+//! An integer delay beyond the capacity wraps to newer samples (no panic,
+//! wrong value); size the line with `new(max_delay)` for the largest delay
+//! the caller reads. The fractional reads clamp their delay to
+//! `[lo, capacity - 3]` first (NaN reads as `lo`), so every tap they touch is
+//! inside the buffer and the float-to-index cast cannot overflow.
 
 /// Ring buffer of `f32` samples with power-of-two capacity, so index wrap is a
 /// mask instead of a branch or a modulo.
@@ -33,6 +36,16 @@ impl DelayLine {
         self.buf.len()
     }
 
+    /// Clamp a fractional delay to `[lo, capacity - 3]`; NaN gives `lo`.
+    /// `capacity - 3` keeps `floor(d) + 2`, the farthest Lagrange tap, below
+    /// the capacity. `max` then `min` is used instead of `f64::clamp` so NaN
+    /// maps to `lo` (`f64::max` returns the non-NaN operand).
+    #[inline(always)]
+    fn clamp_delay(&self, d: f64, lo: f64) -> f64 {
+        let hi = (self.buf.len() - 3) as f64;
+        d.max(lo).min(hi)
+    }
+
     /// Write one sample and advance.
     #[inline]
     pub fn push(&mut self, x: f32) {
@@ -47,13 +60,13 @@ impl DelayLine {
     }
 
     /// Linear interpolation between `x[n - floor(d)]` and `x[n - floor(d) - 1]`.
-    /// Valid for d >= 0. Its magnitude response is `|cos(w/2)|` at fraction
+    /// `d` is clamped to `[0, capacity - 3]`, NaN to 0. Its magnitude response is `|cos(w/2)|` at fraction
     /// 0.5, so it low-passes by an amount that depends on the fraction; do
     /// not use it inside a loop whose delay is modulated.
     #[inline]
     pub fn read_linear(&self, d: f64) -> f64 {
-        let d = d.max(0.0);
-        let i = d as usize; // floor for d >= 0; NaN maps to 0
+        let d = self.clamp_delay(d, 0.0);
+        let i = d as usize; // floor: d is finite and >= 0
         let f = d - i as f64;
         let a = self.read_int(i) as f64;
         let b = self.read_int(i + 1) as f64;
@@ -64,13 +77,14 @@ impl DelayLine {
     /// Karjalainen, Laine 1996, "Splitting the unit delay", section 3.3).
     /// Taps at integer delays `i-1, i, i+1, i+2` with `i = floor(d)`, so the
     /// delay relative to the first tap is `D = 1 + frac` in [1, 2), the
-    /// centred range with the smallest error. Valid for d >= 1 (smaller `d`
-    /// would read a future sample; it is clamped to 1). Maximally flat at DC;
+    /// centred range with the smallest error. `d` is clamped to
+    /// `[1, capacity - 3]` (a smaller `d` would read a future sample; NaN
+    /// gives 1). Maximally flat at DC;
     /// at 0.25 fs and fraction 0.5 the gain is 0.884 against 0.707 for linear.
     #[inline]
     pub fn read_lagrange3(&self, d: f64) -> f64 {
-        let d = d.max(1.0);
-        let i = d as usize;
+        let d = self.clamp_delay(d, 1.0);
+        let i = d as usize; // floor: d is finite and >= 1
         let f = d - i as f64;
         // Lagrange basis for D = 1 + f over taps at delays 0, 1, 2, 3.
         let fm1 = f - 1.0;

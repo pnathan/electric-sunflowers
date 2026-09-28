@@ -1,15 +1,22 @@
-//! Pitch: chooses a melodic line via Viterbi over (prev, cur) pitch pairs.
-//! Ports `pitchLine` (engine.js).
-//!
-//! JS parity: in the JS source, `U` closes over `pf` although `const pf` is
-//! declared textually after `U`'s definition. This is not a temporal-dead-zone
-//! bug: `U` is only ever *called* (inside `cand.map` building `us`) after the
-//! `pf` declaration has executed, so by call time `pf` already holds its
-//! value. The port simply computes `pf` before calling `U`, which reproduces
-//! the same behavior with no special-casing needed.
+//! Pitch: chooses a melodic line by Viterbi over (previous, current) pitch
+//! pairs, a second-order model: emissions score chord fit, the contour
+//! target, a reference line and the cadence; transitions score interval
+//! size and recovery after leaps.
 
 use sfcore::js::{clamp, round};
 use sfcore::rng::Rng;
+use song::{Pc, PcSet};
+
+/// How a line ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cadence {
+    /// No cadence rule on the last note beyond chord fit.
+    None,
+    /// Half cadence: the last note favours the 5th, 2nd, 3rd or 7th degree.
+    Open,
+    /// Full cadence: the last note favours the tonic.
+    Tonic,
+}
 
 /// The `prof` bag pitchLine reads (`o.prof || {leap:0.3, rep:0.3}`); `noise`
 /// defaults to 0.7 via `pf.noise||0.7` when absent (e.g. instrumental lines
@@ -27,19 +34,21 @@ impl Default for PitchProf {
     }
 }
 
-/// pitchLine's option bag.
+/// One line's pitch problem.
 pub struct PitchOpts<'a> {
     pub n: usize,
     pub onsets: &'a [f64],
     pub durs: &'a [f64],
     pub weights: Option<&'a [f64]>,
-    pub chord_pcs: &'a [Vec<i32>],
-    pub scales: &'a [Vec<i32>],
+    /// Chord tones per note.
+    pub chord_pcs: &'a [PcSet],
+    /// Local scale per note.
+    pub scales: &'a [PcSet],
     pub t: i32,
     pub tonic: i32,
     pub center: f64,
     pub shape: &'a dyn Fn(f64) -> f64,
-    pub cadence: &'a str,
+    pub cadence: Cadence,
     pub reference: Option<&'a [i32]>,
     pub rng: &'a mut Rng,
     pub prev_end: Option<i32>,
@@ -48,7 +57,7 @@ pub struct PitchOpts<'a> {
     pub hook: i32,
 }
 
-/// pitchLine(o)
+/// The best-scoring pitch line (MIDI per note).
 pub fn pitch_line(o: &mut PitchOpts) -> Vec<i32> {
     let n = o.n;
     let lo = o.t - 5;
@@ -57,7 +66,7 @@ pub fn pitch_line(o: &mut PitchOpts) -> Vec<i32> {
     for i in 0..n {
         let mut c = Vec::new();
         for m in lo..=hi {
-            if o.scales[i].contains(&m.rem_euclid(12)) {
+            if o.scales[i].contains(Pc::new(m)) {
                 c.push(m);
             }
         }
@@ -70,7 +79,7 @@ pub fn pitch_line(o: &mut PitchOpts) -> Vec<i32> {
 
     let u = |i: usize, m: i32, o: &mut PitchOpts, pf: PitchProf| -> f64 {
         let pc = m.rem_euclid(12);
-        let ct = o.chord_pcs[i].contains(&pc);
+        let ct = o.chord_pcs[i].contains(Pc::new(m));
         let strong = o.weights.map(|w| w[i]).unwrap_or(0.5) >= 0.7 || o.durs[i] >= 1.5;
         let mut s = if strong {
             if ct { 2.4 } else { -2.4 }
@@ -98,7 +107,7 @@ pub fn pitch_line(o: &mut PitchOpts) -> Vec<i32> {
             }
         }
         if i == n - 1 {
-            if o.cadence == "tonic" {
+            if o.cadence == Cadence::Tonic {
                 s += if pc == o.tonic {
                     3.5
                 } else if ct {
@@ -106,7 +115,7 @@ pub fn pitch_line(o: &mut PitchOpts) -> Vec<i32> {
                 } else {
                     -3.0
                 };
-            } else if o.cadence == "open" {
+            } else if o.cadence == Cadence::Open {
                 if ct
                     && [
                         (o.tonic + 7).rem_euclid(12),
@@ -291,8 +300,8 @@ mod tests {
 
     #[test]
     fn pitch_line_single() {
-        let scales = vec![vec![0, 2, 4, 5, 7, 9, 11]];
-        let chords = vec![vec![0, 4, 7]];
+        let scales = vec![song::Mode::Major.scale()];
+        let chords = vec![PcSet::from_intervals(Pc::C, &[0, 4, 7])];
         let onsets = vec![0.0];
         let durs = vec![1.0];
         let mut rng = rng_for(1, "t");
@@ -308,7 +317,7 @@ mod tests {
             tonic: 0,
             center: 60.0,
             shape: &shape,
-            cadence: "tonic",
+            cadence: Cadence::Tonic,
             reference: None,
             rng: &mut rng,
             prev_end: None,
@@ -322,9 +331,8 @@ mod tests {
 
     #[test]
     fn pitch_line_multi() {
-        let scale = vec![0, 2, 4, 5, 7, 9, 11];
-        let scales = vec![scale.clone(); 4];
-        let chords = vec![vec![0, 4, 7]; 4];
+        let scales = vec![song::Mode::Major.scale(); 4];
+        let chords = vec![PcSet::from_intervals(Pc::C, &[0, 4, 7]); 4];
         let onsets = vec![0.0, 1.0, 2.0, 3.0];
         let durs = vec![1.0, 1.0, 1.0, 1.0];
         let mut rng = rng_for(2, "t2");
@@ -340,7 +348,7 @@ mod tests {
             tonic: 0,
             center: 60.0,
             shape: &shape,
-            cadence: "tonic",
+            cadence: Cadence::Tonic,
             reference: None,
             rng: &mut rng,
             prev_end: None,

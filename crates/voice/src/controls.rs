@@ -1,46 +1,32 @@
-//! splitPh, nucTargets, consDur, voiceControls.
-//! Ports engine.js lines ~425-537.
+//! Articulation: per-frame control tracks (voicing, aspiration, frication,
+//! formants, pitch) from sung notes, by synthesis by rule with targets and
+//! transitions (Holmes, Mattingly and Shearme 1964; Klatt 1987). CV formant
+//! transitions start from the consonant locus (Delattre, Liberman and
+//! Cooper 1955).
 
 use sfcore::js::{self, clamp, f32r};
 use sfcore::rng::Rng;
 use sfcore::tuning::Tuning;
+use song::Phoneme;
 
-use compose::phonetics::{cons_map_cached, diph_map_cached, is_vowel, vowel_map_cached, Cons};
-use compose::prepare::VocalNote;
+use crate::params::VoiceParams;
+use crate::phoneme::{consonant, vowel_formants, ConsClass, Consonant, Locus};
 
-/// renderVoice's / voiceControls's per-note input. JS: `{t0,t1,midi,ph,nu,amp,
-/// phraseStart,phraseEnd,grace,stress}`. `ph` is the phoneme list for a lead/
-/// harmony/double note; `nu` is a vowel-nucleus list used instead of `ph` for
-/// choir notes (`ph` is then null/None).
+/// One sung note. `ph` is the syllable's phonemes (lead, harmony, doubles);
+/// `nu` replaces the vowel nucleus (the choir sings a vowel with `ph`
+/// `None`).
 #[derive(Clone, Debug)]
 pub struct VoiceNote {
     pub t0: f64,
     pub t1: f64,
     pub midi: i32,
-    pub ph: Option<Vec<String>>,
-    pub nu: Option<Vec<String>>,
+    pub ph: Option<Vec<Phoneme>>,
+    pub nu: Option<Vec<Phoneme>>,
     pub amp: f64,
     pub phrase_start: bool,
     pub phrase_end: bool,
     pub grace: Option<i32>,
     pub stress: bool,
-}
-
-impl From<&VocalNote> for VoiceNote {
-    fn from(n: &VocalNote) -> Self {
-        VoiceNote {
-            t0: n.t0,
-            t1: n.t1,
-            midi: n.midi,
-            ph: Some(n.ph.clone()),
-            nu: None,
-            amp: n.amp,
-            phrase_start: n.phrase_start,
-            phrase_end: n.phrase_end,
-            grace: n.grace,
-            stress: n.stress,
-        }
-    }
 }
 
 /// The opts bag renderVoice/voiceControls read. JS reads some fields with
@@ -147,21 +133,22 @@ pub fn resolve_rng(opts: &mut VoiceOpts) {
     }
 }
 
-/// splitPh(ph) result.
+/// A syllable split into onset, nucleus and coda.
 #[derive(Clone, Debug, Default)]
 pub struct SplitPh {
-    pub on: Vec<String>,
-    pub nu: Vec<String>,
-    pub co: Vec<String>,
+    pub on: Vec<Phoneme>,
+    pub nu: Vec<Phoneme>,
+    pub co: Vec<Phoneme>,
 }
 
-/// splitPh(ph): onset consonants, the vowel-nucleus run (first vowel through
-/// last vowel, inclusive of anything in between), and coda consonants.
-pub fn split_ph(ph: &[String]) -> SplitPh {
+/// Onset consonants, the nucleus (first vowel through last vowel, with
+/// anything between), and coda consonants. With no vowel the nucleus is
+/// /ah/ and every phoneme is coda.
+pub fn split_ph(ph: &[Phoneme]) -> SplitPh {
     let mut i0: i32 = -1;
     let mut i1: i32 = -1;
     for (i, p) in ph.iter().enumerate() {
-        if is_vowel(p) {
+        if p.is_vowel() {
             if i0 < 0 {
                 i0 = i as i32;
             }
@@ -169,7 +156,7 @@ pub fn split_ph(ph: &[String]) -> SplitPh {
         }
     }
     if i0 < 0 {
-        return SplitPh { on: vec![], nu: vec!["ah".to_string()], co: ph.to_vec() };
+        return SplitPh { on: vec![], nu: vec![Phoneme::Ah], co: ph.to_vec() };
     }
     let i0 = i0 as usize;
     let i1 = i1 as usize;
@@ -180,67 +167,83 @@ pub fn split_ph(ph: &[String]) -> SplitPh {
     }
 }
 
-/// One nucTargets() output entry.
+/// Kind of a nucleus target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NucKind {
+    Vowel,
+    Sonorant,
+    Nasal,
+}
+
+impl NucKind {
+    fn seg(self) -> SegKind {
+        match self {
+            NucKind::Vowel => SegKind::Vow,
+            NucKind::Sonorant => SegKind::Son,
+            NucKind::Nasal => SegKind::Nas,
+        }
+    }
+}
+
+/// One formant target of a nucleus.
 #[derive(Clone, Copy, Debug)]
 pub struct NucTarget {
     pub f: [f64; 3],
-    pub k: &'static str,
+    pub k: NucKind,
+    /// Voicing amplitude of a sonorant or nasal target.
     pub av: Option<f64>,
 }
 
-/// nucTargets(nu): expands a vowel-nucleus phoneme list into formant/kind
-/// targets, splitting any diphthong into its two vowel halves and allowing a
-/// nasal/sonorant coda-ish phoneme embedded in the nucleus run through.
-pub fn nuc_targets(nu: &[String]) -> Vec<NucTarget> {
-    let vowels = vowel_map_cached();
-    let diphs = diph_map_cached();
-    let conses = cons_map_cached();
+const AH: [f64; 3] = match vowel_formants(Phoneme::Ah) {
+    Some(f) => f,
+    None => [640.0, 1190.0, 2390.0],
+};
+
+/// The formant targets of a nucleus: a diphthong gives its two vowel
+/// targets, a sonorant or nasal inside the nucleus gives its own; other
+/// consonants give none. An empty result is /ah/.
+pub fn nuc_targets(nu: &[Phoneme]) -> Vec<NucTarget> {
     let mut out = Vec::new();
-    for p in nu {
-        if let Some(pair) = diphs.get(p.as_str()) {
+    for &p in nu {
+        if let Some(pair) = p.diphthong_targets() {
             for v in pair {
-                out.push(NucTarget { f: vowels[v], k: "vow", av: None });
+                if let Some(f) = vowel_formants(v) {
+                    out.push(NucTarget { f, k: NucKind::Vowel, av: None });
+                }
             }
-        } else if let Some(f) = vowels.get(p.as_str()) {
-            out.push(NucTarget { f: *f, k: "vow", av: None });
-        } else if let Some(c) = conses.get(p.as_str()) {
-            if c.t == "son" || c.t == "nas" {
-                out.push(NucTarget { f: c.f.unwrap_or([0.0, 0.0, 0.0]), k: cons_kind(c.t), av: c.av });
+        } else if let Some(f) = vowel_formants(p) {
+            out.push(NucTarget { f, k: NucKind::Vowel, av: None });
+        } else if let Some(c) = consonant(p) {
+            let k = match c.class {
+                ConsClass::Sonorant => Some(NucKind::Sonorant),
+                ConsClass::Nasal => Some(NucKind::Nasal),
+                _ => None,
+            };
+            if let Some(k) = k {
+                out.push(NucTarget { f: c.formants, k, av: Some(c.av) });
             }
         }
     }
     if out.is_empty() {
-        out.push(NucTarget { f: vowels["ah"], k: "vow", av: None });
+        out.push(NucTarget { f: AH, k: NucKind::Vowel, av: None });
     }
     out
 }
 
-fn cons_kind(t: &str) -> &'static str {
-    match t {
-        "son" => "son",
-        "nas" => "nas",
-        other => panic!("cons_kind: unexpected consonant type {other}"),
-    }
-}
-
-/// consDur(p,coda): a consonant's nominal duration.
-pub fn cons_dur(p: &str, coda: bool) -> f64 {
-    let conses = cons_map_cached();
-    let c = match conses.get(p) {
-        Some(c) => c,
-        None => return 0.0,
+/// A consonant's nominal duration in seconds: stops are closure plus a 12
+/// ms burst plus 24 ms aspiration when voiceless in an onset; affricates
+/// closure plus 8 ms burst plus frication; a coda nasal 85 ms; others their
+/// table duration. Vowels have none.
+pub fn cons_dur(p: Phoneme, coda: bool) -> f64 {
+    let Some(c) = consonant(p) else {
+        return 0.0;
     };
-    if c.t == "stop" {
-        let cl = c.cl.unwrap_or(0.0);
-        return cl + 0.012 + if coda { 0.0 } else if c.v == Some(0) { 0.024 } else { 0.0 };
+    match c.class {
+        ConsClass::Stop => c.closure + 0.012 + if coda || c.voiced { 0.0 } else { 0.024 },
+        ConsClass::Affricate => c.closure + 0.008 + c.fric_dur,
+        ConsClass::Nasal if coda => 0.085,
+        _ => c.dur,
     }
-    if c.t == "aff" {
-        return c.cl.unwrap_or(0.0) + 0.008 + c.fr.unwrap_or(0.0);
-    }
-    if coda && c.t == "nas" {
-        return 0.085;
-    }
-    c.d
 }
 
 /// gauss(r): Box-Muller normal deviate, ported here since sfcore::rng::Rng
@@ -254,8 +257,7 @@ fn smoothstep(a: f64, b: f64, x: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// voiceControls's per-frame control tracks. One frame per HOP samples;
-/// stored as Float32Array parity (f32, each write rounded through f32r).
+/// Per-frame control tracks, one frame per HOP samples.
 pub struct VoiceControls {
     pub av: Vec<f32>,
     pub ah: Vec<f32>,
@@ -301,23 +303,12 @@ struct Seg {
     nas: Option<f64>,
 }
 
-fn seg_kind(k: &str) -> SegKind {
-    match k {
-        "vow" => SegKind::Vow,
-        "son" => SegKind::Son,
-        "nas" => SegKind::Nas,
-        "fric" => SegKind::Fric,
-        "asp" => SegKind::Asp,
-        "aspr" => SegKind::Aspr,
-        "burst" => SegKind::Burst,
-        "clos" => SegKind::Clos,
-        "sil" => SegKind::Sil,
-        "breath" => SegKind::Breath,
-        other => panic!("seg_kind: unknown segment kind {other}"),
-    }
+/// A segment with every optional control unset.
+fn blank(k: SegKind, f: [f64; 3]) -> Seg {
+    Seg { t0: 0.0, t1: 0.0, k, f, av: None, af: None, ff: None, fbw: None, ah: None, b1x: None, vb: None, nas: None }
 }
 
-/// Per-note onset/coda timing info computed in voiceControls's "pass 1".
+/// Per-note onset and coda timing.
 struct NoteInfo {
     sp: SplitPh,
     on: Vec<f64>,
@@ -326,11 +317,14 @@ struct NoteInfo {
     on_start: f64,
 }
 
-/// voiceControls(notes,P,nF,opts): builds per-frame articulation/formant
-/// control tracks for one voice line.
+/// Control tracks of `n_f` frames for one singer's notes: segments per
+/// note (onset consonants, CV transition, nucleus, coda, silence or a
+/// breath before a phrase), rasterised per frame, then per-note swell and
+/// phrase-end fade, pitch with scoop and grace, zero-phase smoothing, a
+/// one-sided pitch glide, vibrato and a random-walk drift.
 pub fn voice_controls(
     notes: &[VoiceNote],
-    p: &compose::voices::VoiceParams,
+    p: &VoiceParams,
     n_f: usize,
     opts: &mut VoiceOpts,
     tuning: &Tuning,
@@ -361,22 +355,6 @@ pub fn voice_controls(
             segs.push(s);
         }
     };
-    // Convenience constructor: most fields default to None.
-    let blank = |k: &str, f: [f64; 3]| Seg {
-        t0: 0.0,
-        t1: 0.0,
-        k: seg_kind(k),
-        f,
-        av: None,
-        af: None,
-        ff: None,
-        fbw: None,
-        ah: None,
-        b1x: None,
-        vb: None,
-        nas: None,
-    };
-
     // pass 1: onset timing
     let mut info: Vec<NoteInfo> = notes
         .iter()
@@ -384,14 +362,14 @@ pub fn voice_controls(
             let mut sp = if let Some(ph) = &n.ph {
                 split_ph(ph)
             } else {
-                SplitPh { on: vec![], nu: n.nu.clone().unwrap_or_else(|| vec!["uw".to_string()]), co: vec![] }
+                SplitPh { on: vec![], nu: n.nu.clone().unwrap_or_else(|| vec![Phoneme::Uw]), co: vec![] }
             };
             if let Some(nu) = &n.nu {
                 sp.nu = nu.clone();
             }
             let cs = or_falsy(Some(p.cons_scale), 1.0);
-            let on: Vec<f64> = sp.on.iter().map(|ph| cons_dur(ph, false) * cs).collect();
-            let co: Vec<f64> = sp.co.iter().map(|ph| cons_dur(ph, true) * cs).collect();
+            let on: Vec<f64> = sp.on.iter().map(|&ph| cons_dur(ph, false) * cs).collect();
+            let co: Vec<f64> = sp.co.iter().map(|&ph| cons_dur(ph, true) * cs).collect();
             NoteInfo { sp, on, co, on_s: 1.0, on_start: 0.0 }
         })
         .collect();
@@ -402,12 +380,12 @@ pub fn voice_controls(
         let (single_td, pv_co_empty) = {
             let i = &info[k];
             let pi = &info[k - 1];
-            let single_td = i.sp.on.len() == 1 && (i.sp.on[0] == "t" || i.sp.on[0] == "d");
+            let single_td = i.sp.on.len() == 1 && matches!(i.sp.on[0], Phoneme::T | Phoneme::D);
             (single_td, pi.sp.co.is_empty())
         };
         if single_td && !n.stress && !n.phrase_start && pv_co_empty && n.t0 - pv.t1 < 0.15 {
-            info[k].sp.on = vec!["dx".to_string()];
-            info[k].on = vec![cons_dur("dx", false)];
+            info[k].sp.on = vec![Phoneme::Dx];
+            info[k].on = vec![cons_dur(Phoneme::Dx, false)];
         }
     }
 
@@ -434,18 +412,17 @@ pub fn voice_controls(
         let on_ph = &info[k].sp.on;
         let on_dur = &info[k].on;
         let on_s = info[k].on_s;
-        for (j, ph) in on_ph.iter().enumerate() {
+        for (j, &ph) in on_ph.iter().enumerate() {
             let d = on_dur[j] * on_s;
             emit_cons(&mut segs, &put, ph, t, t + d, vf0, n.amp, false, p, tuning, &sc);
             t += d;
         }
-        let last_on = info[k].sp.on.last().cloned();
-        let conses = cons_map_cached();
-        let lc = last_on.as_ref().and_then(|ph| conses.get(ph.as_str()));
-        let loc_f: Option<[f64; 3]> = lc.filter(|c| c.t == "stop" || c.t == "aff").map(|c| match &c.loc {
-            Some(Some(loc)) => sc(*loc),
-            _ => [250.0 * p.f1s, (2300.0f64).min(vf0[1] * 1.1), vf0[2]],
-        });
+        let lc = info[k].sp.on.last().and_then(|&ph| consonant(ph));
+        let loc_f: Option<[f64; 3]> =
+            lc.filter(|c| matches!(c.class, ConsClass::Stop | ConsClass::Affricate)).map(|c| match c.locus {
+                Locus::At(loc) => sc(loc),
+                Locus::Velar => [250.0 * p.f1s, (2300.0f64).min(vf0[1] * 1.1), vf0[2]],
+            });
 
         // coda
         let nx = notes.get(k + 1);
@@ -467,7 +444,7 @@ pub fn voice_controls(
         let mut n_start = n.t0;
         if tuning.vf.trans != 0.0 {
             if let Some(loc_f) = loc_f {
-                if vt[0].k == "vow" {
+                if vt[0].k == NucKind::Vowel {
                     let tt = (0.05f64).min((coda_start - n.t0) * 0.4);
                     let s = 5;
                     for j in 0..s {
@@ -478,7 +455,7 @@ pub fn voice_controls(
                             &mut segs,
                             n.t0 + tt * j as f64 / s as f64,
                             n.t0 + tt * (j as f64 + 1.0) / s as f64,
-                            Seg { av: Some(n.amp * (0.7 + 0.3 * a)), ..blank("vow", f) },
+                            Seg { av: Some(n.amp * (0.7 + 0.3 * a)), ..blank(SegKind::Vow, f) },
                         );
                     }
                     n_start = n.t0 + tt;
@@ -492,8 +469,8 @@ pub fn voice_controls(
                 coda_start,
                 Seg {
                     av: Some(n.amp * vt[0].av.unwrap_or(1.0)),
-                    nas: Some(if vt[0].k == "nas" { 1.0 } else { 0.0 }),
-                    ..blank(vt[0].k, sc(vt[0].f))
+                    nas: Some(if vt[0].k == NucKind::Nasal { 1.0 } else { 0.0 }),
+                    ..blank(vt[0].k.seg(), sc(vt[0].f))
                 },
             );
         } else {
@@ -503,7 +480,7 @@ pub fn voice_controls(
                 &mut segs,
                 n_start,
                 coda_start - tail,
-                Seg { av: Some(n.amp), ..blank("vow", sc(vt[0].f)) },
+                Seg { av: Some(n.amp), ..blank(SegKind::Vow, sc(vt[0].f)) },
             );
             for j in 1..vt.len() {
                 let a = coda_start - tail + (j - 1) as f64 * each;
@@ -513,8 +490,8 @@ pub fn voice_controls(
                     a + each,
                     Seg {
                         av: Some(n.amp * vt[j].av.unwrap_or(1.0)),
-                        nas: Some(if vt[j].k == "nas" { 1.0 } else { 0.0 }),
-                        ..blank(vt[j].k, sc(vt[j].f))
+                        nas: Some(if vt[j].k == NucKind::Nasal { 1.0 } else { 0.0 }),
+                        ..blank(vt[j].k.seg(), sc(vt[j].f))
                     },
                 );
             }
@@ -522,7 +499,7 @@ pub fn voice_controls(
         t = coda_start;
         let co_ph = &info[k].sp.co;
         let co_dur = &info[k].co;
-        for (j, ph) in co_ph.iter().enumerate() {
+        for (j, &ph) in co_ph.iter().enumerate() {
             let d = co_dur[j] * s2;
             emit_cons(&mut segs, &put, ph, t, t + d, vfl, n.amp, true, p, tuning, &sc);
             t += d;
@@ -537,16 +514,16 @@ pub fn voice_controls(
                 vfl
             };
             if nx.map(|nx| nx.phrase_start).unwrap_or(false) && next_on - coda_end > 0.4 && !opts.no_breath {
-                put(&mut segs, coda_end, next_on - 0.28, Seg { ..blank("sil", nf) });
+                put(&mut segs, coda_end, next_on - 0.28, blank(SegKind::Sil, nf));
                 put(
                     &mut segs,
                     next_on - 0.28,
                     next_on - 0.04,
-                    Seg { ah: None, ..blank("breath", sc([620.0, 1200.0, 2400.0])) },
+                    blank(SegKind::Breath, sc([620.0, 1200.0, 2400.0])),
                 );
-                put(&mut segs, next_on - 0.04, next_on, Seg { ..blank("sil", nf) });
+                put(&mut segs, next_on - 0.04, next_on, blank(SegKind::Sil, nf));
             } else {
-                put(&mut segs, coda_end, next_on, Seg { ..blank("sil", nf) });
+                put(&mut segs, coda_end, next_on, blank(SegKind::Sil, nf));
             }
         }
     }
@@ -731,78 +708,65 @@ pub fn voice_controls(
 fn emit_cons(
     segs: &mut Vec<Seg>,
     put: &dyn Fn(&mut Vec<Seg>, f64, f64, Seg),
-    ph: &str,
+    ph: Phoneme,
     t0: f64,
     t1: f64,
     vf: [f64; 3],
     amp: f64,
     coda: bool,
-    p: &compose::voices::VoiceParams,
+    p: &VoiceParams,
     tuning: &Tuning,
     sc: &dyn Fn([f64; 3]) -> [f64; 3],
 ) {
-    let conses = cons_map_cached();
-    let c: &Cons = match conses.get(ph) {
-        Some(c) => c,
-        None => return,
-    };
-    let blank = |k: &str, f: [f64; 3]| Seg {
-        t0: 0.0,
-        t1: 0.0,
-        k: seg_kind(k),
-        f,
-        av: None,
-        af: None,
-        ff: None,
-        fbw: None,
-        ah: None,
-        b1x: None,
-        vb: None,
-        nas: None,
+    let Some(c): Option<&Consonant> = consonant(ph) else {
+        return;
     };
 
-    if c.t == "son" || c.t == "nas" {
-        let f = sc(c.f.unwrap_or([0.0, 0.0, 0.0]));
-        let f = [0, 1, 2].map(|i| f[i] * 0.75 + vf[i] * 0.25);
-        put(
-            segs,
-            t0,
-            t1,
-            Seg { av: Some(amp * c.av.unwrap_or(0.0)), nas: Some(if c.t == "nas" { 1.0 } else { 0.0 }), ..blank(c.t, f) },
-        );
-        return;
+    match c.class {
+        ConsClass::Sonorant | ConsClass::Nasal => {
+            let nasal = c.class == ConsClass::Nasal;
+            let f = sc(c.formants);
+            let f = [0, 1, 2].map(|i| f[i] * 0.75 + vf[i] * 0.25);
+            let k = if nasal { SegKind::Nas } else { SegKind::Son };
+            put(segs, t0, t1, Seg { av: Some(amp * c.av), nas: Some(if nasal { 1.0 } else { 0.0 }), ..blank(k, f) });
+            return;
+        }
+        ConsClass::Fricative => {
+            put(
+                segs,
+                t0,
+                t1,
+                Seg {
+                    av: Some(if c.voiced { amp * c.vv } else { 0.0 }),
+                    af: Some(c.af * amp),
+                    ff: Some(c.ff),
+                    fbw: Some(c.bw),
+                    ..blank(SegKind::Fric, vf)
+                },
+            );
+            return;
+        }
+        ConsClass::Aspirate => {
+            put(segs, t0, t1, Seg { ah: Some(0.5 * amp), ..blank(SegKind::Asp, vf) });
+            return;
+        }
+        ConsClass::Stop | ConsClass::Affricate => {}
     }
-    if c.t == "fric" {
-        put(
-            segs,
-            t0,
-            t1,
-            Seg {
-                av: Some(if c.v == Some(1) { amp * c.vv.unwrap_or(0.35) } else { 0.0 }),
-                af: Some(c.af.unwrap_or(0.0) * amp),
-                ff: c.ff,
-                fbw: c.bw,
-                ..blank("fric", vf)
-            },
-        );
-        return;
-    }
-    if c.t == "asp" {
-        put(segs, t0, t1, Seg { ah: Some(0.5 * amp), ..blank("asp", vf) });
-        return;
-    }
-    let loc = match &c.loc {
-        Some(Some(loc)) => sc(*loc),
-        _ => [250.0 * p.f1s, (2300.0f64).min(vf[1] * 1.1), vf[2]],
+    let loc = match c.locus {
+        Locus::At(loc) => sc(loc),
+        Locus::Velar => [250.0 * p.f1s, (2300.0f64).min(vf[1] * 1.1), vf[2]],
     };
     let cf = [0, 1, 2].map(|i| loc[i] * 0.6 + vf[i] * 0.4);
-    // JS: `c.loc?c.ff:...` -- c.loc is null (falsy) for k/g even though the
-    // JS object literal still has the key; only Some(Some(_)) is truthy.
-    let ff = if matches!(c.loc, Some(Some(_))) { c.ff.unwrap_or(0.0) } else if vf[1] > 1500.0 { 3000.0 } else { 1800.0 };
+    // Velar bursts follow the vowel: high for front vowels, low for back.
+    let ff = match c.locus {
+        Locus::At(_) => c.ff,
+        Locus::Velar if vf[1] > 1500.0 => 3000.0,
+        Locus::Velar => 1800.0,
+    };
 
-    if c.t == "stop" && tuning.vf.legacy != 0.0 {
-        let cl = (t1 - t0) * (c.cl.unwrap_or(0.0) / cons_dur(ph, coda));
-        put(segs, t0, t0 + cl, Seg { av: Some(if c.v == Some(1) { amp * 0.1 } else { 0.0 }), ..blank("clos", cf) });
+    if c.class == ConsClass::Stop && tuning.vf.legacy != 0.0 {
+        let cl = (t1 - t0) * (c.closure / cons_dur(ph, coda));
+        put(segs, t0, t0 + cl, Seg { av: Some(if c.voiced { amp * 0.1 } else { 0.0 }), ..blank(SegKind::Clos, cf) });
         let b = t0 + cl;
         put(
             segs,
@@ -811,39 +775,39 @@ fn emit_cons(
             Seg {
                 af: Some(if coda { 0.4 } else { 0.7 } * amp * tuning.vf.burst),
                 ff: Some(ff),
-                fbw: c.bw,
+                fbw: Some(c.bw),
                 ah: Some(0.12 * amp),
-                ..blank("burst", cf)
+                ..blank(SegKind::Burst, cf)
             },
         );
-        if !coda && c.v != Some(1) {
+        if !coda && !c.voiced {
             put(
                 segs,
                 b + 0.012,
                 t1,
-                Seg { ah: Some(0.4 * amp * tuning.vf.asp), b1x: Some(320.0), ..blank("aspr", vf) },
+                Seg { ah: Some(0.4 * amp * tuning.vf.asp), b1x: Some(320.0), ..blank(SegKind::Aspr, vf) },
             );
         }
         return;
     }
-    if c.t == "stop" {
-        let cl = (t1 - t0) * (c.cl.unwrap_or(0.0) / cons_dur(ph, coda));
+    if c.class == ConsClass::Stop {
+        let cl = (t1 - t0) * (c.closure / cons_dur(ph, coda));
         put(
             segs,
             t0,
             t0 + cl,
             Seg {
-                vb: Some(if c.v == Some(1) { amp * tuning.vbg * if c.flap == Some(1) { 1.3 } else { 1.0 } } else { 0.0 }),
-                ..blank("clos", cf)
+                vb: Some(if c.voiced { amp * tuning.vbg * if c.flap { 1.3 } else { 1.0 } } else { 0.0 }),
+                ..blank(SegKind::Clos, cf)
             },
         );
         let b = t0 + cl;
-        let bd = if c.v == Some(1) { 0.005 } else { 0.007 };
+        let bd = if c.voiced { 0.005 } else { 0.007 };
         let af_val = if coda {
             0.12
-        } else if c.flap == Some(1) {
+        } else if c.flap {
             0.05
-        } else if c.v == Some(1) {
+        } else if c.voiced {
             tuning.bd_v
         } else {
             tuning.bd_t
@@ -855,56 +819,55 @@ fn emit_cons(
             Seg {
                 af: Some(af_val * amp * tuning.bst),
                 ff: Some(ff),
-                fbw: c.bw.map(|x| x * 0.7),
-                ah: Some(if c.v == Some(1) { 0.03 } else { 0.05 } * amp),
+                fbw: Some(c.bw * 0.7),
+                ah: Some(if c.voiced { 0.03 } else { 0.05 } * amp),
                 b1x: Some(250.0),
-                ..blank("burst", cf)
+                ..blank(SegKind::Burst, cf)
             },
         );
-        if !coda && c.v != Some(1) {
+        if !coda && !c.voiced {
             let f = [0, 1, 2].map(|i| if i == 0 { vf[i] } else { vf[i] * 0.97 });
-            put(segs, b + bd, t1, Seg { ah: Some(0.6 * amp * tuning.aspg), b1x: Some(320.0), ..blank("aspr", f) });
-        } else if !coda && c.v == Some(1) && t1 > b + bd {
+            put(segs, b + bd, t1, Seg { ah: Some(0.6 * amp * tuning.aspg), b1x: Some(320.0), ..blank(SegKind::Aspr, f) });
+        } else if !coda && c.voiced && t1 > b + bd {
             let f = [0, 1, 2].map(|i| cf[i] + (vf[i] - cf[i]) * 0.3);
-            put(segs, b + bd, t1, Seg { av: Some(amp * 0.55), ..blank("vow", f) });
+            put(segs, b + bd, t1, Seg { av: Some(amp * 0.55), ..blank(SegKind::Vow, f) });
         }
         return;
     }
-    if c.t == "aff" {
-        let tot = t1 - t0;
-        let cl = tot * c.cl.unwrap_or(0.0) / cons_dur(ph, coda);
-        put(segs, t0, t0 + cl, Seg { av: Some(if c.v == Some(1) { amp * 0.1 } else { 0.0 }), ..blank("clos", cf) });
-        let burst_dur = tot * 0.008 / cons_dur(ph, coda);
-        put(
-            segs,
-            t0 + cl,
-            t0 + cl + burst_dur,
-            Seg { af: Some(0.6 * amp), ff: c.ff, fbw: c.bw, ..blank("burst", cf) },
-        );
-        put(
-            segs,
-            t0 + cl + burst_dur,
-            t1,
-            Seg {
-                af: Some(c.af.unwrap_or(0.0) * amp),
-                ff: c.ff,
-                fbw: c.bw,
-                av: Some(if c.v == Some(1) { amp * 0.3 } else { 0.0 }),
-                ..blank("fric", vf)
-            },
-        );
-    }
+    // Affricate.
+    let tot = t1 - t0;
+    let cl = tot * c.closure / cons_dur(ph, coda);
+    put(segs, t0, t0 + cl, Seg { av: Some(if c.voiced { amp * 0.1 } else { 0.0 }), ..blank(SegKind::Clos, cf) });
+    let burst_dur = tot * 0.008 / cons_dur(ph, coda);
+    put(
+        segs,
+        t0 + cl,
+        t0 + cl + burst_dur,
+        Seg { af: Some(0.6 * amp), ff: Some(c.ff), fbw: Some(c.bw), ..blank(SegKind::Burst, cf) },
+    );
+    put(
+        segs,
+        t0 + cl + burst_dur,
+        t1,
+        Seg {
+            af: Some(c.af * amp),
+            ff: Some(c.ff),
+            fbw: Some(c.bw),
+            av: Some(if c.voiced { amp * 0.3 } else { 0.0 }),
+            ..blank(SegKind::Fric, vf)
+        },
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn s(v: &str) -> String {
-        v.to_string()
+    fn s(v: &str) -> Phoneme {
+        Phoneme::from_symbol(v).expect("known symbol")
     }
-    fn ph(v: &[&str]) -> Vec<String> {
-        v.iter().map(|x| x.to_string()).collect()
+    fn ph(v: &[&str]) -> Vec<Phoneme> {
+        v.iter().map(|x| s(x)).collect()
     }
 
     #[test]
@@ -935,21 +898,21 @@ mod tests {
     #[test]
     fn cons_dur_stop_voiceless_onset_adds_aspiration_margin() {
         // "t": stop, voiceless (v=0), cl=0.045 -> onset (coda=false): +0.024
-        let d = cons_dur("t", false);
+        let d = cons_dur(Phoneme::T, false);
         assert!((d - (0.045 + 0.012 + 0.024)).abs() < 1e-12, "{d}");
     }
 
     #[test]
     fn cons_dur_stop_voiced_no_aspiration_margin() {
         // "d": voiced (v=1) -> the (coda? 0 : v?0:0.024) term is 0 either way
-        let d = cons_dur("d", false);
+        let d = cons_dur(Phoneme::D, false);
         assert!((d - (0.05 + 0.012)).abs() < 1e-12, "{d}");
     }
 
     #[test]
     fn cons_dur_stop_coda_drops_aspiration_margin() {
-        let on = cons_dur("t", false);
-        let co = cons_dur("t", true);
+        let on = cons_dur(Phoneme::T, false);
+        let co = cons_dur(Phoneme::T, true);
         assert!(co < on);
         assert!((co - (0.045 + 0.012)).abs() < 1e-12);
     }
@@ -957,41 +920,41 @@ mod tests {
     #[test]
     fn cons_dur_affricate() {
         // "ch": cl=0.04, fr=0.07 -> cl+0.008+fr
-        let d = cons_dur("ch", false);
+        let d = cons_dur(Phoneme::Ch, false);
         assert!((d - (0.04 + 0.008 + 0.07)).abs() < 1e-12, "{d}");
     }
 
     #[test]
     fn cons_dur_nasal_coda_is_fixed() {
-        assert_eq!(cons_dur("n", true), 0.085);
-        assert_ne!(cons_dur("n", false), 0.085);
+        assert_eq!(cons_dur(Phoneme::N, true), 0.085);
+        assert_ne!(cons_dur(Phoneme::N, false), 0.085);
     }
 
     #[test]
-    fn cons_dur_unknown_phoneme_is_zero() {
-        assert_eq!(cons_dur("zzz", false), 0.0);
+    fn cons_dur_of_a_vowel_is_zero() {
+        assert_eq!(cons_dur(Phoneme::Aa, false), 0.0);
     }
 
     #[test]
     fn nuc_targets_plain_vowel() {
         let t = nuc_targets(&ph(&["ae"]));
         assert_eq!(t.len(), 1);
-        assert_eq!(t[0].k, "vow");
+        assert_eq!(t[0].k, NucKind::Vowel);
     }
 
     #[test]
     fn nuc_targets_diphthong_expands_to_two() {
         let t = nuc_targets(&ph(&["ay"]));
         assert_eq!(t.len(), 2);
-        assert_eq!(t[0].k, "vow");
-        assert_eq!(t[1].k, "vow");
+        assert_eq!(t[0].k, NucKind::Vowel);
+        assert_eq!(t[1].k, NucKind::Vowel);
     }
 
     #[test]
     fn nuc_targets_empty_falls_back_to_ah() {
         let t = nuc_targets(&[]);
         assert_eq!(t.len(), 1);
-        assert_eq!(t[0].f, vowel_map_cached()["ah"]);
+        assert_eq!(Some(t[0].f), vowel_formants(Phoneme::Ah));
     }
 
     #[test]

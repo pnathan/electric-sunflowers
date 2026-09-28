@@ -1,10 +1,11 @@
-//! Port of the harp part of engine.js (`genHarp`, engine.js ~718-733).
+//! The harp: rolled chords per segment (sparse in verses and the intro),
+//! echoes of the top tones in busy sections, and a glissando into the
+//! bridge and the final lifted section.
 
 use crate::guitar::mtof;
 use compose::form::Form;
-use compose::song::Song;
-use compose::theory::mode_scale;
 use compose::timeline::Timeline;
+use song::{Pc, SectionKind, Song};
 use dsp::pluck::{pluck, PluckOpts};
 use sfcore::js::{pow, round};
 use sfcore::rng::rng_for;
@@ -16,36 +17,39 @@ struct Note {
     v: f64,
 }
 
-/// `genHarp(song,form,tl,seed)`.
+/// The harp track.
 pub fn gen_harp(song: &Song, form: &Form, tl: &Timeline, seed: u32) -> Vec<f32> {
     let mut r = rng_for(seed, "harp");
-    let bpb = form.mi.bpb;
+    let bpb = form.bpb();
     let mut notes: Vec<Note> = Vec::new();
 
     for sg in &tl.segs {
         let sec = &form.sections[sg.sec];
-        let intensity = sec.intensity;
-        let on = sec.lift
-            || sec.type_ == "chorus"
-            || sec.type_ == "bridge"
-            || sec.type_ == "outro"
-            || sec.type_ == "interlude"
-            || (sec.type_ == "verse" && sec.occ > 0)
-            || sec.type_ == "intro";
+        let intensity = sec.intensity.level();
+        let on = sec.is_lift()
+            || match sec.kind {
+                SectionKind::Chorus
+                | SectionKind::Bridge
+                | SectionKind::Outro
+                | SectionKind::Interlude
+                | SectionKind::Intro => true,
+                SectionKind::Verse => sec.occ > 0,
+                SectionKind::Prechorus => false,
+            };
         if !on {
             continue;
         }
-        let sparse = sec.type_ == "verse" || sec.type_ == "intro";
+        let sparse = matches!(sec.kind, SectionKind::Verse | SectionKind::Intro);
         if sparse && (sg.bar - sec.start_bar) % 2 == 1 {
             continue;
         }
-        let pcs = &sg.chord.pcs;
+        let chord = form.chord(sg.chord);
         let want = if sparse { 4 } else { 6 };
         let mut tones: Vec<i32> = Vec::new();
         let mut m = 55i32;
         while m <= 88 && tones.len() < want {
-            let pc = m.rem_euclid(12);
-            if pcs.contains(&pc) && (!tones.is_empty() || pc == sg.chord.root) {
+            let pc = Pc::new(m);
+            if chord.tones.contains(pc) && (!tones.is_empty() || pc == chord.root) {
                 tones.push(m);
             }
             m += 1;
@@ -71,17 +75,17 @@ pub fn gen_harp(song: &Song, form: &Form, tl: &Timeline, seed: u32) -> Vec<f32> 
     }
 
     for sec in &form.sections {
-        if !(sec.type_ == "bridge" || (sec.lift && sec.final_)) {
+        if !(sec.kind == SectionKind::Bridge || matches!(sec.lift, Some(l) if l.is_final)) {
             continue;
         }
         let b = sec.start_bar as f64 * bpb as f64;
         let t1 = tl.to_time(b) - 0.03;
         let t0 = t1 - 0.62;
         let tonic = tl.chord_at(form, b).root;
-        let sc: Vec<i32> = mode_scale(&song.mode).iter().map(|x| (x + tonic).rem_euclid(12)).collect();
+        let sc = song.mode.scale().transpose(tonic.get() as i32);
         let mut run: Vec<i32> = Vec::new();
         for m in 62..=88i32 {
-            if sc.contains(&m.rem_euclid(12)) {
+            if sc.contains(Pc::new(m)) {
                 run.push(m);
             }
         }

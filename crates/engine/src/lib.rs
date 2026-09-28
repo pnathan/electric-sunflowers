@@ -7,9 +7,15 @@ pub mod vocals;
 
 pub use render::{mix, mix_threaded, render_song, render_song_threaded, RenderedSong};
 
-/// `DEMO_SONG` (src/demo.js), converted to JSON once with node and embedded
-/// at compile time. Parsed fresh on every call rather than cached, since it
-/// is only ever used by tests and small examples.
+/// The demo song's reply JSON, embedded at compile time.
 pub fn demo_song() -> serde_json::Value {
     serde_json::from_str(include_str!("demo.json")).expect("crates/engine/src/demo.json is valid JSON")
+}
+
+/// The demo song, normalised. The demo normalises with no repairs.
+pub fn demo() -> song::Song {
+    match song::normalize_value(&demo_song()) {
+        Ok((s, _)) => s,
+        Err(e) => panic!("crates/engine/src/demo.json does not normalise: {e}"),
+    }
 }

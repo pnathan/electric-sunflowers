@@ -210,3 +210,28 @@ fn step_draws_from_engine_rng() {
         assert!(ou.step(&mut r).is_finite());
     }
 }
+
+#[test]
+fn fractional_reads_clamp_bad_delays() {
+    let mut line = DelayLine::new(13);
+    let cap = line.capacity();
+    for n in 0..cap {
+        line.push(n as f32 + 1.0);
+    }
+    let top = (cap - 3) as f64;
+    // Huge, infinite and past-capacity delays read as capacity - 3.
+    for d in [f64::INFINITY, 1e300, usize::MAX as f64, top + 0.5, cap as f64] {
+        assert_eq!(line.read_linear(d), line.read_int(cap - 3) as f64, "linear {d}");
+        assert_eq!(line.read_lagrange3(d), line.read_int(cap - 3) as f64, "lagrange {d}");
+    }
+    // NaN and negative delays read the lower limit (0 linear, 1 Lagrange).
+    for d in [f64::NAN, f64::NEG_INFINITY, -5.0] {
+        assert_eq!(line.read_linear(d), line.read_int(0) as f64, "linear {d}");
+        assert_eq!(line.read_lagrange3(d), line.read_int(1) as f64, "lagrange {d}");
+    }
+    // In range, the clamp does nothing: integer delays are exact.
+    for i in 1..=cap - 3 {
+        assert_eq!(line.read_lagrange3(i as f64), line.read_int(i) as f64, "lagrange {i}");
+        assert_eq!(line.read_linear(i as f64), line.read_int(i) as f64, "linear {i}");
+    }
+}

@@ -10,7 +10,7 @@
 //!   case-insensitive; otherwise read from the key's suffix ("m", "min",
 //!   "minor", "maj", "major", or a mode name), else major.
 //! - meter 4/4, 3/4 or 6/8 (default 4/4). tempo: number or numeric string,
-//!   rounded half up, default 88, clamped to `Meter::tempo_range`.
+//!   rounded half away from zero (`f64::round`), default 88, clamped to `Meter::tempo_range`.
 //! - guitar default fingerpick, voice default baritone, band parts default
 //!   on except the harp, drums default brushes.
 //! - Section type: case and non-letters ignored; "pre" is prechorus,
@@ -18,8 +18,9 @@
 //!   anything else is verse.
 //! - `same: true` copies the latest earlier sung section of the same type.
 //! - A line: `syl` (or `lyric`, `text`) split into words at whitespace and
-//!   syllables at '-'; '*' marks stress; parts with no letter or digit are
-//!   not syllables. With no '*' in the line, the first syllable of each
+//!   syllables at '-'; '*' marks stress; a part with no letter or digit
+//!   ("...", "*", a lone "-") is not a syllable and is recorded as a
+//!   `DroppedSyllable` repair (empty parts between hyphens are not). With no '*' in the line, the first syllable of each
 //!   multi-syllable word and every single-syllable word that is not a
 //!   function word are stressed. `ph`: one '|'-separated ARPAbet group per
 //!   syllable; a group that is missing, has an unknown token or has no
@@ -252,6 +253,10 @@ pub enum Repair {
     SectionType { section: usize, text: String, kind: SectionKind },
     /// Section not an object, or with neither lines nor chords.
     DroppedSection { section: usize },
+    /// A lyric part with no letter or digit ("...", "*", a word of only
+    /// hyphens); not sung. `text` is the part, or the whole word when the
+    /// word is only hyphens.
+    DroppedSyllable { section: usize, line: usize, text: String },
     /// Line not an object, or with no syllable.
     DroppedLine { section: usize, line: usize },
     /// A chord beyond the bar, line or section limit. `line` is `None` in
@@ -279,6 +284,9 @@ impl fmt::Display for Repair {
             ModeFromKey { mode } => write!(f, "mode {mode} read from the key"),
             SectionType { section, text, kind } => write!(f, "section {section}: type {text:?} read as {kind}"),
             DroppedSection { section } => write!(f, "section {section}: dropped (no lines and no chords)"),
+            DroppedSyllable { section, line, text } => {
+                write!(f, "section {section} line {line}: {text:?} has no letter or digit, dropped")
+            }
             DroppedLine { section, line } => write!(f, "section {section} line {line}: dropped (no syllables)"),
             DroppedChord { section, line: Some(l), bar, symbol } => {
                 write!(f, "section {section} line {l} bar {bar}: chord {symbol:?} over the limit, dropped")
@@ -482,13 +490,20 @@ impl Chords<'_> {
 }
 
 /// Syllables of one lyric text. Returns an empty list when there are none.
-fn syllables(text: &str) -> Vec<Syllable> {
+/// Each non-empty part with no letter or digit, and each word made only of
+/// hyphens, is recorded as `Repair::DroppedSyllable`.
+fn syllables(text: &str, section: usize, line: usize, rep: &mut Vec<Repair>) -> Vec<Syllable> {
     let mut out = Vec::new();
     let mut word: u16 = 0;
     for w in text.split_whitespace() {
         let start = out.len();
+        let mut reported = false;
         for part in w.split('-') {
             if !part.chars().any(char::is_alphanumeric) {
+                if !part.is_empty() {
+                    rep.push(Repair::DroppedSyllable { section, line, text: part.to_string() });
+                    reported = true;
+                }
                 continue;
             }
             out.push(Syllable {
@@ -505,6 +520,8 @@ fn syllables(text: &str) -> Vec<Syllable> {
                 last.word_end = true;
             }
             word = word.saturating_add(1);
+        } else if !reported {
+            rep.push(Repair::DroppedSyllable { section, line, text: w.to_string() });
         }
     }
     if !out.iter().any(|s| s.stress) {
@@ -627,7 +644,7 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             DEFAULT_TEMPO
         }
     };
-    let rounded = (tempo_in + 0.5).floor();
+    let rounded = tempo_in.round();
     let (lo, hi) = meter.tempo_range();
     let tempo_bpm = rounded.clamp(lo as f64, hi as f64);
     if tempo_bpm != rounded {
@@ -697,7 +714,7 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                 continue;
             };
             let text = [wl.syl, wl.lyric, wl.text].into_iter().flatten().find(|s| !s.trim().is_empty());
-            let mut syls = text.as_deref().map(syllables).unwrap_or_default();
+            let mut syls = text.as_deref().map(|t| syllables(t, si, li, ch.rep)).unwrap_or_default();
             if syls.is_empty() {
                 ch.rep.push(Repair::DroppedLine { section: si, line: li });
                 continue;

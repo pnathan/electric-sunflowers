@@ -1,16 +1,16 @@
-//! Full-render preparation: `prepare`, `vocalNotes` and `harmonyLine`
-//! (engine.js lines ~843-866).
+//! Preparation for rendering: compose, transpose for the voice, time the
+//! notes; and the vocal-note and harmony-line helpers.
 
 use sfcore::js::round;
+use song::{Pc, Phoneme, Song, Voice};
 
 use crate::form::{build_form, Form};
 use crate::melody::{compose_melody, Comp, LeadNote};
-use crate::song::Song;
 use crate::theory::local_scale;
 use crate::timeline::Timeline;
-use crate::voices::{choose_transpose, Voice};
+use crate::voices::choose_transpose;
 
-/// prepare's return value: everything the renderer needs.
+/// Everything the renderer needs.
 pub struct Prepared {
     pub form: Form,
     pub timeline: Timeline,
@@ -26,13 +26,13 @@ fn median_midi(notes: &[LeadNote]) -> i32 {
     m[m.len() >> 1]
 }
 
-/// prepare(song,seed,voiceKey): composes twice (original key, then
-/// transposed) and shifts octaves so the median lands where `chooseTranspose`
-/// wants it. `voice_key` of `None` is JS's `'auto'`: use the song's own voice.
+/// Composes twice (written key, then transposed for the voice) and shifts
+/// octaves so the median lands where `choose_transpose` wants it, then
+/// times the notes in seconds. `voice_key` `None` uses the song's voice.
 pub fn prepare(song: &Song, seed: u32, voice_key: Option<Voice>) -> Prepared {
     // pass 1: compose in original key to decide transposition for this voice
     let mut form = build_form(song, 0);
-    let mut tl = Timeline::new(&form, song.tempo);
+    let mut tl = Timeline::new(&form, song.tempo_bpm);
     let mut comp = compose_melody(song, &mut form, &tl, seed);
 
     let vk = voice_key.unwrap_or(song.voice);
@@ -44,7 +44,7 @@ pub fn prepare(song: &Song, seed: u32, voice_key: Option<Voice>) -> Prepared {
 
     if key_shift != 0 {
         form = build_form(song, key_shift);
-        tl = Timeline::new(&form, song.tempo);
+        tl = Timeline::new(&form, song.tempo_bpm);
         comp = compose_melody(song, &mut form, &tl, seed);
     }
 
@@ -74,17 +74,17 @@ pub fn prepare(song: &Song, seed: u32, voice_key: Option<Voice>) -> Prepared {
         }
     }
 
-    let tonic = (song.key_pc + key_shift + 120).rem_euclid(12);
+    let tonic = (song.key.get() as i32 + key_shift + 120).rem_euclid(12);
     Prepared { form, timeline: tl, comp, voice: vk, key_shift, tonic }
 }
 
-/// One rendered vocal note (`vocalNotes`'s per-note output shape).
+/// One sung note in seconds.
 #[derive(Clone, Debug)]
 pub struct VocalNote {
     pub t0: f64,
     pub t1: f64,
     pub midi: i32,
-    pub ph: Vec<String>,
+    pub ph: Vec<Phoneme>,
     pub amp: f64,
     pub phrase_start: bool,
     pub phrase_end: bool,
@@ -92,17 +92,15 @@ pub struct VocalNote {
     pub stress: bool,
 }
 
-/// vocalNotes(lead,amp,sec). JS parity: the JS function takes a third `sec`
-/// parameter that is never referenced in its body (it reads `n.sec`, the
-/// note's own section, not the parameter) and every call site passes only
-/// two arguments; the parameter is dead and is omitted here.
+/// Lead notes as sung notes at level `amp`: unstressed syllables at 0.86,
+/// lifted sections at 1.08.
 pub fn vocal_notes(lead: &[LeadNote], amp: f64) -> Vec<VocalNote> {
     lead.iter()
         .map(|n| VocalNote {
             t0: n.t0,
             t1: n.t1,
             midi: n.midi,
-            ph: n.syl.ph.clone(),
+            ph: n.syl.phones.clone(),
             amp: amp * (if n.stress { 1.0 } else { 0.86 }) * (if n.lift { 1.08 } else { 1.0 }),
             phrase_start: n.phrase_start,
             phrase_end: n.phrase_end,
@@ -112,19 +110,20 @@ pub fn vocal_notes(lead: &[LeadNote], amp: f64) -> Vec<VocalNote> {
         .collect()
 }
 
-/// harmonyLine(lead,tl,song,tonic,up)
+/// A harmony a third to a sixth above (`up`) or below the lead: the chord
+/// tone preferred by interval (3rd and 4th best), else two scale steps.
 pub fn harmony_line(lead: &[LeadNote], form: &Form, tl: &Timeline, song: &Song, tonic: i32, up: bool) -> Vec<LeadNote> {
     // JS: [0,0,0,1,1,.2,-1,.4,.6,.6][d] for d in 3..=9
     const SCORES: [f64; 10] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.2, -1.0, 0.4, 0.6, 0.6];
     lead.iter()
         .map(|n| {
             let ch = tl.chord_at(form, n.beat + 0.01);
-            let sc = local_scale(tonic, &song.mode, ch);
+            let sc = local_scale(Pc::new(tonic), song.mode, ch);
             let mut h: Option<i32> = None;
             let mut bs = -1e9f64;
             for d in 3..=9i32 {
                 let m = if up { n.midi + d } else { n.midi - d };
-                if !ch.pcs.contains(&m.rem_euclid(12)) {
+                if !ch.tones.contains(Pc::new(m)) {
                     continue;
                 }
                 let s = SCORES[d as usize];
@@ -140,7 +139,7 @@ pub fn harmony_line(lead: &[LeadNote], form: &Form, tl: &Timeline, song: &Song, 
                     let mut m = n.midi;
                     while steps < 2 {
                         m += if up { 1 } else { -1 };
-                        if sc.contains(&m.rem_euclid(12)) {
+                        if sc.contains(Pc::new(m)) {
                             steps += 1;
                         }
                     }
@@ -165,19 +164,19 @@ mod tests {
             "key":"C","mode":"major","meter":"4/4","tempo":100,"voice":"baritone",
             "sections":[
                 {"type":"intro","chords":["C","G"]},
-                {"type":"verse","lines":[{"syl":"one *two three *four","chords":"C G"}]},
-                {"type":"chorus","lines":[{"syl":"*five *six *seven *eight","chords":"Am F"}]},
+                {"type":"verse","lines":[{"syl":"one *two three *four","chords":["C G"]}]},
+                {"type":"chorus","lines":[{"syl":"*five *six *seven *eight","chords":["Am F"]}]},
                 {"type":"chorus","same":true}
             ]
         });
-        crate::song::normalize_song(&raw).unwrap()
+        song::normalize_value(&raw).unwrap().0
     }
 
     #[test]
     fn prepare_produces_ordered_note_times() {
         let s = song();
         let p = prepare(&s, 99, None);
-        assert_eq!(p.voice, crate::voices::Voice::Baritone);
+        assert_eq!(p.voice, Voice::Baritone);
         assert!(!p.comp.lead.is_empty());
         for w in p.comp.lead.windows(2) {
             assert!(w[0].t0 <= w[0].t1 + 1e-9);

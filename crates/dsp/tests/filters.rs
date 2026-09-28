@@ -365,3 +365,28 @@ fn add_mono_clips_both_ends() {
     add_mono(&mut l, &mut r, -100, &[1.0], [1.0, 1.0]);
     add_mono(&mut l, &mut r, isize::MIN, &[1.0], [1.0, 1.0]);
 }
+
+#[test]
+fn coefficients_come_from_sfcore_math() {
+    use sfcore::math::{db_to_gain, gain_to_db, one_pole_coeff_tau};
+    // OnePole a equals the sfcore coefficient; a bad tau gives a = 1.
+    for tau in [1e-4, 0.005, 0.1, 2.0] {
+        assert_eq!(OnePole::from_tau(tau, FS).a, one_pole_coeff_tau(tau, FS), "tau {tau}");
+    }
+    for tau in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+        assert_eq!(OnePole::from_tau(tau, FS).a, 1.0, "tau {tau}");
+    }
+    // Detector pole k = 1 - a; a bad time is instant (k = 0).
+    let d = PeakDetector::new(0.01, 0.2, FS);
+    close(d.attack_coef, 1.0 - one_pole_coeff_tau(0.01, FS), 1e-15, "attack pole");
+    close(d.release_coef, 1.0 - one_pole_coeff_tau(0.2, FS), 1e-15, "release pole");
+    let d = PeakDetector::new(f64::NAN, f64::INFINITY, FS);
+    assert_eq!((d.attack_coef, d.release_coef), (0.0, 0.0));
+    // Level in dB: sfcore gain_to_db, with its floor for silence.
+    let mut c = comp(4.0, 6.0, Link::Mono);
+    assert_eq!(c.level_db(), gain_to_db(0.0));
+    let mut x = vec![0.5f32; 4096];
+    c.process_mono(&mut x);
+    assert_eq!(c.level_db(), gain_to_db(c.det.env));
+    close(db_to_gain(c.level_db()), c.det.env, 1e-12, "dB round trip");
+}

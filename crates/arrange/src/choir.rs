@@ -1,17 +1,15 @@
-//! Port of the choir-voicing part of engine.js: `CHOIR_R` and
-//! `choirVoicings` (engine.js lines ~824-842). This picks the four-part
-//! close-position choir chord per timeline segment; the choir singers
-//! themselves (per-voice detune/vowel/rendering) are outside this crate's
-//! scope.
+//! Choir voicing: a four-part chord per timeline segment by minimal voice
+//! leading. The singers themselves are planned and rendered in `engine`.
 
 use compose::form::{Form, Sec};
 use compose::timeline::Timeline;
+use song::Pc;
 
 /// `CHOIR_R`: the midi range searched for each of the four parts
 /// (bass, tenor, alto, soprano).
 pub const CHOIR_R: [(i32, i32); 4] = [(40, 55), (48, 62), (55, 69), (60, 74)];
 
-/// One segment's chosen voicing (`{sg,v}` in JS `choirVoicings`).
+/// One segment's chosen voicing.
 #[derive(Clone, Copy, Debug)]
 pub struct ChoirVoicing {
     /// index into `tl.segs`.
@@ -20,7 +18,7 @@ pub struct ChoirVoicing {
     pub v: [i32; 4],
 }
 
-/// `choirVoicings(form,tl,filter)`: for every segment that passes `filter`,
+/// For every segment whose section passes `filter`,
 /// picks the closest-motion four-part voicing (bass on the chord's bass
 /// note, the other three any chord tone) subject to a max-9-semitone spread
 /// between adjacent upper voices.
@@ -33,16 +31,12 @@ pub fn choir_voicings(form: &Form, tl: &Timeline, filter: impl Fn(&Sec) -> bool)
         if !filter(sec) {
             continue;
         }
-        let pcs = &sg.chord.pcs;
+        let chord = form.chord(sg.chord);
         let mut cands: [Vec<i32>; 4] = Default::default();
         for (p, &(lo, hi)) in CHOIR_R.iter().enumerate() {
             let mut a = Vec::new();
             for m in lo..=hi {
-                let ok = if p == 0 {
-                    m.rem_euclid(12) == sg.chord.bass
-                } else {
-                    pcs.contains(&m.rem_euclid(12))
-                };
+                let ok = if p == 0 { Pc::new(m) == chord.bass } else { chord.tones.contains(Pc::new(m)) };
                 if ok {
                     a.push(m);
                 }
@@ -68,8 +62,8 @@ pub fn choir_voicings(form: &Form, tl: &Timeline, filter: impl Fn(&Sec) -> bool)
                             + (a - prev[2]).abs() as f64
                             + (s - prev[3]).abs() as f64;
                         sc -= set.count_ones() as f64 * 2.0;
-                        if let Some(third) = sg.chord.third {
-                            if set & (1 << third) == 0 {
+                        if let Some(third) = chord.third {
+                            if set & (1 << third.get()) == 0 {
                                 sc += 5.0;
                             }
                         }

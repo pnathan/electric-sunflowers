@@ -5,8 +5,7 @@
 //! is that reordering *which thread* computes a track never reorders any
 //! floating-point summation, so there is nothing to tolerate.
 
-use compose::song::normalize_song;
-use engine::{demo_song, mix, mix_threaded, render_song, render_song_threaded};
+use engine::{demo, mix, mix_threaded, render_song, render_song_threaded};
 use sfcore::tuning::Tuning;
 
 fn assert_bit_identical(a: &[f32], b: &[f32], label: &str) {
@@ -24,7 +23,7 @@ fn assert_bit_identical(a: &[f32], b: &[f32], label: &str) {
 }
 
 fn check_seed(seed: u32) {
-    let song = normalize_song(&demo_song()).expect("DEMO_SONG normalizes");
+    let song = demo();
     let tuning = Tuning::default();
 
     let mut seq = render_song(&song, seed, None, &tuning, None);
@@ -48,18 +47,10 @@ fn check_seed(seed: u32) {
 
 #[test]
 fn demo_song_threaded_matches_sequential() {
-    if !sfcore::V8_EXACT {
-        eprintln!("skipped: JS parity needs --features sfcore/v8");
-        return;
-    }
     check_seed(1234);
 }
 
 #[test]
 fn second_seed_threaded_matches_sequential() {
-    if !sfcore::V8_EXACT {
-        eprintln!("skipped: JS parity needs --features sfcore/v8");
-        return;
-    }
     check_seed(4242);
 }

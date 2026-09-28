@@ -205,12 +205,12 @@ Angle-bracketed items are placeholders; replace every one with a real value (num
     )
 }
 
-/// Ports `JSON.stringify(Object.assign({drums:dir.drums},dir.band))`: drums first, then the
-/// Band fields in B()'s insertion order (bass, harmonyGuitar, harp, violin, choir, harmonies, doubles).
+/// The band object of the reply format: drums first, then bass,
+/// harmonyGuitar, harp, violin, choir, harmonies, doubles.
 fn band_json(dir: &Direction) -> String {
     format!(
         r#"{{"drums":"{}","bass":{},"harmonyGuitar":{},"harp":{},"violin":{},"choir":{},"harmonies":{},"doubles":{}}}"#,
-        dir.drums,
+        dir.band.drums,
         dir.band.bass,
         dir.band.harmony_guitar,
         dir.band.harp,

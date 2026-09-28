@@ -1,4 +1,4 @@
-//! The band parts (engine.js lines 611-842).
+//! Band parts: guitar, bass, harp, drums, choir voicings, counter-lines and fills.
 
 pub mod bass;
 pub mod choir;

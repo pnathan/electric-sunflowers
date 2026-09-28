@@ -13,14 +13,12 @@
 
 use std::f64::consts::PI;
 
-/// Coefficient a = 1 - exp(-1 / (tau fs)); tau <= 0 or non-finite gives a = 1 (no smoothing).
-pub fn tau_coef(tau: f64, fs: f64) -> f64 {
-    let n = tau * fs;
-    if n.is_finite() && n > 0.0 {
-        1.0 - (-1.0 / n).exp()
-    } else {
-        1.0
-    }
+use sfcore::math::one_pole_coeff_tau;
+
+/// `one_pole_coeff_tau` with a non-finite `tau` mapped to 0, so NaN and
+/// infinity give a = 1 (no smoothing) instead of NaN or a frozen state.
+fn coef(tau: f64, fs: f64) -> f64 {
+    one_pole_coeff_tau(if tau.is_finite() { tau } else { 0.0 }, fs)
 }
 
 /// One-pole low-pass z += a (x - z).
@@ -34,12 +32,13 @@ impl OnePole {
     /// Low-pass with its -3 dB point near fc (exact for fc << fs).
     pub fn from_hz(fc: f64, fs: f64) -> Self {
         let tau = if fc > 0.0 { 1.0 / (2.0 * PI * fc) } else { 0.0 };
-        OnePole { a: tau_coef(tau, fs), z: 0.0 }
+        OnePole { a: coef(tau, fs), z: 0.0 }
     }
 
-    /// Low-pass with time constant `tau` seconds.
+    /// Low-pass with time constant `tau` seconds; `tau` <= 0 or non-finite
+    /// gives a = 1 (output follows input).
     pub fn from_tau(tau: f64, fs: f64) -> Self {
-        OnePole { a: tau_coef(tau, fs), z: 0.0 }
+        OnePole { a: coef(tau, fs), z: 0.0 }
     }
 
     /// Low-pass output.

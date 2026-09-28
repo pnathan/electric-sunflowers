@@ -101,7 +101,6 @@ fn file_name(key: &str) -> &str {
 
 #[cfg(feature = "capture_raw")]
 fn run() -> Result<(), String> {
-    use compose::song::normalize_song;
     use sfcore::tuning::Tuning;
     use std::path::PathBuf;
     use std::time::Instant;
@@ -123,7 +122,7 @@ fn run() -> Result<(), String> {
     std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     let sr = sfcore::SR as u32;
 
-    let song = normalize_song(&engine::demo_song()).map_err(|e| format!("demo song: {e}"))?;
+    let (song, _) = song::normalize_value(&engine::demo_song()).map_err(|e| format!("demo song: {e}"))?;
     let t = Instant::now();
     let mut rendered = engine::render_song_threaded(&song, seed, None, &Tuning::default());
     let render_s = t.elapsed().as_secs_f64();

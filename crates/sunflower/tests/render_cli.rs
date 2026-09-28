@@ -29,10 +29,17 @@ fn read_wav(path: &std::path::Path) -> Wav {
     let channels = u16::from_le_bytes([bytes[22], bytes[23]]);
     let sample_rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
     let bits_per_sample = u16::from_le_bytes([bytes[34], bytes[35]]);
-    assert_eq!(&bytes[36..40], b"data");
-    let data_len = u32::from_le_bytes([bytes[40], bytes[41], bytes[42], bytes[43]]) as usize;
-    let data = bytes[44..44 + data_len].to_vec();
-    Wav { channels, sample_rate, bits_per_sample, data }
+    // Walk the chunks after "fmt " (a LIST tag chunk may come before "data").
+    let mut at = 20 + u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as usize;
+    loop {
+        assert!(at + 8 <= bytes.len(), "no data chunk");
+        let len = u32::from_le_bytes([bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]]) as usize;
+        if &bytes[at..at + 4] == b"data" {
+            let data = bytes[at + 8..at + 8 + len].to_vec();
+            return Wav { channels, sample_rate, bits_per_sample, data };
+        }
+        at += 8 + len + (len & 1);
+    }
 }
 
 fn pcm16_peak(w: &Wav) -> i16 {

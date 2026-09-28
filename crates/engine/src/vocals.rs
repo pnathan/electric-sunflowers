@@ -8,18 +8,34 @@
 
 use compose::form::{Form, Sec};
 use compose::melody::LeadNote;
-use compose::prepare::{harmony_line, vocal_notes, Prepared};
-use compose::song::Song;
-use compose::voices::{voice_params, Voice, VoiceParams};
+use compose::prepare::{harmony_line, vocal_notes, Prepared, VocalNote};
 use dsp::pan::add_pan;
 use rayon::prelude::*;
 use sfcore::js::clamp;
 use sfcore::rng::rng_for;
 use sfcore::tuning::Tuning;
+use song::{Phoneme, SectionKind, Song, Voice};
 use voice::controls::{VoiceNote, VoiceOpts};
 use voice::synth::render_voice;
+use voice::{voice_params, VoiceParams};
 
 use arrange::choir::choir_voicings;
+
+/// A composed note as the voice renders it.
+fn voice_note(n: &VocalNote) -> VoiceNote {
+    VoiceNote {
+        t0: n.t0,
+        t1: n.t1,
+        midi: n.midi,
+        ph: Some(n.ph.clone()),
+        nu: None,
+        amp: n.amp,
+        phrase_start: n.phrase_start,
+        phrase_end: n.phrase_end,
+        grace: n.grace,
+        stress: n.stress,
+    }
+}
 
 /// The section a lead note belongs to (`n.sec` in JS: the JS note holds a
 /// reference to its section object directly; here a `LeadNote` only keeps
@@ -33,7 +49,7 @@ fn sec_of<'a>(form: &'a Form, n: &LeadNote) -> &'a Sec {
 pub fn render_lead(p: &Prepared, seed: u32, len: usize, tuning: &Tuning) -> Vec<Vec<f32>> {
     let vp = voice_params(p.voice);
     let vn = vocal_notes(&p.comp.lead, 1.0);
-    let notes: Vec<VoiceNote> = vn.iter().map(VoiceNote::from).collect();
+    let notes: Vec<VoiceNote> = vn.iter().map(voice_note).collect();
     let mut opts = VoiceOpts { seed: Some(seed ^ 11), rng: Some(rng_for(seed, "lead")), ..Default::default() };
     let audio = render_voice(&notes, &vp, len, &mut opts, tuning);
     vec![audio]
@@ -62,8 +78,7 @@ pub fn render_harmony(p: &Prepared, song: &Song, seed: u32, len: usize, tuning: 
         if k == p.voice {
             continue;
         }
-        let kp = voice_params(k);
-        let c = (kp.lo + kp.hi) as f64 / 2.0;
+        let c = k.range().centre();
         let d = (c - med as f64).abs();
         if d < bd {
             bd = d;
@@ -74,7 +89,7 @@ pub fn render_harmony(p: &Prepared, song: &Song, seed: u32, len: usize, tuning: 
     let hn: Vec<VoiceNote> = vocal_notes(&hl, 0.9)
         .iter()
         .map(|n| {
-            let mut v = VoiceNote::from(n);
+            let mut v = voice_note(n);
             v.t0 += 0.008;
             v.t1 += 0.008;
             v
@@ -102,7 +117,7 @@ pub fn render_doubles(p: &Prepared, seed: u32, len: usize, tuning: &Tuning) -> V
         .comp
         .lead
         .iter()
-        .filter(|n| n.lift && sec_of(&p.form, n).lift_idx > 0)
+        .filter(|n| n.lift && sec_of(&p.form, n).is_repeat_lift())
         .cloned()
         .collect();
 
@@ -119,7 +134,7 @@ pub fn render_doubles(p: &Prepared, seed: u32, len: usize, tuning: &Tuning) -> V
             let dn: Vec<VoiceNote> = vocal_notes(&dl, 0.8)
                 .iter()
                 .map(|n| {
-                    let mut v = VoiceNote::from(n);
+                    let mut v = voice_note(n);
                     v.t0 += off;
                     v.t1 += off;
                     v
@@ -166,7 +181,9 @@ pub struct ChoirJob {
 /// and one for `rdScale` (both skipped, like JS's early `continue`, when
 /// the singer ends up with no voiced segments).
 pub fn choir_plan(p: &Prepared, seed: u32, tuning: &Tuning) -> Vec<ChoirJob> {
-    let filt = |s: &Sec| (s.lift && s.lift_idx > 0) || s.type_ == "bridge" || s.type_ == "outro";
+    let filt = |s: &Sec| s.is_repeat_lift() || matches!(s.kind, SectionKind::Bridge | SectionKind::Outro);
+    // The choir sings one vowel.
+    let vowel = Phoneme::parse_token(tuning.choir_vowel).unwrap_or(Phoneme::Aa);
     let vs = choir_voicings(&p.form, &p.timeline, filt);
 
     let presets = [Voice::Bass, Voice::Tenor, Voice::Alto, Voice::Soprano];
@@ -187,18 +204,17 @@ pub fn choir_plan(p: &Prepared, seed: u32, tuning: &Tuning) -> Vec<ChoirJob> {
             for cv in &vs {
                 let sg = &p.timeline.segs[cv.seg_idx];
                 let sec = &p.form.sections[sg.sec];
-                let nu = vec![tuning.choir_vowel.to_string()];
+                let nu = vec![vowel];
 
                 let t0 = p.timeline.to_time(sg.b0) + late + (cr.next() - 0.5) * 0.03;
                 // JS: `sg.b1===sec.startBar*form.mi.bpb+sec.nBars*form.mi.bpb`
                 // (this segment runs to the section's very last beat).
-                let sec_end = (sec.start_bar as i32 * p.form.mi.bpb + sec.n_bars as i32 * p.form.mi.bpb) as f64;
-                let is_last = sg.b1 == sec_end;
+                let is_last = sg.b1 == sec.beats(&p.form.meter).end;
                 let t1 = p.timeline.to_time(sg.b1)
                     - if is_last { 0.1 + cr.next() * 0.08 } else { 0.01 + cr.next() * 0.02 };
 
                 let prev_t1 = notes.last().map(|n: &VoiceNote| n.t1);
-                let amp = (if sec.type_ == "bridge" { 0.65 } else { 0.8 }) * (0.88 + cr.next() * 0.2);
+                let amp = (if sec.kind == SectionKind::Bridge { 0.65 } else { 0.8 }) * (0.88 + cr.next() * 0.2);
                 let phrase_start = match prev_t1 {
                     None => true,
                     Some(pt1) => t0 - pt1 > 0.1,

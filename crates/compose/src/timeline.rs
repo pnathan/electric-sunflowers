@@ -1,25 +1,23 @@
 //! Timeline: maps beats to seconds (with a final ritard) and beats to chords.
-//! Ports `buildTimeline` (engine.js).
-//!
-//! JS parity: `buildTimeline` returns closures `toTime`/`chordAt`/`beatDur`
-//! over `T`/`nb`/`base`/`segs`/`end`; here these become methods on `Timeline`.
 
 use crate::form::Form;
-use crate::theory::Chord;
+use song::{Chord, ChordId};
 use sfcore::js::{clamp, pow};
 use sfcore::TAIL;
 
-/// One chord segment on the beat timeline (`segs` in JS).
+/// One chord segment on the beat timeline: consecutive beats of one chord
+/// within one section.
 #[derive(Clone, Debug)]
 pub struct Seg {
-    pub chord: Chord,
+    /// Index into `Form::chords`.
+    pub chord: ChordId,
     pub b0: f64,
     pub b1: f64,
     pub sec: usize,
     pub bar: usize,
 }
 
-/// buildTimeline's return value.
+/// Beat times and chord segments of a form.
 #[derive(Clone, Debug)]
 pub struct Timeline {
     pub t: Vec<f64>,
@@ -33,9 +31,11 @@ pub struct Timeline {
 }
 
 impl Timeline {
-    /// buildTimeline(form, tempo)
+    /// Beat times at `tempo` beats per minute, slowed over the last two bars
+    /// (ritard: beat length times 1 + 0.38 x^1.4), and the chord segments.
     pub fn new(form: &Form, tempo: f64) -> Timeline {
-        let bpb = form.mi.bpb;
+        let bpb = form.bpb();
+        let split = form.split();
         let nb = form.bars.len() * bpb as usize;
         let base = 60.0 / tempo;
         let mut t = vec![0.0f64; nb + 1];
@@ -52,27 +52,22 @@ impl Timeline {
 
         let mut segs: Vec<Seg> = Vec::new();
         for (bi, bar) in form.bars.iter().enumerate() {
-            for (k, c) in bar.chords.iter().enumerate() {
-                let b0 = (bi as i32 * bpb + if k != 0 { form.mi.split } else { 0 }) as f64;
+            for (k, &c) in bar.chords.as_slice().iter().enumerate() {
+                let b0 = (bi as i32 * bpb + if k != 0 { split } else { 0 }) as f64;
                 let b1 = if bar.chords.len() == 1 || k != 0 {
                     (bi as i32 * bpb + bpb) as f64
                 } else {
-                    (bi as i32 * bpb + form.mi.split) as f64
+                    (bi as i32 * bpb + split) as f64
                 };
-                let merge = segs
-                    .last()
-                    .map(|last: &Seg| last.chord.name == c.name && last.b1 == b0 && last.sec == bar.sec)
-                    .unwrap_or(false);
-                if merge {
-                    segs.last_mut().unwrap().b1 = b1;
-                } else {
-                    segs.push(Seg {
-                        chord: c.clone(),
+                match segs.last_mut() {
+                    Some(last) if last.chord == c && last.b1 == b0 && last.sec == bar.sec => last.b1 = b1,
+                    _ => segs.push(Seg {
+                        chord: c,
                         b0,
                         b1,
                         sec: bar.sec,
                         bar: bi,
-                    });
+                    }),
                 }
             }
         }
@@ -85,12 +80,12 @@ impl Timeline {
             segs,
             end,
             bpb,
-            split: form.mi.split,
+            split,
             nbars: form.bars.len(),
         }
     }
 
-    /// toTime(beat)
+    /// Seconds at `beat`; past the end, beats keep the final ritard length.
     pub fn to_time(&self, beat: f64) -> f64 {
         let nb = self.nb as f64;
         if beat >= nb {
@@ -103,21 +98,23 @@ impl Timeline {
         self.t[i] + (beat - i as f64) * (self.t[i + 1] - self.t[i])
     }
 
-    /// chordAt(beat)
-    pub fn chord_at<'a>(&self, form: &'a Form, beat: f64) -> &'a Chord {
-        let bi = clamp((beat / self.bpb as f64).floor(), 0.0, (self.nbars - 1) as f64) as usize;
+    /// The chord sounding at `beat` (clamped to the song).
+    pub fn chord_id_at(&self, form: &Form, beat: f64) -> ChordId {
+        let bi = clamp((beat / self.bpb as f64).floor(), 0.0, self.nbars.saturating_sub(1) as f64) as usize;
         let bar = &form.bars[bi];
-        if bar.chords.len() == 1 {
-            return &bar.chords[0];
-        }
-        if (beat - (bi as i32 * self.bpb) as f64) < self.split as f64 - 1e-6 {
-            &bar.chords[0]
+        if bar.chords.len() == 1 || (beat - (bi as i32 * self.bpb) as f64) < self.split as f64 - 1e-6 {
+            bar.chords.first()
         } else {
-            &bar.chords[1]
+            bar.chords.last()
         }
     }
 
-    /// beatDur(b)
+    /// The chord sounding at `beat` (clamped to the song).
+    pub fn chord_at<'a>(&self, form: &'a Form, beat: f64) -> &'a Chord {
+        form.chord(self.chord_id_at(form, beat))
+    }
+
+    /// Length in seconds of the beat starting at `b`.
     pub fn beat_dur(&self, b: f64) -> f64 {
         self.to_time(b + 1.0) - self.to_time(b)
     }
@@ -133,16 +130,16 @@ mod tests {
         let raw = json!({
             "key":"C","mode":"major","meter":"4/4","tempo":120,
             "sections":[
-                {"type":"verse","lines":[{"syl":"one *two three *four","chords":"C G"}]},
+                {"type":"verse","lines":[{"syl":"one *two three *four","chords":["C G"]}]},
             ]
         });
-        let song = crate::song::normalize_song(&raw).unwrap();
+        let song = song::normalize_value(&raw).unwrap().0;
         let form = crate::form::build_form(&song, 0);
-        let tl = Timeline::new(&form, song.tempo);
+        let tl = Timeline::new(&form, song.tempo_bpm);
         assert_eq!(tl.t[0], sfcore::LEAD_IN);
         assert!(tl.end > tl.t[tl.nb]);
         assert!(!tl.segs.is_empty());
         let c = tl.chord_at(&form, 0.0);
-        assert_eq!(c.root, 0);
+        assert_eq!(c.root.get(), 0);
     }
 }

@@ -80,8 +80,8 @@ version = "0.1.0"
 dependencies = [
  "compose",
  "dsp",
- "serde_json",
  "sfcore",
+ "song",
 ]
 
 [[package]]
@@ -189,9 +189,9 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 name = "compose"
 version = "0.1.0"
 dependencies = [
- "serde",
  "serde_json",
  "sfcore",
+ "song",
 ]
 
 [[package]]
@@ -310,7 +310,7 @@ dependencies = [
  "rayon",
  "serde_json",
  "sfcore",
- "songwriter",
+ "song",
  "voice",
 ]
 
@@ -329,7 +329,7 @@ name = "export"
 version = "0.1.0"
 dependencies = [
  "flacenc",
- "hound",
+ "rayon",
  "sfcore",
  "vorbis_rs",
 ]
@@ -929,7 +929,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "sfcore",
+ "song",
  "ureq",
 ]
 
@@ -973,12 +973,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "compose",
  "dsp",
  "engine",
  "export",
  "serde_json",
  "sfcore",
+ "song",
  "songwriter",
  "tempfile",
 ]
@@ -1134,10 +1134,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voice"
 version = "0.1.0"
 dependencies = [
- "compose",
  "dsp",
- "serde_json",
  "sfcore",
+ "song",
 ]
 
 [[package]]
