@@ -79,7 +79,7 @@ name = "arrange"
 version = "0.1.0"
 dependencies = [
  "compose",
- "dsp",
+ "serde_json",
  "sfcore",
  "song",
 ]
@@ -307,6 +307,7 @@ dependencies = [
  "arrange",
  "compose",
  "dsp",
+ "instruments",
  "rayon",
  "serde_json",
  "sfcore",
@@ -929,7 +930,9 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sfcore",
  "song",
+ "tempfile",
  "ureq",
 ]
 

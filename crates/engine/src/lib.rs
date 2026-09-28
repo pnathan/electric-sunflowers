@@ -1,5 +1,6 @@
-//! The song renderer: renderSong (engine.js lines 867-952) over the compose, voice,
-//! arrange and dsp crates, and the entry point for the mix.
+//! The song renderer: composition (`compose`), arrangement (`arrange`), the
+//! vocal tracks (`voice`), the band tracks (`instruments`) and the entry
+//! point for the mix (`dsp::mix`).
 
 pub mod band;
 pub mod render;

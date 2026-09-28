@@ -1,15 +1,15 @@
-//! Rust equivalent of tests/vow.js: the mean spectral distance between ten
-//! sustained vowels (200 Hz-2.5 kHz), against the baritone voice. Prints the
-//! same "mean vowel distance(200-2.5k) dB" line for comparison with node.
+//! Vowel distinctness probe: ten sustained vowels sung by the baritone
+//! (/hh/ + vowel, MIDI 52, no vibrato, no scoop), the 1/3-octave spectrum
+//! of each (Hann window, 8192 samples from 0.35 s into the note), levels
+//! relative to each vowel's loudest band, and the mean RMS distance between
+//! all pairs over the 12 bands from 200 Hz to 2.5 kHz. Prints
+//! "mean vowel distance(200-2.5k) dB X" and the render cost in ns/sample.
 
-use song::{Phoneme, Voice};
 use dsp::fft::{RealFft, C32};
-use sfcore::rng::rng_for;
-use sfcore::tuning::Tuning;
 use sfcore::SR_F;
-use voice::controls::{VoiceNote, VoiceOpts};
-use voice::synth::render_voice;
-use voice::voice_params;
+use song::events::VocalNote;
+use song::{Phoneme, Voice};
+use voice::{render_phrases, VoiceSettings};
 
 const VW: [Phoneme; 10] = [
     Phoneme::Iy,
@@ -43,27 +43,25 @@ fn main() {
     let mut sp = Vec::new();
     let mut t = 0.5f64;
     for v in VW {
-        sp.push(VoiceNote {
+        sp.push(VocalNote {
             t0: t,
             t1: t + 1.2,
-            midi: 52,
-            ph: Some(vec![Phoneme::Hh, v]),
-            nu: None,
+            midi: 52.0,
+            phones: vec![Phoneme::Hh, v],
             amp: 1.0,
+            stress: false,
             phrase_start: false,
             phrase_end: false,
             grace: None,
-            stress: false,
         });
         t += 1.6;
     }
     let len = ((t + 1.0) * SR_F).ceil() as usize;
-    let p = voice_params(Voice::Baritone);
-    let mut opts = VoiceOpts { seed: Some(3), rng: Some(rng_for(3, "v")), vib_scale: Some(0.0), no_scoop: true, ..Default::default() };
-    let tuning = Tuning::default();
+    let settings = VoiceSettings { vibrato_scale: 0.0, scoop: false, ..VoiceSettings::default() };
 
     let start = std::time::Instant::now();
-    let x = render_voice(&sp, &p, len, &mut opts, &tuning);
+    let mut x = vec![0.0f32; len];
+    render_phrases(&sp, Voice::Baritone, &settings, 3, len, |s0, v| x[s0..s0 + v.len()].copy_from_slice(v));
     let elapsed = start.elapsed();
     eprintln!("samples {} ns/sample {:.2}", x.len(), elapsed.as_nanos() as f64 / x.len() as f64);
 
@@ -76,7 +74,6 @@ fn main() {
         let mut l = [0.0f64; 17];
         for (bi, &b) in BANDS.iter().enumerate() {
             let lo = (b / 1.12 / df).floor() as usize;
-            let hi = (b * 1.12 / df) as usize; // matches JS's `<` bound via integer q loop
             let mut e = 0.0;
             let mut q = lo;
             while (q as f64) < b * 1.12 / df {
@@ -85,7 +82,6 @@ fn main() {
                 }
                 q += 1;
             }
-            let _ = hi;
             l[bi] = 10.0 * (e + 1e-20).log10();
         }
         let mx = l.iter().cloned().fold(f64::MIN, f64::max);
@@ -107,5 +103,5 @@ fn main() {
             c += 1;
         }
     }
-    println!("rust     mean vowel distance(200-2.5k) dB {:.2}", tot / c as f64);
+    println!("mean vowel distance(200-2.5k) dB {:.2}", tot / c as f64);
 }

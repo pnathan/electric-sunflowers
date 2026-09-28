@@ -411,14 +411,24 @@ fn cmd_write(
         ),
     };
     let year = current_year(); // CLAUDE.md: age counted from 1999 as of "the current year".
-    let mut rng = sfcore::rng::rng_for(seed, "sunflower-write");
-    let mut rand = move || rng.next();
+    let style_id = style
+        .filter(|s| !s.trim().eq_ignore_ascii_case("auto"))
+        .map(|s| s.parse::<songwriter::styles::StyleId>())
+        .transpose()
+        .map_err(|e| anyhow!("{e}"))?;
+    let mut rng = songwriter::Rng::stream(seed as u64, songwriter::WRITE_TAG);
+    let req = songwriter::WriteRequest {
+        mood,
+        voice: voice_enum,
+        style: style_id,
+        year,
+        model: model.map(|s| s.to_string()),
+        effort: Default::default(),
+    };
 
     eprintln!("sunflower: asking Claude to write the song ({})", via_label(via));
-    let write_opts = songwriter::WriteSongOptions { model: model.map(|s| s.to_string()), effort: None };
-    let (raw, dir) =
-        songwriter::write_song(claude.as_ref(), mood, voice, style, year, &mut rand, write_opts)
-            .map_err(|e| anyhow!("songwriter: {e}"))?;
+    let w = songwriter::write_song(claude.as_ref(), &req, &mut rng).map_err(|e| anyhow!("songwriter: {e}"))?;
+    let (raw, dir) = (w.raw, w.direction);
 
     // Save the model's reply before validating it, so a rejected song is kept.
     let title = raw.get("title").and_then(|t| t.as_str()).unwrap_or("song");
@@ -429,10 +439,10 @@ fn cmd_write(
     eprintln!("sunflower: saved raw song JSON to {}", json_path.display());
 
     let mut song = normalize(&raw, "written song")?;
-    apply_style(&mut song, &dir.style).with_context(|| format!("applying style {:?} to the written song", dir.style))?;
+    apply_style(&mut song, dir.style.as_str()).with_context(|| format!("applying style {:?} to the written song", dir.style))?;
 
     println!("title: {}", song.title);
-    println!("style: {} ({})", dir.style, dir.label);
+    println!("style: {} ({})", dir.style.as_str(), dir.label);
     println!("form: {}", dir.form);
     println!("key: {} {}", song.key, song.mode);
     println!("meter: {}", song.meter);

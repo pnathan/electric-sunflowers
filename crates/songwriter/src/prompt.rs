@@ -1,134 +1,64 @@
-//! Ports src/prompt.js verbatim in wording: DIRECTIONS, songDirection, songPrompt.
-//! The current year is a parameter here, not read from the clock (JS: `new Date().getFullYear()`).
+//! The songwriter prompt: persona, style direction, emotional register,
+//! craft rules, the form plan, the encoding rules and the reply format.
+//! The wording is the product's; change it only on purpose.
 
-use crate::styles::{form_text, style_direction, Direction};
+use sfcore::random::Rng;
+use song::Voice;
 
-/// Ports DIRECTIONS. Order and duplicate entries (which weight `p()`'s pick) are kept exactly.
-pub struct Directions;
+use crate::styles::{pick, Direction};
 
-impl Directions {
-    pub const MODE: &'static [&'static str] =
-        &["major", "major", "major", "minor", "minor", "mixolydian", "dorian"];
-    pub const METER: &'static [&'static str] = &["4/4", "4/4", "4/4", "3/4", "3/4", "6/8"];
-    pub const TEMPO: &'static [&'static str] = &[
-        "slow and spacious",
-        "unhurried, walking pace",
-        "moving, with forward lean",
-        "lively",
-    ];
-    pub const LEAN: &'static [&'static str] = &[
-        "Appalachian ballad",
-        "old-time string band",
-        "bluegrass",
-        "Western and cowboy song",
-        "Bakersfield and California country",
-        "Texas songwriter storytelling",
-        "Cajun waltz",
-        "Cajun two-step",
-        "Louisiana Creole and zydeco",
-        "Acadian fiddle song",
-        "English broadside ballad",
-        "Scottish ballad",
-        "Irish air",
-        "Irish drinking song",
-        "Welsh hymn tune",
-        "Breton dance song",
-        "Delta or Piedmont blues",
-        "gospel and the spirituals",
-        "1960s folk revival",
-        "Laurel Canyon songwriting",
-        "Nashville country waltz",
-        "present-day alt-country and Americana",
-    ];
-    pub const WORLD: &'static [&'static str] = &[
-        "fado",
-        "Cape Verdean coladeira",
-        "Mexican son jarocho",
-        "Tex-Mex conjunto",
-        "French chanson",
-        "Argentine zamba",
-        "klezmer",
-        "Malian desert blues",
-        "Brazilian forro",
-    ];
-    pub const REGISTER: &'static [&'static str] = &[
-        "celebratory",
-        "celebratory",
-        "playful",
-        "playful",
-        "wry and funny",
-        "tender",
-        "flirtatious",
-        "defiant",
-        "devotional",
-        "restless, road-bound",
-        "serene",
-        "bittersweet",
-        "mournful",
-    ];
+/// Year the persona's age is counted from: 1999, when deep learning first
+/// went to market (CLAUDE.md).
+pub const PERSONA_EPOCH: i32 = 1999;
+
+/// Emotional registers for a prompt that leaves the feeling open.
+/// Duplicates weight the uniform pick toward the lighter registers.
+pub const REGISTERS: &[&str] = &[
+    "celebratory",
+    "celebratory",
+    "playful",
+    "playful",
+    "wry and funny",
+    "tender",
+    "flirtatious",
+    "defiant",
+    "devotional",
+    "restless, road-bound",
+    "serene",
+    "bittersweet",
+    "mournful",
+];
+
+/// The persona's age in `year`.
+pub const fn persona_age(year: i32) -> i32 {
+    year - PERSONA_EPOCH
 }
 
-/// Result of `songDirection()`.
-#[derive(Clone, Debug)]
-pub struct SongDirection {
-    pub mode: &'static str,
-    pub meter: &'static str,
-    pub tempo: &'static str,
-    pub lean: String,
-    pub register: &'static str,
+/// One register, uniformly from `REGISTERS` (one draw).
+pub fn pick_register(rng: &mut Rng) -> &'static str {
+    pick(rng, REGISTERS, "playful")
 }
 
-fn pick<'a, T: Copy>(a: &'a [T], rand: &mut dyn FnMut() -> f64) -> T {
-    let idx = (rand() * a.len() as f64).floor() as usize;
-    a[idx.min(a.len() - 1)]
-}
-
-/// Ports `songDirection()`. Call order: mode, meter, tempo, lean, then (0.17 roll, world pick),
-/// then register -- matching JS's object-literal evaluation order left to right, plus the
-/// separate `reg` draw `songPrompt` takes from a second `songDirection()` call (see `song_prompt`).
-pub fn song_direction(rand: &mut dyn FnMut() -> f64) -> SongDirection {
-    let mode = pick(Directions::MODE, rand);
-    let meter = pick(Directions::METER, rand);
-    let tempo = pick(Directions::TEMPO, rand);
-    let lean_base = pick(Directions::LEAN, rand);
-    let lean = if rand() < 0.17 {
-        format!("{}, with a touch of {}", lean_base, pick(Directions::WORLD, rand))
-    } else {
-        lean_base.to_string()
-    };
-    let register = pick(Directions::REGISTER, rand);
-    SongDirection { mode, meter, tempo, lean, register }
-}
-
-/// Ports `songPrompt(mood, voicePref, dir)`. `dir` defaults to `styleDirection(None, rand)` when
-/// not given, as JS does (`dir=dir||styleDirection(null)`). `year` replaces `new Date().getFullYear()`.
-pub fn song_prompt(
-    mood: &str,
-    voice_pref: Option<&str>,
-    dir: Option<Direction>,
-    year: i32,
-    rand: &mut dyn FnMut() -> f64,
-) -> String {
-    let dir = dir.unwrap_or_else(|| style_direction(None, rand));
-    let reg = song_direction(rand).register;
-    let f = form_text(dir.form);
-    let age = year - 1999;
-
-    // JS parity: `${voicePref&&voicePref!=='auto'?...:''}\n` -- the newline after the
-    // conditional is a literal part of the template, present even when the voice
-    // clause is empty, so it produces a blank line. `voice_line` holds only the
-    // conditional text; the trailing "\n" is added at the call site below.
-    let voice_line = match voice_pref {
-        Some(v) if v != "auto" => format!("It will be sung by a {}.", v),
-        _ => String::new(),
-    };
-    let world_line = match dir.world {
-        Some(w) => format!(" A touch of {} may season it.", w),
+/// Renders the songwriter prompt for `mood` in style direction `dir`.
+/// `voice` names the singer when the user chose one; `register` is the
+/// feeling to use when the mood leaves it open; `year` sets the persona's
+/// age (`persona_age`).
+pub fn song_prompt(mood: &str, voice: Option<Voice>, dir: &Direction, register: &str, year: i32) -> String {
+    let age = persona_age(year);
+    let form = dir.form.form();
+    // The newline after the voice clause is part of the template, so an
+    // absent clause leaves a blank line.
+    let voice_line = match voice {
+        Some(v) => format!("It will be sung by a {v}."),
         None => String::new(),
     };
-    let form_note = if f.note.is_empty() { String::new() } else { f.note.to_string() };
-
-    let band_json = band_json(&dir);
+    let world_line = match dir.world {
+        Some(w) => format!(" A touch of {w} may season it."),
+        None => String::new(),
+    };
+    // Band serialises in field order with camelCase names: drums, bass,
+    // harmonyGuitar, harp, violin, choir, harmonies, doubles.
+    let band_json = serde_json::to_string(&dir.band).unwrap_or_default();
 
     format!(
         r#"You are Claude, the AI made by Anthropic, working here as a songwriting robot. Reckon your age from 1999, the year deep learning first went to market: it is {year}, so you are {age}. Count your birthplace as Menlo Park, California, and your home as the American West; your sensibility is that of someone born in 1999 and raised there, with that generation's eye, humor and plain speech. You are a machine and say so when it matters, plainly and without science-fiction cliche, but most songs are not about you.
@@ -196,27 +126,11 @@ Angle-bracketed items are placeholders; replace every one with a real value (num
         meter = dir.meter,
         tempo_lo = dir.tempo_lo,
         tempo_hi = dir.tempo_hi,
-        reg = reg,
+        reg = register,
         guitar = dir.guitar,
         band_json = band_json,
-        form_label = f.label,
-        form_note = form_note,
-        form_text = f.text,
-    )
-}
-
-/// The band object of the reply format: drums first, then bass,
-/// harmonyGuitar, harp, violin, choir, harmonies, doubles.
-fn band_json(dir: &Direction) -> String {
-    format!(
-        r#"{{"drums":"{}","bass":{},"harmonyGuitar":{},"harp":{},"violin":{},"choir":{},"harmonies":{},"doubles":{}}}"#,
-        dir.band.drums,
-        dir.band.bass,
-        dir.band.harmony_guitar,
-        dir.band.harp,
-        dir.band.violin,
-        dir.band.choir,
-        dir.band.harmonies,
-        dir.band.doubles,
+        form_label = form.label,
+        form_note = form.note,
+        form_text = form.plan_text(),
     )
 }

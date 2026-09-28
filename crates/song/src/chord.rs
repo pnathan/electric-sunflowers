@@ -120,6 +120,12 @@ pub struct Chord {
     pub symbol: String,
     /// The matched quality suffix ("m7", "" for a major triad).
     pub quality: &'static str,
+    /// The quality's intervals above the root in semitones, in the order of
+    /// the quality table: ascending, except that an added tone (the 9th of
+    /// 6/9, 9, add9; the 11th of 11; the 13th of 13; the b9 of 7b9) comes
+    /// last. Not serialised; `quality` names it.
+    #[serde(skip)]
+    pub intervals: &'static [u8],
     pub root: Pc,
     /// Lowest note: the slash bass, else the root.
     pub bass: Pc,
@@ -151,6 +157,14 @@ impl Chord {
     }
 }
 
+impl Chord {
+    /// The chord's pitch classes in quality-table order (see `intervals`):
+    /// root first, an added tone last.
+    pub fn tones_in_order(&self) -> impl Iterator<Item = Pc> + '_ {
+        self.intervals.iter().map(move |&iv| self.root.transpose(iv as i32))
+    }
+}
+
 impl fmt::Display for Chord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.symbol)
@@ -173,7 +187,7 @@ fn normalise(s: &str) -> String {
     }
 }
 
-fn build(symbol: String, root: Pc, bass: Pc, quality: &'static str, iv: &[u8]) -> Chord {
+fn build(symbol: String, root: Pc, bass: Pc, quality: &'static str, iv: &'static [u8]) -> Chord {
     let has = |x: u8| iv.contains(&x);
     let at = |x: u8| root.transpose(x as i32);
     let tones = PcSet::from_intervals(root, iv);
@@ -213,7 +227,7 @@ fn build(symbol: String, root: Pc, bass: Pc, quality: &'static str, iv: &[u8]) -
     if has(8) {
         essential.insert(at(8));
     }
-    Chord { symbol, quality, root, bass, tones, third, fifth, seventh, essential }
+    Chord { symbol, quality, intervals: iv, root, bass, tones, third, fifth, seventh, essential }
 }
 
 /// Parses a chord symbol and returns the text of the quality that was not
@@ -347,6 +361,14 @@ mod tests {
         assert!(c.essential.contains(Pc::new(5)));
         assert_eq!(Chord::parse(""), Err(ChordError::Empty));
         assert!(matches!(Chord::parse("N.C."), Err(ChordError::NoRoot(_))));
+    }
+
+    #[test]
+    fn intervals_keep_table_order() {
+        assert_eq!(Chord::parse("C9").unwrap().intervals, &[0, 4, 7, 10, 2]);
+        assert_eq!(Chord::parse("Cadd2").unwrap().intervals, &[0, 2, 4, 7]);
+        let d: Vec<u8> = Chord::parse("Dm7").unwrap().tones_in_order().map(Pc::get).collect();
+        assert_eq!(d, vec![2, 5, 9, 0]);
     }
 
     #[test]

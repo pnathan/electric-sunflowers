@@ -9,6 +9,7 @@ sfcore = { path = "../core" }
 song = { path = "../song" }
 compose = { path = "../compose" }
 dsp = { path = "../dsp" }
+instruments = { path = "../instruments" }
 voice = { path = "../voice" }
 arrange = { path = "../arrange" }
 serde_json.workspace = true

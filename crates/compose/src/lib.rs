@@ -2,6 +2,7 @@
 //! setting), pitch (melody), melody profile, transposition for the voice,
 //! and preparation for rendering.
 
+pub mod contour;
 pub mod form;
 pub mod melody;
 pub mod pitch;

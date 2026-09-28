@@ -17,8 +17,12 @@
 //!   Huopaniemi, Karjalainen, Janosy 1996).
 //! - Tuning: the loop delay `SR / f0` is the integer line length `L`, the
 //!   one-pole phase delay at f0 (`dsp::delay::one_pole_phase_delay`), and a
-//!   first-order Thiran allpass for the rest, delta in [0.5, 1.5) (Thiran
-//!   1971; Laakso, Valimaki, Karjalainen, Laine 1996).
+//!   first-order Thiran allpass for the rest (Thiran 1971; Laakso, Valimaki,
+//!   Karjalainen, Laine 1996). Without a glide the allpass delay delta is
+//!   in [0.5, 1.5). With a glide, `L` is taken from the sharp starting
+//!   period, so the allpass starts in [0.5, 1.5) and carries the whole glide
+//!   (delta up to 1.5 plus the glide in samples, at most `DELTA_MAX`); see
+//!   `FracAllpass`.
 //! - Two polarisations, summed without coupling: the main one at
 //!   `-detune / 4` cents with the full T60, the second at `+detune` cents,
 //!   amplitude 0.42 and 0.62 T60. With the default detune 1.4 that is -0.35
@@ -57,7 +61,7 @@
 //! stop). Each span runs one inner loop with no branch per sample. The delay
 //! line is `f32`; filter state is `f64`.
 
-use dsp::delay::{one_pole_phase_delay, DelayLine, Thiran1};
+use dsp::delay::{one_pole_phase_delay, DelayLine};
 use dsp::onepole::OnePole;
 use sfcore::random::Rng;
 use sfcore::SR_F;
@@ -88,6 +92,14 @@ const GLIDE_TAU: f64 = 0.07;
 /// The glide ends when its remaining offset falls below this many cents
 /// (the step left at its end is far below the pitch JND of about 3 cents).
 const GLIDE_FLOOR_CENTS: f64 = 0.02;
+
+/// Largest allpass delay, samples. Leaves `GLIDE_MAX_SAMPLES` of glide
+/// above the [0.5, 1.5) range of a note without glide.
+const DELTA_MAX: f64 = 3.5;
+
+/// Largest glide in samples of loop delay: a deeper glide is reduced to
+/// this. 5 cents at E2 (the guitar's lowest note) is 1.55 samples.
+const GLIDE_MAX_SAMPLES: f64 = DELTA_MAX - 1.5;
 
 /// Second polarisation: amplitude, T60 factor, glide factor.
 const POL2_AMP: f64 = 0.42;
@@ -363,6 +375,44 @@ impl PluckScratch {
     }
 }
 
+/// First-order Thiran allpass fractional delay `y = c x + x1 - c y1`,
+/// `c = (1 - D) / (1 + D)` (Thiran 1971), for D in [0.5, `DELTA_MAX`].
+/// The pole -c lies inside the unit circle for every D > 0. Its phase delay
+/// is D at DC and falls with frequency; at D = 3 it is 2.6 samples at
+/// w = 0.5 rad/sample (3.5 kHz), which on the 538-sample loop of E2 moves
+/// the 42nd harmonic by 1.2 cents. `dsp::delay::Thiran1` clamps D to
+/// [0.5, 1.5], which cut the tension glide on notes whose steady delta sits
+/// low in that range; this local copy has the wider range.
+#[derive(Clone, Copy, Debug, Default)]
+struct FracAllpass {
+    c: f64,
+    x1: f64,
+    y1: f64,
+}
+
+impl FracAllpass {
+    fn new(delta: f64) -> Self {
+        let mut a = FracAllpass::default();
+        a.set_delay(delta);
+        a
+    }
+
+    /// Sets the delay, clamped to [0.5, `DELTA_MAX`]; NaN maps to 1.
+    #[inline]
+    fn set_delay(&mut self, delta: f64) {
+        let d = if delta.is_nan() { 1.0 } else { delta.clamp(0.5, DELTA_MAX) };
+        self.c = (1.0 - d) / (1.0 + d);
+    }
+
+    #[inline(always)]
+    fn tick(&mut self, x: f64) -> f64 {
+        let y = self.c * x + self.x1 - self.c * self.y1;
+        self.x1 = x;
+        self.y1 = y;
+        y
+    }
+}
+
 /// `|H(e^jw)|` of the loss filter `(1 - p) / (1 - p z^-1)`.
 #[inline]
 pub(crate) fn loss_mag(p: f64, w: f64) -> f64 {
@@ -376,7 +426,7 @@ struct Loop<'a> {
     tap: usize,
     lp: OnePole,
     g: f64,
-    ap: Thiran1,
+    ap: FracAllpass,
 }
 
 impl Loop<'_> {
@@ -422,15 +472,12 @@ impl Loop<'_> {
     }
 
     /// As `run`, with the loop delay `d` (line plus allpass, samples)
-    /// ramped by `dd` per sample through the allpass alone: the line length
-    /// stays fixed and `Thiran1` clamps its delay to [0.5, 1.5], so the glide
-    /// depth is limited to the headroom `delta - 0.5`, where `delta` is the
-    /// fractional part of the loop delay left after the line (in [0.5, 1.5)).
-    /// A glide of `c` cents needs `N (1 - 2^(-c/1200))` samples for a period
-    /// of `N` samples, so how much of it survives depends on `delta`, not on
-    /// pitch alone, and a note at any pitch with small `delta` keeps only a
-    /// fraction of its glide. Moving the tap instead would repeat a sample
-    /// at each step and inject DC into the loop.
+    /// ramped by `dd` per sample through the allpass alone. The line length
+    /// is fixed and taken from the sharp starting period, so the allpass
+    /// starts in [0.5, 1.5) and ends at the steady delta: a glide of `c`
+    /// cents needs `N (1 - 2^(-c/1200))` samples for a period of `N`
+    /// samples, all of it inside the allpass range. Moving the tap instead
+    /// would repeat a sample at each step and inject DC into the loop.
     #[allow(clippy::too_many_arguments)]
     #[inline]
     fn run_glide(&mut self, out: &mut [f32], gain: f64, mut e: f64, de: f64, mut h: f64, dh: f64, d: &mut f64, dd: f64) -> f64 {
@@ -492,7 +539,21 @@ pub fn pluck_into(out: &mut [f32], start: usize, f0: f64, len: usize, p: &PluckP
         }
         let g = (rho / loss_mag(pole, w0)).min(G_MAX);
         let tau = one_pole_phase_delay(pole, w0);
-        let lf = (n_period - tau - 0.5).floor();
+
+        // Glide depth in cents, reduced so it spans at most
+        // GLIDE_MAX_SAMPLES of loop delay.
+        let gl_req = p.glide * if second { POL2_GLIDE } else { 1.0 };
+        let glide_on = gl_req > GLIDE_FLOOR_CENTS && gl_req.is_finite();
+        let gl = if glide_on {
+            let room = (1.0 - GLIDE_MAX_SAMPLES / n_period).max(1e-9);
+            gl_req.min(-1200.0 * room.log2())
+        } else {
+            0.0
+        };
+        // Line length from the sharp starting period (the steady period
+        // without a glide): the allpass starts in [0.5, 1.5).
+        let n_start = n_period * (-gl / 1200.0).exp2();
+        let lf = (n_start - tau - 0.5).floor();
         if lf < 3.0 || lf > L_MAX as f64 {
             continue;
         }
@@ -517,15 +578,14 @@ pub fn pluck_into(out: &mut [f32], start: usize, f0: f64, len: usize, p: &PluckP
         for &x in &exc[..l] {
             line.push(x as f32);
         }
-        let mut lpl = Loop { line, tap: l - 1, lp, g, ap: Thiran1::new(delta) };
+        let mut lpl = Loop { line, tap: l - 1, lp, g, ap: FracAllpass::new(n_start - tau - lf) };
         // Warm-up: one pass round the loop with no output.
         for _ in 0..l {
             lpl.step(l - 1);
         }
 
         // Glide setup: target loop delay every GLIDE_CTRL samples.
-        let gl = p.glide * if second { POL2_GLIDE } else { 1.0 };
-        let glide_on = gl > GLIDE_FLOOR_CENTS && gl.is_finite();
+        let glide_on = gl > GLIDE_FLOOR_CENTS;
         let glide_decay = (-(GLIDE_CTRL as f64) / (GLIDE_TAU * SR_F)).exp();
         let glide_end = if glide_on {
             let n = GLIDE_TAU * SR_F * (gl / GLIDE_FLOOR_CENTS).ln();

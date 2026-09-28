@@ -1,274 +1,183 @@
-//! `renderSong` and the entry point into the mix (engine.js ~867-952,
-//! 1179-1216). Assembles the four vocal tracks (`vocals.rs`), the six band
-//! tracks and the body-convolution pass (`band.rs`) into a `dsp::mix::Render`,
-//! then exposes `mix` over `dsp::mix::mix_song`.
+//! Song rendering: compose (`compose::prepare`), arrange
+//! (`arrange::arrange`), then render the ten tracks (the four vocal tracks
+//! in `vocals`, the six band tracks in `band`) into a `dsp::mix::Render`;
+//! `mix` runs the mixer over it.
+//!
+//! `render_song` renders the tracks one after another and reports
+//! progress; `render_song_threaded` renders them in parallel. Every track
+//! draws only from its own streams and the choir sums its singers in plan
+//! order on both paths, so the two give the same samples.
 
 use compose::prepare::{prepare, Prepared};
-use song::{Song, Voice};
 use dsp::mix::{mix_song, Render, TrackSpec};
+use sfcore::time::len_samples;
 use sfcore::tuning::Tuning;
-use sfcore::SR_F;
+use song::{Song, Voice};
 
-use crate::band;
+use crate::band::{self, BandTrack};
 use crate::vocals;
 
-/// `renderSong`'s return value: the prepared song data (form/timeline/melody),
-/// the sample length, and every track loaded into a `dsp::mix::Render`.
+/// A rendered song: its composition, its length in samples, and every
+/// track loaded into a `dsp::mix::Render`.
 pub struct RenderedSong {
     pub prepared: Prepared,
     pub len: usize,
     pub render: Render,
-    /// A copy of each raw track's channels exactly as `renderSong`'s
-    /// `tracks[key]` holds it (post body-convolution, pre `processTrack`),
-    /// in `TRACKS` order. `dsp::mix::Render` keeps the same data privately
-    /// (and consumes it as tracks are processed), so this is the only way
-    /// to inspect a track's raw signal, e.g. for parity comparison.
+    /// With the `capture_raw` feature: a copy of each track's channels as
+    /// loaded into `render` (after the body, before the channel strip), in
+    /// mix order; a song without drums has no drums entry. Empty otherwise.
     pub raw_tracks: Vec<(&'static str, Vec<Vec<f32>>)>,
 }
 
-/// `renderSong(song,seed,voiceKey,progress)`, with the async progress ticks
-/// dropped (this is a synchronous, single-threaded port; see CLAUDE.md).
-/// `voice` is JS's `voiceKey`: `None` is `'auto'` (use the song's own voice).
-/// Sequential path: every track is rendered one at a time, in the same
-/// order `render_song_threaded` uses for its final sum, so the two are
-/// bit-identical (see `crates/engine/tests/threaded_parity.rs`).
+/// Progress callback: a stage label and the fraction done.
+pub type ProgressFn<'a> = &'a mut dyn FnMut(&str, f64);
+
+/// Mix key of a band track.
+fn key(t: BandTrack) -> &'static str {
+    match t {
+        BandTrack::Guitar => "guitar",
+        BandTrack::HarmonyGuitar => "hg",
+        BandTrack::Bass => "bass",
+        BandTrack::Drums => "drums",
+        BandTrack::Harp => "harp",
+        BandTrack::Violin => "violin",
+    }
+}
+
+/// Renders `song` with `seed`, one track at a time. `voice` `None` uses the
+/// song's voice. `progress` receives a label and a fraction before each
+/// stage. `tuning` is unused (the instruments and the voice carry their
+/// own settings); kept for the callers until the engine rewrite.
 pub fn render_song(
     song: &Song,
     seed: u32,
     voice: Option<Voice>,
     tuning: &Tuning,
-    progress: Option<&mut dyn FnMut(&str, f64)>,
+    progress: Option<ProgressFn<'_>>,
 ) -> RenderedSong {
-    render_song_impl(song, seed, voice, tuning, progress, false)
+    render_impl(song, seed, voice, tuning, progress, false)
 }
 
-/// Same as `render_song`, but the ten tracks are rendered on separate
-/// threads (via `std::thread::scope`) since every one of them draws from
-/// its own independent rng stream (the one exception, the choir's shared
-/// `'choirv'` stream, is handled by `vocals::render_choir_threaded`, which
-/// still draws that stream sequentially and only parallelizes the
-/// per-singer `render_voice` calls that follow it). The four body
-/// convolutions (guitar/hg/harp/violin) also run in parallel: each is a
-/// pure function of its own already-rendered track and touches no shared
-/// state. No progress callback: a `&mut dyn FnMut` cannot be shared across
-/// threads, and per-track ticks would arrive out of order anyway.
+/// `render_song` with the tracks rendered in parallel (rayon) and no
+/// progress. Same samples as `render_song`.
 pub fn render_song_threaded(song: &Song, seed: u32, voice: Option<Voice>, tuning: &Tuning) -> RenderedSong {
-    render_song_impl(song, seed, voice, tuning, None, true)
+    render_impl(song, seed, voice, tuning, None, true)
 }
 
-fn render_song_impl(
+/// The ten tracks in mix order, as (key, channels).
+type Tracks = Vec<(&'static str, Vec<Vec<f32>>)>;
+
+fn render_impl(
     song: &Song,
     seed: u32,
     voice: Option<Voice>,
-    tuning: &Tuning,
-    mut progress: Option<&mut dyn FnMut(&str, f64)>,
+    _tuning: &Tuning,
+    mut progress: Option<ProgressFn<'_>>,
     threaded: bool,
 ) -> RenderedSong {
     sfcore::fp::flush_denormals();
-    macro_rules! step {
-        ($label:expr, $frac:expr) => {
-            if let Some(p) = progress.as_deref_mut() {
-                p($label, $frac);
-            }
-        };
-    }
+    let mut step = |label: &str, frac: f64| {
+        if let Some(p) = progress.as_deref_mut() {
+            p(label, frac);
+        }
+    };
 
     let prepared = prepare(song, seed, voice);
-    let len = (prepared.timeline.end * SR_F).ceil() as usize;
-    let form = &prepared.form;
-    let tl = &prepared.timeline;
+    let len = len_samples(prepared.timeline.end);
+    let seed = seed as u64;
+    let arr = arrange::arrange(song, &prepared, seed);
+    let v = &arr.vocals;
 
-    let (lead, harmony, doubles, choir, guitar, bass, drums, harp, violin, hg);
-    if threaded {
-        let mut lead_s = None;
-        let mut harmony_s = None;
-        let mut doubles_s = None;
-        let mut choir_s = None;
-        let mut guitar_s = None;
-        let mut bass_s = None;
-        let mut drums_s = None;
-        let mut harp_s = None;
-        let mut vhg_s = None;
-        std::thread::scope(|s| {
-            s.spawn(|| {
+    let tracks: Tracks = if threaded {
+        let (mut lead, mut harmony, mut doubles, mut choir) = (None, None, None, None);
+        let mut band: [Option<Vec<Vec<f32>>>; 6] = Default::default();
+        rayon::scope(|s| {
+            s.spawn(|_| {
                 sfcore::fp::flush_denormals();
-                lead_s = Some(vocals::render_lead(&prepared, seed, len, tuning));
+                lead = Some(vocals::lead(v, seed, len));
             });
-            s.spawn(|| {
+            s.spawn(|_| {
                 sfcore::fp::flush_denormals();
-                harmony_s = Some(vocals::render_harmony(&prepared, song, seed, len, tuning));
+                harmony = Some(vocals::harmony(v, seed, len));
             });
-            s.spawn(|| {
+            s.spawn(|_| {
                 sfcore::fp::flush_denormals();
-                doubles_s = Some(vocals::render_doubles(&prepared, seed, len, tuning));
+                doubles = Some(vocals::doubles(v, seed, len));
             });
-            s.spawn(|| {
+            s.spawn(|_| {
                 sfcore::fp::flush_denormals();
-                choir_s = Some(vocals::render_choir_threaded(&prepared, seed, len, tuning));
+                choir = Some(vocals::choir(v, seed, len, true));
             });
-            s.spawn(|| {
-                sfcore::fp::flush_denormals();
-                guitar_s = Some(band::render_guitar(song, form, tl, seed, tuning));
-            });
-            s.spawn(|| {
-                sfcore::fp::flush_denormals();
-                bass_s = Some(band::render_bass(song, form, tl, seed));
-            });
-            s.spawn(|| {
-                sfcore::fp::flush_denormals();
-                drums_s = Some(band::render_drums(song, form, tl, seed));
-            });
-            s.spawn(|| {
-                sfcore::fp::flush_denormals();
-                harp_s = Some(band::render_harp(song, form, tl, seed));
-            });
-            s.spawn(|| {
-                sfcore::fp::flush_denormals();
-                vhg_s = Some(band::render_violin_and_harmony_guitar(&prepared, song, seed, len, song.break_lead));
-            });
+            for (slot, t) in band.iter_mut().zip(BandTrack::ALL) {
+                let arr = &arr;
+                s.spawn(move |_| {
+                    sfcore::fp::flush_denormals();
+                    *slot = band::render(t, arr, seed, len);
+                });
+            }
         });
-        lead = lead_s.unwrap();
-        harmony = harmony_s.unwrap();
-        doubles = doubles_s.unwrap();
-        choir = choir_s.unwrap();
-        guitar = guitar_s.unwrap();
-        bass = bass_s.unwrap();
-        drums = drums_s.unwrap();
-        harp = harp_s.unwrap();
-        let (v, h) = vhg_s.unwrap();
-        violin = v;
-        hg = h;
+        let [dl, dr] = doubles.unwrap_or_default();
+        let [cl, cr] = choir.unwrap_or_default();
+        let mut out: Tracks = vec![
+            ("lead", vec![lead.unwrap_or_default()]),
+            ("harmony", vec![harmony.unwrap_or_default()]),
+            ("doubles", vec![dl, dr]),
+            ("choir", vec![cl, cr]),
+        ];
+        for (t, chs) in BandTrack::ALL.into_iter().zip(band) {
+            if let Some(chs) = chs {
+                out.push((key(t), chs));
+            }
+        }
+        out
     } else {
-        step!("Recording the lead vocal", 0.05);
-        lead = vocals::render_lead(&prepared, seed, len, tuning);
-
-        step!("Recording the harmony singer", 0.25);
-        harmony = vocals::render_harmony(&prepared, song, seed, len, tuning);
-
-        step!("Recording the doubled melody", 0.38);
-        doubles = vocals::render_doubles(&prepared, seed, len, tuning);
-
-        step!("Gathering the choir", 0.5);
-        choir = vocals::render_choir(&prepared, seed, len, tuning);
-
-        step!("Tracking the guitar", 0.72);
-        guitar = band::render_guitar(song, form, tl, seed, tuning);
-
-        step!("Tracking bass and drums", 0.8);
-        bass = band::render_bass(song, form, tl, seed);
-        drums = band::render_drums(song, form, tl, seed);
-
-        step!("Tracking harp and strings", 0.86);
-        harp = band::render_harp(song, form, tl, seed);
-        let (v, h) = band::render_violin_and_harmony_guitar(&prepared, song, seed, len, song.break_lead);
-        violin = v;
-        hg = h;
-    }
-
-    step!("Mixing", 0.94);
-    step!("Resonating the instrument bodies", 0.93);
-
-    // `for(const k in BODY_OF){...}` (engine.js ~945-949), in BODY_OF's
-    // declared order: guitar, hg, harp, violin. Each convolution is a pure
-    // function of its own already-rendered track, so the threaded path
-    // runs all four on separate threads; the result is identical either
-    // way (no shared state, no summation to reorder).
-    let mut guitar = guitar;
-    let mut hg_track = vec![hg];
-    let mut harp = harp;
-    let mut violin_track = vec![violin];
-    if threaded {
-        let (mut g, mut h, mut hp, mut v) = (None, None, None, None);
-        std::thread::scope(|s| {
-            s.spawn(|| {
-                sfcore::fp::flush_denormals();
-                g = band::apply_body("guitar", seed, len, &guitar[0]);
-            });
-            s.spawn(|| {
-                sfcore::fp::flush_denormals();
-                h = band::apply_body("hg", seed, len, &hg_track[0]);
-            });
-            s.spawn(|| {
-                sfcore::fp::flush_denormals();
-                hp = band::apply_body("harp", seed, len, &harp[0]);
-            });
-            s.spawn(|| {
-                sfcore::fp::flush_denormals();
-                v = band::apply_body("violin", seed, len, &violin_track[0]);
-            });
-        });
-        if let Some([l, r]) = g {
-            guitar = vec![l, r];
+        let mut out: Tracks = Vec::with_capacity(10);
+        step("Recording the lead vocal", 0.05);
+        out.push(("lead", vec![vocals::lead(v, seed, len)]));
+        step("Recording the harmony singer", 0.25);
+        out.push(("harmony", vec![vocals::harmony(v, seed, len)]));
+        step("Recording the doubled melody", 0.38);
+        let [dl, dr] = vocals::doubles(v, seed, len);
+        out.push(("doubles", vec![dl, dr]));
+        step("Gathering the choir", 0.5);
+        let [cl, cr] = vocals::choir(v, seed, len, false);
+        out.push(("choir", vec![cl, cr]));
+        for (t, label, frac) in [
+            (BandTrack::Guitar, "Tracking the guitar", 0.72),
+            (BandTrack::HarmonyGuitar, "Tracking the harmony guitar", 0.76),
+            (BandTrack::Bass, "Tracking bass and drums", 0.8),
+            (BandTrack::Drums, "Tracking bass and drums", 0.83),
+            (BandTrack::Harp, "Tracking harp and strings", 0.86),
+            (BandTrack::Violin, "Tracking harp and strings", 0.9),
+        ] {
+            step(label, frac);
+            if let Some(chs) = band::render(t, &arr, seed, len) {
+                out.push((key(t), chs));
+            }
         }
-        if let Some([l, r]) = h {
-            hg_track = vec![l, r];
-        }
-        if let Some([l, r]) = hp {
-            harp = vec![l, r];
-        }
-        if let Some([l, r]) = v {
-            violin_track = vec![l, r];
-        }
-    } else {
-        if let Some([l, r]) = band::apply_body("guitar", seed, len, &guitar[0]) {
-            guitar = vec![l, r];
-        }
-        if let Some([l, r]) = band::apply_body("hg", seed, len, &hg_track[0]) {
-            hg_track = vec![l, r];
-        }
-        if let Some([l, r]) = band::apply_body("harp", seed, len, &harp[0]) {
-            harp = vec![l, r];
-        }
-        if let Some([l, r]) = band::apply_body("violin", seed, len, &violin_track[0]) {
-            violin_track = vec![l, r];
-        }
-    }
+        step("Mixing", 0.94);
+        out
+    };
 
-    // See the `capture_raw` feature doc in crates/engine/Cargo.toml: only
-    // tests read `raw_tracks`, so cloning every track (~0.5 GB at the demo's
-    // length) is dead weight in the real sunflower build and is skipped
-    // there. Output is unaffected either way; this only changes whether a
-    // second, unused copy of each track is briefly allocated.
     #[cfg(feature = "capture_raw")]
-    let raw_tracks: Vec<(&'static str, Vec<Vec<f32>>)> = vec![
-        ("lead", lead.clone()),
-        ("harmony", harmony.clone()),
-        ("doubles", doubles.clone()),
-        ("choir", choir.clone()),
-        ("guitar", guitar.clone()),
-        ("hg", hg_track.clone()),
-        ("bass", bass.clone()),
-        ("drums", drums.clone()),
-        ("harp", harp.clone()),
-        ("violin", violin_track.clone()),
-    ];
+    let raw_tracks = tracks.clone();
     #[cfg(not(feature = "capture_raw"))]
-    let raw_tracks: Vec<(&'static str, Vec<Vec<f32>>)> = Vec::new();
+    let raw_tracks = Vec::new();
 
     let mut render = Render::new(len);
-    render.set_track("lead", lead);
-    render.set_track("harmony", harmony);
-    render.set_track("doubles", doubles);
-    render.set_track("choir", choir);
-    render.set_track("guitar", guitar);
-    render.set_track("hg", hg_track);
-    render.set_track("bass", bass);
-    render.set_track("drums", drums);
-    render.set_track("harp", harp);
-    render.set_track("violin", violin_track);
-
+    for (k, chs) in tracks {
+        render.set_track(k, chs);
+    }
     RenderedSong { prepared, len, render, raw_tracks }
 }
 
-/// `mixSong(render,enabled,seed)`, returning the stereo `(L,R)` buffers.
+/// Mixes the tracks `enabled` selects; returns (left, right).
 pub fn mix(rendered: &mut RenderedSong, enabled: impl Fn(&TrackSpec) -> bool, seed: u32) -> (Vec<f32>, Vec<f32>) {
     let result = mix_song(&mut rendered.render, enabled, seed as i64, None);
     (result.l, result.r)
 }
 
-/// Same as `mix`, but runs `dsp::mix::mix_song_threaded` (parallel
-/// per-track EQ/gain/compression, summed in `TRACKS` order as usual): see
-/// its doc comment. Bit-identical to `mix`.
+/// `mix` with the per-track channel strips run in parallel. Same samples.
 pub fn mix_threaded(rendered: &mut RenderedSong, enabled: impl Fn(&TrackSpec) -> bool, seed: u32) -> (Vec<f32>, Vec<f32>) {
     let result = dsp::mix::mix_song_threaded(&mut rendered.render, enabled, seed as i64);
     (result.l, result.r)

@@ -1,26 +1,44 @@
-//! Counter-lines and fills: note lists for the violin's counter-melodies
-//! and fills and the harmony guitar's fills. No rendering.
+//! Instrumental lines shared by the violin and the harmony guitar:
+//! counter-lines and fills, as notes in seconds. No rendering.
+//!
+//! Counter-line: a greedy walk (first-species style: one note per chord
+//! segment, or per ~1.7 s of it) through the chord tones in `[lo, hi]`.
+//! Cost per candidate: interval size (steps 0.35 per semitone; up to a
+//! fourth 0.6 + 0.35 per semitone; leaps 2.4 + 0.7 per semitone), +4.5 for a
+//! repeated note, +1.2 for returning to the note before last, -0.6 for a
+//! leap of more than a major third against the previous direction (leap
+//! recovery), +0.8 for a non-chord tone (the last sub-segment may take the
+//! next chord's tones), 0.22 per semitone from an arch target (30% of the
+//! range at the section edges, 70% in the middle), +6 within a whole step of
+//! a sounding lead note and +1.5 at an octave of one, plus uniform noise
+//! 0..0.7.
+//!
+//! Fill: a descending scalar run in the gap after a lyric line (the gap from
+//! one beat after the last syllable to a quarter beat before the next
+//! line's first onset, at least 1.25 beats), one note per grid step, two to
+//! five notes, in the local scale, landing on a tone of the chord at the end
+//! of the gap.
 
 use compose::form::{Form, Sec};
 use compose::melody::LeadNote;
 use compose::theory::local_scale;
 use compose::timeline::Timeline;
-use sfcore::js;
-use sfcore::rng::rng_for;
+use sfcore::random::{Rng, Tag};
 use song::{Pc, PcSet, Song};
 
-/// One note in a counter-line or fill.
-#[derive(Clone, Copy, Debug)]
-pub struct Note {
+/// One note of a counter-line or a fill.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineNote {
     pub t0: f64,
     pub t1: f64,
-    pub m: i32,
-    pub v: f64,
+    pub midi: i32,
+    pub vel: f32,
 }
 
-/// A greedy walk that threads one note per (sub-)segment through the chord
-/// tones in `[lo,hi]`, preferring steps, following an arch across the
-/// section, and steering clear of the `lead` notes sounding at the time.
+/// Counter-line in `[lo, hi]` over the segments of the sections that pass
+/// `filter`, avoiding the `lead` notes. `long` plays one note per segment.
+/// Segment k draws from `Rng::event(seed, tag, k)`.
+#[allow(clippy::too_many_arguments)]
 pub fn counter_line(
     form: &Form,
     tl: &Timeline,
@@ -28,57 +46,43 @@ pub fn counter_line(
     lo: i32,
     hi: i32,
     filter: impl Fn(&Sec) -> bool,
-    seed: u32,
+    seed: u64,
+    tag: Tag,
     long: bool,
-) -> Vec<Note> {
-    let mut r = rng_for(seed, &format!("ctr{lo}"));
-    let mut notes: Vec<Note> = Vec::new();
-    let mut prev = js::round((lo + hi) as f64 / 2.0) as i32;
-    let mut prev_dir: i32 = 0;
+) -> Vec<LineNote> {
+    let mut notes: Vec<LineNote> = Vec::new();
+    let mut prev = (lo + hi) / 2 + (lo + hi) % 2;
+    let mut prev_dir = 0i32;
     let segs = &tl.segs;
+    let vel = if long { 0.68 } else { 0.58 };
 
-    for si in 0..segs.len() {
-        let sg = &segs[si];
+    for (si, sg) in segs.iter().enumerate() {
         let sec = &form.sections[sg.sec];
         if !filter(sec) {
             continue;
         }
-        let nx = segs.get(si + 1);
-        let t0_ = tl.to_time(sg.b0);
-        let t1_ = tl.to_time(sg.b1);
-        let n: i32 = if long {
-            1
-        } else {
-            (js::round((t1_ - t0_) / 1.7) as i32).max(1)
-        };
+        let mut r = Rng::event(seed, tag, si as u64);
+        let next = segs.get(si + 1);
+        let (st0, st1) = (tl.to_time(sg.b0), tl.to_time(sg.b1));
+        let n = if long { 1 } else { (((st1 - st0) / 1.7).round() as i32).max(1) };
         let span = sec.beats(&form.meter);
-        let sec_t0 = tl.to_time(span.start);
-        let sec_t1 = tl.to_time(span.end);
+        let (sec_t0, sec_t1) = (tl.to_time(span.start), tl.to_time(span.end));
         let chord = form.chord(sg.chord);
 
         for j in 0..n {
-            let t0 = t0_ + (t1_ - t0_) * j as f64 / n as f64;
-            let t1 = t0_ + (t1_ - t0_) * (j + 1) as f64 / n as f64;
+            let t0 = st0 + (st1 - st0) * j as f64 / n as f64;
+            let t1 = st0 + (st1 - st0) * (j + 1) as f64 / n as f64;
             // The last sub-segment may anticipate the next chord.
-            let pcs: PcSet = match nx {
-                Some(nxs) if j > 0 && j == n - 1 => chord.tones.union(form.chord(nxs.chord).tones),
+            let pcs: PcSet = match next {
+                Some(nx) if j > 0 && j == n - 1 => chord.tones.union(form.chord(nx.chord).tones),
                 _ => chord.tones,
             };
-            let voc: Vec<i32> = lead
-                .iter()
-                .filter(|v| v.t0 < t1 && v.t1 > t0)
-                .map(|v| v.midi)
-                .collect();
-            let x = js::clamp(
-                ((t0 + t1) / 2.0 - sec_t0) / js::max(1.0, sec_t1 - sec_t0),
-                0.0,
-                1.0,
-            );
-            let target =
-                lo as f64 + (hi - lo) as f64 * (0.3 + 0.4 * js::sin(std::f64::consts::PI * x));
+            let x = (((t0 + t1) / 2.0 - sec_t0) / (sec_t1 - sec_t0).max(1.0)).clamp(0.0, 1.0);
+            let target = lo as f64 + (hi - lo) as f64 * (0.3 + 0.4 * (std::f64::consts::PI * x).sin());
+            let before_last = notes.len().checked_sub(2).map(|i| notes[i].midi);
 
             let mut best: Option<i32> = None;
-            let mut bs = 1e9f64;
+            let mut best_cost = f64::INFINITY;
             for m in lo..=hi {
                 if !pcs.contains(Pc::new(m)) {
                     continue;
@@ -95,130 +99,96 @@ pub fn counter_line(
                 if m == prev {
                     c += 4.5;
                 }
-                if notes.len() > 1 && m == notes[notes.len() - 2].m {
+                if before_last == Some(m) {
                     c += 1.2;
                 }
-                if prev_dir != 0 && js::sign(iv as f64) as i32 == -prev_dir && ai > 4 {
+                if prev_dir != 0 && iv.signum() == -prev_dir && ai > 4 {
                     c -= 0.6;
                 }
                 if !chord.tones.contains(Pc::new(m)) {
                     c += 0.8;
                 }
-                c += (m as f64 - target).abs() * 0.22 + r.next() * 0.7;
-                for &v in &voc {
-                    let d = (m - v).abs();
+                c += (m as f64 - target).abs() * 0.22 + 0.7 * r.uniform();
+                for v in lead.iter().filter(|v| v.t0 < t1 && v.t1 > t0) {
+                    let d = (m - v.midi).abs();
                     if d <= 2 {
                         c += 6.0;
                     } else if d % 12 == 0 {
                         c += 1.5;
                     }
                 }
-                if c < bs {
-                    bs = c;
+                if c < best_cost {
+                    best_cost = c;
                     best = Some(m);
                 }
             }
-            let best = match best {
-                Some(b) => b,
-                None => continue,
-            };
-            let dir = js::sign((best - prev) as f64) as i32;
+            let Some(best) = best else { continue };
+            let dir = (best - prev).signum();
             if dir != 0 {
                 prev_dir = dir;
             }
             prev = best;
-            notes.push(Note {
-                t0,
-                t1,
-                m: best,
-                v: if long { 0.68 } else { 0.58 },
-            });
+            notes.push(LineNote { t0, t1, midi: best, vel });
         }
     }
     notes
 }
 
-/// A short descending scalar run in the gap after each lyric line, landing
-/// on a tone of the chord at the run's end. `_lead` is unused.
-pub fn fills_for(
-    form: &Form,
-    tl: &Timeline,
-    _lead: &[LeadNote],
-    lo: i32,
-    hi: i32,
-    filter: impl Fn(&Sec) -> bool,
-    song: &Song,
-    seed: u32,
-) -> Vec<Note> {
-    let mut r = rng_for(seed, &format!("fill{lo}"));
-    let mut notes: Vec<Note> = Vec::new();
+/// Fills in `[lo, hi]` after the lyric lines of the sections that pass
+/// `filter`. Line k draws from `Rng::event(seed, tag, k)`.
+#[allow(clippy::too_many_arguments)]
+pub fn fills(form: &Form, tl: &Timeline, lo: i32, hi: i32, filter: impl Fn(&Sec) -> bool, song: &Song, seed: u64, tag: Tag) -> Vec<LineNote> {
+    let mut notes: Vec<LineNote> = Vec::new();
     let tonic = song.key.transpose(form.transpose);
     let bpb = form.bpb();
-    let sub = form.sub();
+    let sub = form.sub() as f64;
 
-    for line in &form.lines {
+    for (k, line) in form.lines.iter().enumerate() {
         let sec = &form.sections[line.sec];
         if !filter(sec) {
             continue;
         }
-        let n = line.syls.len();
-        if n == 0 {
-            // An empty line gets no fill but still takes the run-length
-            // draw, keeping the stream in step.
-            let _ = r.next() < 0.4;
-            continue;
-        }
-        // Lines are composed by `prepare`; an uncomposed line gets no fill.
+        // An uncomposed or empty line gets no fill.
         let Some(rh) = line.rh.as_ref() else { continue };
-        let last_on = (line.start_bar as i32 * bpb) as f64 + rh.onsets[n - 1];
+        let Some(&last_onset) = rh.onsets.get(line.syls.len().wrapping_sub(1)) else { continue };
+        let last_on = (line.start_bar as i32 * bpb) as f64 + last_onset;
         let line_end = ((line.start_bar + line.n_bars) as i32 * bpb) as f64;
-        // JS: `bpb===3?1:1` -- both arms are 1, so the offset is always 1.
         let w0 = last_on + 1.0;
         let next_onset = sec
             .lines
             .get(line.li + 1)
             .and_then(|&idx| form.lines[idx].rh.as_ref())
-            .map(|rh2| rh2.onsets[0])
+            .and_then(|rh2| rh2.onsets.first().copied())
             .unwrap_or(0.5);
         let w1 = line_end + next_onset - 0.25;
         if w1 - w0 < 1.25 {
             continue;
         }
-        let cnt = js::min(5.0, ((w1 - w0) * sub as f64 * 0.8).floor()) as i32;
+        let cnt = ((w1 - w0) * sub * 0.8).floor().min(5.0) as i32;
         if cnt < 2 {
             continue;
         }
+        let mut r = Rng::event(seed, tag, k as u64);
         let ch_end = tl.chord_at(form, w1 + 0.3);
-        let ch0 = tl.chord_at(form, w0 + 0.01);
-        let sc = local_scale(tonic, song.mode, ch0);
+        let sc = local_scale(tonic, song.mode, tl.chord_at(form, w0 + 0.01));
         let run: Vec<i32> = (lo..=hi).filter(|&m| sc.contains(Pc::new(m))).collect();
-        let mut target = run
-            .iter()
-            .position(|&m| ch_end.tones.contains(Pc::new(m)) && m >= lo + 4)
-            .map(|p| p as i32)
-            .unwrap_or(-1);
-        if target < 0 {
-            target = 2;
+        if run.is_empty() {
+            continue;
         }
-        let bump = if r.next() < 0.4 { 1 } else { 0 };
-        let last_idx = (run.len() as i32 - 1).max(0);
-        let start_idx = js::clamp((target + cnt - 1 + bump) as f64, 0.0, last_idx as f64) as i32;
+        let target = run.iter().position(|&m| ch_end.tones.contains(Pc::new(m)) && m >= lo + 4).unwrap_or(2) as i32;
+        let bump = i32::from(r.uniform() < 0.4);
+        let last_idx = run.len() as i32 - 1;
+        let start_idx = (target + cnt - 1 + bump).clamp(0, last_idx);
 
-        for k in 0..cnt {
-            // A draw with no effect, kept so the stream stays in step.
-            let _ = r.next() < 0.25 && k > 0;
-            let b = w0 + k as f64 / sub as f64;
-            let idx = js::clamp((start_idx - k) as f64, 0.0, last_idx as f64) as usize;
-            let d = if k == cnt - 1 {
-                js::max(0.5, w1 - b)
-            } else {
-                1.0 / sub as f64
-            };
-            notes.push(Note {
-                t0: tl.to_time(b) + (r.next() - 0.5) * 0.01,
+        for j in 0..cnt {
+            let b = w0 + j as f64 / sub;
+            let idx = (start_idx - j).clamp(0, last_idx) as usize;
+            let d = if j == cnt - 1 { (w1 - b).max(0.5) } else { 1.0 / sub };
+            notes.push(LineNote {
+                t0: tl.to_time(b) + 0.005 * r.bipolar(),
                 t1: tl.to_time(b + d),
-                m: run[idx],
-                v: 0.5 + if k == 0 { 0.1 } else { 0.0 },
+                midi: run[idx],
+                vel: if j == 0 { 0.6 } else { 0.5 },
             });
         }
     }

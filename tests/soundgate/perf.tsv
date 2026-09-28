@@ -13,3 +13,5 @@ w1-verify	4caf1c2+dirty	pass	3	1.41	3.17	890	9.14	702	yes
 w2	f79f435+dirty	pass	3	3.29	2.94	887	9.27	701	yes
 w2-verify	f79f435+dirty	fail	3	2.81	3.25	889	9.53	702	yes
 w2-verify2	f79f435+dirty	pass	3	2.14	3.22	889	9.40	701	yes
+w3-close	bbd9e6b+dirty	fail	3	1.61	2.69	924	7.43	704	yes
+w3-final	bbd9e6b+dirty	fail	3	2.59	2.83	898	8.34	704	yes
