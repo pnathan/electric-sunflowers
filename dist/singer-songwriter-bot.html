@@ -465,11 +465,6 @@ function shapeFor(li,nl,cad,a,prof,type){
   if(li%2===1)return x=>a*Math.sin(Math.PI*x)+0.8*x;
   return x=>a*Math.sin(Math.PI*x);
 }
-function shapeFor(li,nl,cad,a){
-  if(cad==='tonic')return x=>a*0.8*Math.sin(Math.PI*x*0.7)-a*1.2*x;
-  if(li%2===1)return x=>a*Math.sin(Math.PI*x)+0.8*x;
-  return x=>a*Math.sin(Math.PI*x);
-}
 function cadenceFor(type,li,nl){
   if(li===nl-1)return type==='bridge'||type==='prechorus'?'open':'tonic';
   return li%2===1?'open':'none';

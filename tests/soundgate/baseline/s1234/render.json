@@ -1,0 +1,62 @@
+{
+  "blocks_present_total": {
+    "bass": [
+      1649,
+      2001
+    ],
+    "choir": [
+      1826,
+      4002
+    ],
+    "doubles": [
+      1132,
+      4002
+    ],
+    "drums": [
+      2392,
+      4002
+    ],
+    "guitar": [
+      4002,
+      4002
+    ],
+    "harmony": [
+      871,
+      2001
+    ],
+    "harmony_guitar": [
+      2428,
+      4002
+    ],
+    "harp": [
+      3430,
+      4002
+    ],
+    "lead": [
+      1605,
+      2001
+    ],
+    "violin": [
+      3180,
+      4002
+    ]
+  },
+  "mix_s": 0.461811381,
+  "render_s": 1.457385431,
+  "samples": 8192076,
+  "seed": 1234,
+  "slapback_blocks": 1847,
+  "stem_write_s": 0.77070645,
+  "stems": [
+    "lead",
+    "doubles",
+    "harmony",
+    "choir",
+    "guitar",
+    "harmony_guitar",
+    "bass",
+    "drums",
+    "harp",
+    "violin"
+  ]
+}

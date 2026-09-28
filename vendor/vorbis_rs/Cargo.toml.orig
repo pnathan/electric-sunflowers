@@ -1,0 +1,33 @@
+[package]
+name = "vorbis_rs"
+version = "0.5.6"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Ogg Vorbis stream encoding and decoding powered by high-level bindings for best-in-breed C libraries"
+documentation = "https://docs.rs/vorbis_rs"
+readme = "../../README.md"
+repository.workspace = true
+license.workspace = true
+keywords = ["aotuv", "lancer", "ogg", "vorbis", "xiph"]
+categories = [
+  "api-bindings",
+  "multimedia",
+  "multimedia::audio",
+  "multimedia::encoding",
+]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+aotuv_lancer_vorbis_sys.workspace = true
+errno = { workspace = true, default-features = false }
+getrandom = { workspace = true, optional = true }
+ogg_next_sys.workspace = true
+thiserror.workspace = true
+tinyvec.workspace = true
+
+[features]
+default = ["stream-serial-rng"]
+stream-serial-rng = ["dep:getrandom"]

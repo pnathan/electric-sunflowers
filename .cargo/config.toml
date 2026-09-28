@@ -1,0 +1,7 @@
+# Build from the vendored crates in vendor/ (no network needed).
+# Refresh after a dependency change: cargo vendor --sync <extra manifests> vendor
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"

@@ -1,0 +1,12 @@
+[package]
+name = "compose"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+sfcore = { path = "../core" }
+song = { path = "../song" }
+
+[dev-dependencies]
+serde_json.workspace = true

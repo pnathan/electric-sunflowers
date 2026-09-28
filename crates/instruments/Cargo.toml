@@ -1,0 +1,15 @@
+[package]
+name = "instruments"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sfcore = { path = "../core" }
+dsp = { path = "../dsp" }
+song = { path = "../song" }
+
+[dev-dependencies]
+# The Helmholtz sweep (tests/helmholtz/mod.rs) runs its cases in parallel.
+rayon = "1.10"

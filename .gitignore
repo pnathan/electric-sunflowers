@@ -3,3 +3,7 @@ __pycache__/
 *.f32
 *.wav
 node_modules/
+/target/
+out/
+# Vendored crates are committed whole: cargo checks every file against its checksum.
+!/vendor/**

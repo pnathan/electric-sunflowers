@@ -1,0 +1,18 @@
+{
+  "title": "Test Tune",
+  "note": "A minimal song for sunflower's integration test.",
+  "key": "C",
+  "mode": "major",
+  "meter": "4/4",
+  "tempo": 96,
+  "guitar": "strum",
+  "voice": "baritone",
+  "band": {"drums": "brushes", "bass": true, "harmonyGuitar": false, "harp": false, "violin": false, "choir": false, "harmonies": false, "doubles": false},
+  "sections": [
+    {"type": "intro", "chords": ["C", "F", "G", "C"]},
+    {"type": "verse", "lines": [
+      {"syl": "the *sun goes *down on *one more *day", "ph": "dh ax|s ah n|g ow z|d aw n|aa n|w ah n|m ao r|d ey", "chords": ["C", "F"]}
+    ]},
+    {"type": "outro", "chords": ["C", "G", "C"]}
+  ]
+}
