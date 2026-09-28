@@ -1,90 +1,83 @@
-# CLAUDE.md: Singer-Songwriter Bot
+# CLAUDE.md: electric-sunflowers
 
-Read this before changing anything. It records what the system is, why it is built this way, how to measure it, and what is open.
+Read this before changing anything. It records what the system is, how to work in it, how to measure it, and what is open.
 
 ## Owner and conventions
 
 - Owner: Paul. Prose: erudite, laconic, exact; no filler, no hedging, plain ASCII, minimal formatting. Banned words: "seams", "belt and braces", "load bearing", "shape of".
-- Commits and pull requests: ASD-STE100 Simplified Technical English combined with Conventional Commits. Example: `fix(voice): make the /ey/ vowel start at [e]`.
-- Deploy target: the claude.ai published artifact above. Publish the built dist file to the same URL so the link is updated in place; the declared capabilities are `{"sample":{}, "downloads":true}`.
+- Commits: ASD-STE100 Simplified Technical English combined with Conventional Commits. Example: `fix(voice): make the /ey/ vowel start at [e]`. End each message with the session's attribution lines.
+- Branch and remote: `trunk` is the key branch; origin is `git@github.com:pnathan/electric-sunflowers.git`. Standing practice: commit routinely on trunk and push after each verified step. Short-lived branches are fine for in-flight work; merge them back promptly. Never force-push or rewrite trunk. No CI/CD for now.
+- Network: the sandbox blocks it. Pushing, fetching crates and live model calls through the API need a sandbox bypass. Dependencies are vendored (below), so builds and tests need none.
+- Delegation (Workflow and Agent): architect/planner Opus at effort medium or high; coder, QA and testing Sonnet at effort medium (low stalls on large units); reviewer Opus at effort low or medium. Parallel agents own disjoint files or crates. Re-verify every agent's result yourself (build, tests, the sound gate) before committing.
 
 ## Product intent
 
-- Claude writes only the song text and parameters: lyrics as stressed syllables, ARPAbet per syllable, chords per bar, key, mode, meter, tempo, voice, guitar pattern, band. Everything after that is procedural, with no model calls.
-- Sound quality is the priority. The owner judges by ear; the tools below are proxies.
+- Claude writes the song; the engine works deterministically from there. Claude's JSON holds every writing decision: title, liner note, lyrics as stressed syllables, ARPAbet per syllable, chords per bar, key, mode, meter, tempo, voice, form sections, band. The engine never makes a writing decision and makes no model calls after the JSON. Same song and seed, same recording.
+- Sound quality is the priority. The owner judges by ear; the tools below are proxies. For sound changes a rough "about right" check is enough to move on; send renders (Ogg) for listening at each sound-changing step.
 - Songwriter persona: Claude, a robot. Age counted from 1999 (first commercial deep learning), computed from the current year. Birthplace Menlo Park, home the American West, sensibility of someone born in 1999. Heritage Americana and its roots; world folk only as seasoning.
 - Emotional register must match the request. Worn subjects (absent parent, lost lover, graves, empty chair, unsent letter, homecoming ending) are barred unless the prompt raises them.
-- Styles fix form, meter, tempo range, modes, harmonic idiom, guitar pattern, band, drums and the break instrument. Songwriter's choice picks a style at random.
+- Styles (22) fix form, meter, tempo range, modes, harmonic idiom, guitar pattern, band, drums and the break instrument. Songwriter's choice picks a style at random.
 
-## Pipeline
+## Layout
 
-1. `styleDirection(key)` (styles.js) picks style, mode, meter, tempo range, form. `songPrompt` (prompt.js) renders it, including a numbered form plan (`formText`).
-2. The page calls `sample(prompt, {modelTier:'complex'})`, parses the JSON itself, and reads `modelTierApplied`; a downgrade is shown under the song. The platform does not expose the model name.
-3. `normalizeSong` validates; `applyStyle` imposes the style's arrangement and clamps tempo.
-4. `buildForm`: bars, lines, sections. Sections carry `lift` (choruses, or verses after the first when the form has no chorus), `liftIdx`, `final`, `intensity`. All arrangement features key off `lift`, not the chorus type.
-5. `composeMelody`: `placeRhythm` (DP over the metric grid) then `pitchLine` (Viterbi over pitch pairs). A per-song `melodyProfile` sets range per section, contour type per section, leapiness, note repetition, chorus hook interval, and rhythmic character (dotted, even, syncopated).
-6. `prepare`: choose transposition for the voice; `renderSong` makes all tracks; instrument bodies are applied by FFT convolution (`convStereo`) at render time.
-7. `mixSong` (pure JS): per-track EQ, compression and gain are cached in `render.proc`, and raw tracks are freed; then pan, sends, an 8-line FDN reverb, a bus compressor and peak normalisation. Band toggles only re-sum, taking about 2 s.
-8. `engraveSong` (notation.js) writes SVG; `encodeOpusWebm` (export.js) exports.
+    crates/core (sfcore)  math, flush-to-zero, xoshiro128++ streams keyed by seed/tag/event, time rules
+    crates/song           typed song model, lenient JSON boundary with listed repairs, chords, ARPAbet, G2P, note events, schema
+    crates/songwriter     styles, forms, prompt, trait Claude with ClaudeCli and ClaudeApi, write_song
+    crates/compose        form, timeline, rhythm (DP) and pitch (Viterbi over pitch pairs), melody profile, prepare
+    crates/arrange        event planners for every part; no audio
+    crates/voice          LF glottal source, formant cascade, articulation, phrase rendering
+    crates/instruments    plucked string, guitar with sympathetic strings, modal bodies, bowed string, drums
+    crates/dsp            biquads, one-poles, Klatt resonators, delays, ramps, FFT (realfft/rustfft), convolution, compressor, pan, FDN reverb
+    crates/engine         tracks and channel strips, sparse stems, one rayon task graph, block mixer with vocal ducking, song sheet
+    crates/export         Ogg Vorbis (default), FLAC, WAV with tags
+    crates/notation       lead-sheet engraving to SVG with Bravura glyphs, per-note times
+    crates/sunflower      CLI: demo, render, write, sheet, styles
+    crates/studio         desktop app (eframe, X11): library, lyrics with chords, sheet music, Ogg playback, new-song form
+    crates/settings       user settings file (in progress)
+    crates/soundgate      measurement for the sound gate; depends on no engine crate
+    docs/                 engine-design.md (the design as built, every algorithm and source); rewrite-plan.json; features-2*.md/json (next batch)
+    scripts/gate.sh       the sound gate
+    src/, tests/, tools/  the JavaScript prototype (a claude.ai page) and its measurement tools
+    vendor/               vendored crates
+
+## Build and run
+
+- `cargo build --release`; `cargo test --release --workspace`. Dependencies are in `vendor/` via `.cargo/config.toml`. To add a crate: add it to the manifest, run `cargo vendor vendor` outside the sandbox, commit `vendor/`. `.gitignore` anchors `/target/` and never ignores `vendor/` (cargo checks every vendored file's checksum).
+- CLI: `sunflower demo`, `sunflower render song.json [--style KEY] [--no PART] [--seed N] [--voice V] -o x.ogg`, `sunflower write "mood" [--style KEY] [--via cli|api] [--model ID]`, `sunflower sheet song.json --seed N`, `sunflower styles`. The extension picks the format. `render`, `write` and `demo` write `<stem>.render.json` (seed, voice, style) and `<stem>.sheet.json` beside the audio; `write` saves Claude's raw JSON as `<stem>.json` before validating it.
+- Studio: `target/release/studio [SONG.json] [--dir DIR]`; the library defaults to `~/Music/sunflower`.
+- `RAYON_NUM_THREADS=1` renders on one thread with bit-identical output.
+- `ClaudeCli` runs `claude -p --output-format json` in an empty directory with `--strict-mcp-config`, `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` and no tools; not `--bare`, which disables the logged-in account. Default model `claude-opus-5-5`.
 
 ## Models and the decisions behind them
 
-Numbers are from the tools below. Keep them current when you change a model.
+`docs/engine-design.md` has each model's algorithm, source and parameters. Decisions worth knowing before touching them:
 
-- Voice (`voiceControls`, `synthVoice`):
-  - Source: Liljencrants-Fant glottal pulse by Rd, blended between tense and lax tables by loudness; two-pole tilt.
-  - Tract: a cascade of 5 formants plus 4 higher resonances (5.5-8.8 kHz, series), and a series high shelf of 16 dB at 5.2 kHz.
-  - A parallel high-frequency branch was tried and removed. It filled every vowel's spectral valleys (/uw/ went from -55..-82 dB to -41 dB), which is heard as nasality; vowel distinctness fell from 13.6 to 10.6 dB.
-  - Breath noise is low-passed at 2.6 kHz so the shelf does not make it hiss. Aspiration is not; low-passing it too is open work, to be decided by ear and Whisper word error.
-- Consonants:
-  - Stops: the legacy burst model plus CV formant transitions (50 ms from the consonant's locus) plus F1 damping during aspiration, with bursts at 0.8. The transitions gave most of the gain in D/T recognition. A later rework (closure murmur, soft bursts) measured worse and is behind `VF` switches, off (deleted in the Rust engine).
-  - Voiced "th" is mostly voicing (af .05). Consonant durations scale per voice: bass 1.15, baritone 1.2, tenor 1.25, alto 1.35, soprano 1.4.
-  - /ey/ uses targets ey0 [450,2020,2600] and ey1 [340,2210,2780] (Hillenbrand). Starting on /eh/ gave a foreign "mehk".
-- Plucked strings (`pluck`):
-  - The loop runs in the velocity domain. Differentiating displacement produced a spike every period.
-  - Two polarisations; excitation is the pluck shape plus a release low-pass; loss by material (guitar damp .18, harp .16, bass .5).
-  - Guitar extras: pick noise, a tension pitch glide, and sympathetic open strings (`GT`).
-- Bodies: `BODY_CURVES` were measured from University of Iowa MIS recordings (tools/extract_curves.py). `bodyIRData` turns them into a stereo modal impulse response. The guitar curve has a steel-string correction; the harp curve is derived from the guitar curve (no harp reference exists).
-- Violin (`renderViolin`):
-  - A digital waveguide bowed string with a friction table. The bow position tracks the note (beta 0.13-0.15, 60 ms glide), and bow force is 0.6 plus a pitch-dependent term.
-  - Stability: 213/216 single notes and 174/174 phrase notes hold Helmholtz motion (tests/sweep2.js). The filtered-sawtooth version scored 0.01 as violin.
-- Choir: 3 individuated singers per part. The vowel is /aa/ only: rounded back vowels (uw, oh, ao) score 0.45-0.64 as "Organ".
-- Drums: the brush swirl is 9 dB lower and stroke-modulated; the taps have a head tone and snare wires. The old swirl made the mix classify as "Sanding".
+- Voice: LF source by Rd from band-limited mip tables, tense and lax blended by loudness; a Klatt cascade of 5 formants plus 4 high resonances and a 16 dB shelf at 5.2 kHz, with coefficients ramped per sample. A parallel high-frequency branch was tried and removed: it filled the vowels' spectral valleys (heard as nasality). Breath noise is low-passed at 2.6 kHz; aspiration is not.
+- Consonants: stop bursts plus 50 ms CV formant transitions from each consonant's locus (most of the D/T intelligibility gain). Voiced "th" is mostly voicing. Consonant durations scale per voice (bass 1.15 to soprano 1.4). /ey/ starts at [e] (Hillenbrand targets); starting on /eh/ gave a foreign "mehk".
+- Plucked strings: extended Karplus-Strong in the velocity domain (differentiating displacement spiked every period), two polarisations, loss by material; guitar adds pick noise, a tension glide and sympathetic open strings.
+- Bodies: stochastic modal IRs from 1/12-octave curves measured on University of Iowa MIS recordings; fixed modes below 300 Hz and no onset step, so the band spread between seeds is 1.2-1.5 dB. The harp curve is derived from the guitar's.
+- Violin: digital waveguide bowed string with a friction table; bow position tracks the note. 212/216 single notes and 119/120 phrase notes hold Helmholtz motion.
+- Choir: 3 singers per part on /aa/ only; rounded back vowels scored as "Organ".
+- Mix: each track is brought to a target loudness after its EQ, so EQ cuts do not change a track's level; use gain. The accompaniment is ducked up to 5 dB under the singing lead (30/350 ms key) and the lead strip is +2 dB. `cargo run --release -p engine --example balance -- SONG.json [--style KEY]` reports each track against the lead where it sings.
 
-## Measurement loop (the "ear")
+## Measurement (the "ear")
 
-Nobody on the machine side can listen, so every change is judged by at least one of these, against a saved baseline:
+Nobody on the machine side can listen. Judge every sound change by the gate, then send renders to the owner.
 
-- `tools/ear.py LABELS files...`: PANNs Cnn14 AudioSet tagger. Calibrate on the Iowa references first. Real guitar scores "Electronic tuner" about 0.57, so that label is not a defect.
-- `tools/asr2.py tags...` after `tests/sing2.js TAG '{json flags}'`: Whisper base.en on 16 sung lines rich in D and T (tests/words.js), baritone and alto. Hypotheses are capped at the reference length plus 3 words. Noise is about plus or minus 3 D/T words; trust only large differences.
-- `tools/cmp.py`, `tools/body.py`, `tools/ltas.py`: 1/3-octave spectra and body curves against the references. `tools/spg2.py`: spectrogram images. `tools/pit.py`: pitch and subharmonic check.
-- `tests/vow.js [engine]`: mean spectral distance between ten sustained vowels, 200 Hz-2.5 kHz. The good reference is 13.2-13.6 dB.
+- `scripts/gate.sh [--strict] LABEL`: per-stem mean 1/3-octave LTAS over 8 seeds against `tests/soundgate/baseline-mean/` (3 dB in 100 Hz-10 kHz, 6 dB outside, or 2 seed-to-seed sd capped at 6/9 dB; gated RMS 1.5 dB; active fraction 15 points; mix peak 0.89), lead pitch by YIN, vowel distance (good 13.2-13.6 dB), Helmholtz (>= 208/216), thread invariance, and demo time and memory. `--strict` also compares seeds 1234 and 2718 one by one at 0.5/1 dB, for refactors that must not change the sound. Perf fails only above +50% of the perf baseline; speed and memory are aims, not requirements. The owner waived listen-before-rebaseline: re-capture the baseline in its own commit when a change is intended.
+- The Python tools (PANNs tagger, Whisper word error; `tools/`, `requirements.txt`) are not installed on this machine.
+- Latest: demo at seed 1234, 12 cores: about 2.1 s threaded (650 MB), 6.5 s on one thread (490 MB). Vowel distance 13.38 dB.
 
-Latest readings, JS engine (PANNs, Whisper): violin 0.47-0.74 as violin; choir organ 0.11; guitar 0.38 as guitar; word error for the baritone about 0.40-0.43 and the alto about 0.57; D/T recognised 58-68 of 118. Rust engine (sound gate, w5-final): vowel distance 13.38 dB; Helmholtz 212/216 single notes, 119/120 phrase notes.
+## The JS prototype
 
-## Platform constraints
+`src/` builds (`python3 build.py`) a claude.ai published page where Claude writes in the browser (`sample()`, model tier `complex`). It is a separate product and a source of ideas; the Rust engine does not follow it. Its constraints: scripts only from cdnjs, jsdelivr, Tailwind and jQuery; no Web Workers; downloads exclude .wav/.ogg (audio is Opus in .webm). `dist/` has the per-section melody contour fix but is not republished; publishing needs the owner's go-ahead.
 
-- Published claude.ai pages: scripts only from cdnjs, jsdelivr, the Tailwind CDN and jQuery; no Web Workers (blob: and data: are blocked by CSP), so rendering is single-threaded. localStorage works.
-- The downloads allowlist excludes .wav and .ogg; audio is Opus in .webm (WebCodecs), with MediaRecorder as the real-time fallback.
-- A standalone build needs a server or proxy for the Anthropic API (never ship a key in a page). With the API, name the model explicitly: `claude-opus-5-5`, or `claude-fable-5-1` for the Mythos tier.
+## Open work
 
-## Rust engine
-
-`crates/*` is the long-lived engine: everything after Claude's JSON reply, offline and deterministic. It shares no code with the JS page; `docs/engine-design.md` is its design and records each model's algorithm and source.
-
-- Crates: `sfcore` (math, flush-to-zero, xoshiro128++ streams keyed by seed, tag and event index, the seconds-to-sample rule); `song` (typed song model, the lenient JSON boundary with listed repairs, chords, ARPAbet, G2P, note-event types, reply schema); `dsp` (biquads, one-poles, Klatt resonators, delays and allpasses, ramps, stochastic processes, FFT over realfft/rustfft, overlap-add convolution, compressor, pan laws, FDN reverb); `instruments` (plucked string, guitar with sympathetic strings, modal body IRs, bowed string, drums); `voice` (LF source, formant cascade, articulation, phrase rendering); `compose` (form, timeline, rhythm and pitch Viterbi, melody profile, prepare); `arrange` (event planners for every part; no audio); `engine` (tracks, channel strips, sparse stems, one rayon task graph, block mixer); `export` (Ogg Vorbis, FLAC, WAV); `songwriter` (styles, forms, prompt, `trait Claude` with `ClaudeCli` and `ClaudeApi`); `sunflower` (CLI); `soundgate` (measurement only; depends on no engine crate).
-- Build: `cargo build --release`. Dependencies are vendored in `vendor/` (`.cargo/config.toml`); no network is needed. The release profile uses fat LTO.
-- Render: `sunflower demo -o x.wav`, `sunflower render song.json [--style KEY] [--no PART] -o x.flac`, `sunflower write "mood" [--style KEY] [--via cli|api]`, `sunflower styles`. `--seed` (u64) fixes the take; without it a seed is drawn and printed. `--voice` overrides the song's voice. The extension picks the format; Ogg by default. `RAYON_NUM_THREADS=1` is the single-thread path, and its output is bit-identical to the threaded one.
-- `ClaudeCli` runs `claude -p` in an empty directory with `--strict-mcp-config`, `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and no tools; not `--bare`, which disables the logged-in account. The real-model path has one live test (open issue 5).
-- Sound gate: `scripts/gate.sh [--strict] [--against DIR] LABEL` renders the demo stems for 8 seeds, compares the per-stem mean 1/3-octave LTAS with `tests/soundgate/baseline-mean/` (3 dB in 100 Hz-10 kHz, 6 dB outside, or 2 seed-to-seed sd capped at 6/9 dB; gated RMS 1.5 dB; active fraction 15 points; mix peak 0.89), checks lead pitch by YIN, vowel distance (12.8-14.0 dB), Helmholtz (>= 208/216), thread invariance, and times the demo. `--strict` also compares seeds 1234 and 2718 one by one at 0.5/1 dB, for changes that must not alter the sound. Perf fails only above +50% of the first row of `tests/soundgate/perf.tsv`. Baselines are replaced in their own commit, and the renders go to the owner for listening.
-- Measured, demo at seed 1234 to WAV, i7-9750H: 2.16 s threaded (647 MB peak), 6.53 s on one thread (491 MB). The memory aims (0.50/0.40 GB) are not met: the sparse stem cache alone holds 22.5k 4096-frame blocks, 369 MB.
-- Deliberate sound changes against the first Rust port: band-limited LF source tables (mip set per half-octave), per-sample ramps of tract coefficients, violin fractional delays read by 4-point Lagrange with the bridge pole re-tuned to 0.35, PolyBLEP ride cymbal, compressor gain interpolation, modal bodies with fixed low modes and stable band levels, TPDF dither at 16 bits, and new random streams, so each seed is a different take from the same distribution.
-
-## Open issues
-
-1. Alto and soprano intelligibility trails the baritone. Next: vowel modification at high pitch (open the vowels upward, as trained sopranos do).
-2. The first word of a phrase is the least reliable; no mechanism found yet.
-3. The choir scores low as "Choir" in the bridge. The choir sings vowels only; call-and-response lyrics (shanty crew, gospel response) are not supported.
-4. Render time in the page: about 17-24 s in Node on one core, and about 28-38 s in a headless browser. Memory is roughly 0.5 GB for a 3-minute song; older phones may fail. The Rust engine renders the demo in 2.2 s threaded.
-5. The real-model writing path has one live test (`sunflower write`, cowboy style, strophic form): the reply parsed and the form plan was followed. Registers and more styles are unverified.
-6. No key changes, no rubato beyond the final ritard, no melismas; the harp has no reference validation.
+- Next batch, designed in `docs/features-2.md` with a wave plan in `docs/features-2-plan.json`: (1) record the model and token usage of every generation; (2) a settings file for the model, transport, effort and library; (3) per-track stems and a studio mixer; (4) duets written by Claude into the song JSON; (5) singer phrasing (legato to parlando) in the song JSON; (6) a full multipart score beside the lead sheet.
+- Studio: clicks, Space and slider drags are untested (no xdotool here); the sheet cursor during rests and pickup placement disagree slightly with the lyrics view; bass voices use treble-8 clef; no multi-bar rests.
+- Voice: alto and soprano intelligibility trails the baritone (next: vowel modification at high pitch); the first word of a phrase is the least reliable.
+- The choir sings vowels only; call-and-response lyrics are not supported.
+- Memory is above its aim (the sparse stem cache holds about 370 MB for the demo).
+- `ClaudeApi` has never made a live call; the CLI path has two live songs.
+- No key changes, no rubato beyond the final ritard, no melismas; the harp has no reference validation.
