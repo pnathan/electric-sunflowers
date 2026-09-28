@@ -373,6 +373,23 @@
    ],
    "brief": "Fix these wave-1 review findings, each with a unit test where it applies:\n1. crates/dsp/src/onepole.rs:17 and dynamics.rs:27: tau_coef and time_coef duplicate sfcore::math::one_pole_coeff_tau (and any dB helper duplicates sfcore::math::db_to_gain/gain_to_db). Use the sfcore functions and delete the duplicates.\n2. crates/song/src/wire.rs:630: tempo is rounded with the JS formula floor(x+0.5). Use f64::round (design section 4: no JS emulation).\n3. crates/song/src/wire.rs:491: a word part with no letter or digit (a lone \"-\" or \"...\") is dropped with no Repair. Record a Repair for it (design section 7: nothing is dropped silently).\n4. crates/dsp/src/delay.rs:56: read_linear and read_lagrange3 cast the delay to usize with saturation and then add 1 or 2, which overflows for a non-finite or huge delay. Clamp the delay to the valid range [0, capacity - 3] (and treat NaN as 0) before indexing; document it.\n5. tests/soundgate/perf.tsv: delete the stray row named w1 with status fail (a --targets run), keep all pass rows.",
    "acceptance": "cargo test --release -p song -p dsp passes with the new tests; no duplicated coefficient helpers remain in dsp (grep); perf.tsv has no w1 fail row."
+  },
+  {
+   "id": "carry3",
+   "wave": 4,
+   "title": "Carry-over: wave-3 review findings in body IR and the multi-seed gate",
+   "owns": [
+    "crates/instruments/src/body.rs",
+    "crates/instruments/tests/body.rs",
+    "crates/instruments/examples/bodyspread.rs",
+    "crates/soundgate/",
+    "scripts/gate.sh",
+    "tests/soundgate/",
+    "docs/engine-design.md"
+   ],
+   "depends_on": [],
+   "brief": "Fix the wave-3 close-out review findings:\n1. crates/instruments/src/body.rs:270: a 1/12-octave group with one mode has 2 real unknowns and 2 constraints (no onset step, no DC), so no_step_no_dc drives it to rounding residue and flush_group scales that residue up by about 1e16; the lowest guitar modes and the top mode near 12.85 kHz get amplitude and phase from floating-point noise. Fix it (e.g. merge a group with fewer than 3 modes into its neighbour, or skip the constraint and apply a smooth onset window to that group) and test that no group gain exceeds a sane bound and that the lowest guitar modes are deterministic and near the curve.\n2. crates/soundgate/src/mean.rs:153: the allowance max(fixed, 2*sd) is too loose on stems whose takes are bimodal (up to 19 dB on harmony). Cap the allowance (for example at 6 dB in 100 Hz-10 kHz and 9 dB elsewhere) or use a robust spread (median absolute deviation), and justify the choice with the numbers from the current baseline-mean.\n3. crates/soundgate/src/mean.rs:38: the mix gated-RMS limit is 2 dB; section 12 says 1.5 dB. Use 1.5 dB unless the measured seed spread shows it cannot hold; say which.\n4. docs/engine-design.md section 12 still describes the old per-seed gate on seeds 1234 and 2718 with tests/soundgate/baseline: rewrite it to describe the multi-seed mean gate (8 seeds, baseline-mean, the allowance rule, --strict per-seed mode for bit-level refactors), and record that the owner waived the listen-before-rebaseline rule for this rewrite (renders are sent for listening at each sound-changing wave; he asked for a rough about-right check).\n5. If the body fix moves the stems measurably, re-capture tests/soundgate/baseline-mean and the per-seed baseline from the tree after your change (only your change in the body; other units of this wave are changing engine and voice at the same time, so capture with scripts/gate.sh only if their work is not yet in the tree, else report that the baseline should be re-captured at wave close).",
+   "acceptance": "cargo test --release -p instruments -p soundgate passes with the new tests; bodyspread still meets 1.5 dB from 80 Hz (guitar, harp) and 160 Hz (violin); the gate allowance is capped; section 12 matches the gate."
   }
  ]
 }
