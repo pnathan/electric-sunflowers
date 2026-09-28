@@ -11,7 +11,50 @@ use std::io::Write as _;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+use crate::usage::{ModelUsage, Usage};
+
+/// How a `Reply` was obtained: the `claude` CLI in print mode, or the
+/// Messages API directly. Recorded in `usage::Generation` and in
+/// `settings::ClaudeSettings`; serialises as the lower-case name.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Transport {
+    #[default]
+    Cli,
+    Api,
+}
+
+impl Transport {
+    pub const ALL: &'static [Transport] = &[Transport::Cli, Transport::Api];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Transport::Cli => "cli",
+            Transport::Api => "api",
+        }
+    }
+}
+
+impl fmt::Display for Transport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for Transport {
+    type Err = ClaudeError;
+    fn from_str(s: &str) -> Result<Self, ClaudeError> {
+        let t = s.trim();
+        Transport::ALL
+            .iter()
+            .copied()
+            .find(|v| t.eq_ignore_ascii_case(v.as_str()))
+            .ok_or_else(|| ClaudeError::Config(format!("unknown transport {s:?} (want cli, api)")))
+    }
+}
 
 /// Default model (CLAUDE.md: name the model explicitly).
 pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
@@ -29,7 +72,8 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// Thinking depth and token spend (`output_config.effort`, CLI `--effort`).
 /// Always sent: the default differs by model (Opus 5.5 defaults to
 /// medium), so the request states it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Effort {
     Low,
     Medium,
@@ -104,6 +148,31 @@ pub struct Reply {
     /// The model that answered, when the transport reports it.
     pub model: Option<String>,
     pub stop_reason: Option<String>,
+    /// Total token usage for the call.
+    pub usage: Usage,
+    /// CLI: every `modelUsage` entry, sorted by model id. API: one entry
+    /// for `model`, when known.
+    pub per_model: Vec<ModelUsage>,
+    /// CLI `total_cost_usd`. The API reports no cost.
+    pub cost_usd: Option<f64>,
+    /// CLI `duration_ms`.
+    pub duration_ms: Option<u64>,
+}
+
+impl Reply {
+    /// A reply with only `text` set; everything else absent. For tests
+    /// and mocks that do not model usage.
+    pub fn text_only(text: impl Into<String>) -> Reply {
+        Reply {
+            text: text.into(),
+            model: None,
+            stop_reason: None,
+            usage: Usage::default(),
+            per_model: Vec::new(),
+            cost_usd: None,
+            duration_ms: None,
+        }
+    }
 }
 
 /// Failure modes, kept apart so callers can react differently.
@@ -118,9 +187,16 @@ pub enum ClaudeError {
     /// Non-2xx HTTP status, or a failed CLI run. `body` is the raw
     /// response or output; `retry_after` is the server's hint, if any.
     /// 429 and 5xx are retried.
-    Status { code: i32, body: String, retry_after: Option<Duration> },
+    Status {
+        code: i32,
+        body: String,
+        retry_after: Option<Duration>,
+    },
     /// The model declined (`stop_reason: "refusal"`).
-    Refusal { category: Option<String>, explanation: Option<String> },
+    Refusal {
+        category: Option<String>,
+        explanation: Option<String>,
+    },
     /// The reply hit the output cap (`stop_reason: "max_tokens"`); the
     /// text so far is kept for diagnosis.
     MaxTokens { partial: String },
@@ -142,7 +218,11 @@ impl fmt::Display for ClaudeError {
                 explanation.as_deref().unwrap_or("")
             ),
             ClaudeError::MaxTokens { partial } => {
-                write!(f, "reply cut off at the output cap after {} characters", partial.chars().count())
+                write!(
+                    f,
+                    "reply cut off at the output cap after {} characters",
+                    partial.chars().count()
+                )
             }
             ClaudeError::Parse(s) => write!(f, "parse failure: {s}"),
         }
@@ -164,6 +244,13 @@ impl ClaudeError {
 
 pub trait Claude {
     fn complete(&self, req: &Request) -> Result<Reply, ClaudeError>;
+
+    /// Transport used for `usage::Generation` records. Defaults to `Cli`
+    /// so mock implementations elsewhere (studio, tests) still compile
+    /// without naming it.
+    fn transport(&self) -> Transport {
+        Transport::Cli
+    }
 }
 
 /// Retry schedule: after failed attempt k (0-based) wait `first * 2^k`,
@@ -178,7 +265,11 @@ pub struct Backoff {
 
 impl Default for Backoff {
     fn default() -> Self {
-        Backoff { retries: 3, first: Duration::from_secs(1), max_hint: Duration::from_secs(60) }
+        Backoff {
+            retries: 3,
+            first: Duration::from_secs(1),
+            max_hint: Duration::from_secs(60),
+        }
     }
 }
 
@@ -187,7 +278,9 @@ impl Backoff {
     pub fn delay(&self, k: u32, err: &ClaudeError) -> Duration {
         let base = self.first.saturating_mul(1u32 << k.min(16));
         let hint = match err {
-            ClaudeError::Status { retry_after: Some(d), .. } => (*d).min(self.max_hint),
+            ClaudeError::Status {
+                retry_after: Some(d), ..
+            } => (*d).min(self.max_hint),
             _ => Duration::ZERO,
         };
         base.max(hint)
@@ -227,7 +320,9 @@ pub struct ClaudeCli {
 
 impl Default for ClaudeCli {
     fn default() -> Self {
-        ClaudeCli { bin: "claude".to_string() }
+        ClaudeCli {
+            bin: "claude".to_string(),
+        }
     }
 }
 
@@ -268,7 +363,10 @@ impl ClaudeCli {
 
 impl Claude for ClaudeCli {
     fn complete(&self, req: &Request) -> Result<Reply, ClaudeError> {
-        let tmp = tempfile::Builder::new().prefix("sfsongwriter-").tempdir().map_err(ClaudeError::Spawn)?;
+        let tmp = tempfile::Builder::new()
+            .prefix("sfsongwriter-")
+            .tempdir()
+            .map_err(ClaudeError::Spawn)?;
         let mut child = Command::new(&self.bin)
             .current_dir(tmp.path())
             .env("CLAUDE_CODE_DISABLE_CLAUDE_MDS", "1")
@@ -296,22 +394,57 @@ impl Claude for ClaudeCli {
                 retry_after: None,
             });
         }
-        parse_cli_envelope(&stdout)
+        parse_cli_envelope(&stdout, &req.model)
+    }
+
+    fn transport(&self) -> Transport {
+        Transport::Cli
     }
 }
 
-/// Parses the CLI's `-p --output-format json` envelope
-/// (`{"is_error", "result", "subtype", "stop_reason", ...}`).
-fn parse_cli_envelope(stdout: &str) -> Result<Reply, ClaudeError> {
+/// A JSON object's `u64` field, or `None` when absent or not a number.
+/// Never fails: a malformed or missing usage field is silently absent.
+fn get_u64(v: &Value, key: &str) -> Option<u64> {
+    v.get(key).and_then(Value::as_u64)
+}
+
+/// The `modelUsage` key with the most `outputTokens` (treating an absent
+/// count as 0); ties go to `requested`, when it is one of the tied
+/// entries, else the first tied entry by model id (`per_model` is already
+/// sorted by id).
+fn pick_answering_model(per_model: &[ModelUsage], requested: &str) -> Option<String> {
+    let max = per_model.iter().map(|m| m.usage.output_tokens.unwrap_or(0)).max()?;
+    let mut tied = per_model.iter().filter(|m| m.usage.output_tokens.unwrap_or(0) == max);
+    let first = tied.next()?;
+    if let Some(m) = std::iter::once(first).chain(tied.clone()).find(|m| m.model == requested) {
+        return Some(m.model.clone());
+    }
+    Some(first.model.clone())
+}
+
+/// Parses the CLI's `-p --output-format json` envelope (`{"is_error",
+/// "result", "subtype", "stop_reason", "usage", "modelUsage",
+/// "total_cost_usd", "duration_ms", ...}`). `requested_model` breaks a
+/// tie for which model answered (see `pick_answering_model`). Usage
+/// fields are all optional: a missing or non-numeric one never fails the
+/// parse, it just reads as `None`.
+fn parse_cli_envelope(stdout: &str, requested_model: &str) -> Result<Reply, ClaudeError> {
     let v: Value = serde_json::from_str(stdout).map_err(|e| ClaudeError::Parse(format!("{e}: {stdout}")))?;
     let text = v.get("result").and_then(Value::as_str).unwrap_or("").to_string();
     let subtype = v.get("subtype").and_then(Value::as_str);
     let stop_reason = v.get("stop_reason").and_then(Value::as_str);
     if v.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
         if subtype == Some("refusal") || stop_reason == Some("refusal") {
-            return Err(ClaudeError::Refusal { category: None, explanation: Some(text) });
+            return Err(ClaudeError::Refusal {
+                category: None,
+                explanation: Some(text),
+            });
         }
-        return Err(ClaudeError::Status { code: -1, body: stdout.to_string(), retry_after: None });
+        return Err(ClaudeError::Status {
+            code: -1,
+            body: stdout.to_string(),
+            retry_after: None,
+        });
     }
     if stop_reason == Some("max_tokens") {
         return Err(ClaudeError::MaxTokens { partial: text });
@@ -319,7 +452,47 @@ fn parse_cli_envelope(stdout: &str) -> Result<Reply, ClaudeError> {
     if v.get("result").and_then(Value::as_str).is_none() {
         return Err(ClaudeError::Parse(format!("no 'result' field: {stdout}")));
     }
-    Ok(Reply { text, model: None, stop_reason: stop_reason.or(subtype).map(str::to_string) })
+
+    let usage_obj = v.get("usage");
+    let usage = Usage {
+        input_tokens: usage_obj.and_then(|u| get_u64(u, "input_tokens")),
+        output_tokens: usage_obj.and_then(|u| get_u64(u, "output_tokens")),
+        cache_read_input_tokens: usage_obj.and_then(|u| get_u64(u, "cache_read_input_tokens")),
+        cache_creation_input_tokens: usage_obj.and_then(|u| get_u64(u, "cache_creation_input_tokens")),
+        thinking_tokens: usage_obj
+            .and_then(|u| u.get("output_tokens_details"))
+            .and_then(|d| get_u64(d, "thinking_tokens")),
+    };
+
+    let mut per_model: Vec<ModelUsage> = Vec::new();
+    if let Some(obj) = v.get("modelUsage").and_then(Value::as_object) {
+        for (model, mv) in obj {
+            let mu = Usage {
+                input_tokens: get_u64(mv, "inputTokens"),
+                output_tokens: get_u64(mv, "outputTokens"),
+                cache_read_input_tokens: get_u64(mv, "cacheReadInputTokens"),
+                cache_creation_input_tokens: get_u64(mv, "cacheCreationInputTokens"),
+                thinking_tokens: get_u64(mv, "thinkingTokens"),
+            };
+            per_model.push(ModelUsage {
+                model: model.clone(),
+                usage: mu,
+                cost_usd: mv.get("costUSD").and_then(Value::as_f64),
+            });
+        }
+    }
+    per_model.sort_by(|a, b| a.model.cmp(&b.model));
+    let model = pick_answering_model(&per_model, requested_model);
+
+    Ok(Reply {
+        text,
+        model,
+        stop_reason: stop_reason.or(subtype).map(str::to_string),
+        usage,
+        per_model,
+        cost_usd: v.get("total_cost_usd").and_then(Value::as_f64),
+        duration_ms: get_u64(&v, "duration_ms"),
+    })
 }
 
 /// Calls the Anthropic Messages API.
@@ -357,14 +530,19 @@ impl ClaudeApi {
             .send_json(body);
         match result {
             Ok(resp) => {
-                let v: Value =
-                    resp.into_json().map_err(|e| ClaudeError::Transport(format!("reading the response: {e}")))?;
+                let v: Value = resp
+                    .into_json()
+                    .map_err(|e| ClaudeError::Transport(format!("reading the response: {e}")))?;
                 parse_api_reply(&v)
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let retry_after = resp.header("retry-after").and_then(parse_retry_after);
                 let body = resp.into_string().unwrap_or_default();
-                Err(ClaudeError::Status { code: i32::from(code), body, retry_after })
+                Err(ClaudeError::Status {
+                    code: i32::from(code),
+                    body,
+                    retry_after,
+                })
             }
             Err(ureq::Error::Transport(t)) => Err(ClaudeError::Transport(t.to_string())),
         }
@@ -375,6 +553,10 @@ impl Claude for ClaudeApi {
     fn complete(&self, req: &Request) -> Result<Reply, ClaudeError> {
         let body = request_body(req);
         self.backoff.run(&mut std::thread::sleep, || self.post(&body))
+    }
+
+    fn transport(&self) -> Transport {
+        Transport::Api
     }
 }
 
@@ -405,14 +587,22 @@ pub fn request_body(req: &Request) -> Value {
 
 /// Parses a Messages API response: concatenates `text` blocks, skips
 /// `thinking` blocks, and maps `stop_reason` "refusal" (with
-/// `stop_details`) and "max_tokens" to their errors.
+/// `stop_details`) and "max_tokens" to their errors. `usage` carries
+/// input, output and cache token counts; the API does not break out
+/// thinking tokens or report cost, so those stay `None`.
 fn parse_api_reply(v: &Value) -> Result<Reply, ClaudeError> {
     let stop_reason = v.get("stop_reason").and_then(Value::as_str).map(str::to_string);
     if stop_reason.as_deref() == Some("refusal") {
         let field = |k: &str| {
-            v.get("stop_details").and_then(|d| d.get(k)).and_then(Value::as_str).map(str::to_string)
+            v.get("stop_details")
+                .and_then(|d| d.get(k))
+                .and_then(Value::as_str)
+                .map(str::to_string)
         };
-        return Err(ClaudeError::Refusal { category: field("category"), explanation: field("explanation") });
+        return Err(ClaudeError::Refusal {
+            category: field("category"),
+            explanation: field("explanation"),
+        });
     }
     let content = v
         .get("content")
@@ -430,7 +620,31 @@ fn parse_api_reply(v: &Value) -> Result<Reply, ClaudeError> {
         return Err(ClaudeError::MaxTokens { partial: text });
     }
     let model = v.get("model").and_then(Value::as_str).map(str::to_string);
-    Ok(Reply { text, model, stop_reason })
+    let usage_obj = v.get("usage");
+    let usage = Usage {
+        input_tokens: usage_obj.and_then(|u| get_u64(u, "input_tokens")),
+        output_tokens: usage_obj.and_then(|u| get_u64(u, "output_tokens")),
+        cache_read_input_tokens: usage_obj.and_then(|u| get_u64(u, "cache_read_input_tokens")),
+        cache_creation_input_tokens: usage_obj.and_then(|u| get_u64(u, "cache_creation_input_tokens")),
+        thinking_tokens: None,
+    };
+    let per_model = match &model {
+        Some(m) => vec![ModelUsage {
+            model: m.clone(),
+            usage: usage.clone(),
+            cost_usd: None,
+        }],
+        None => Vec::new(),
+    };
+    Ok(Reply {
+        text,
+        model,
+        stop_reason,
+        usage,
+        per_model,
+        cost_usd: None,
+        duration_ms: None,
+    })
 }
 
 #[cfg(test)]
@@ -503,7 +717,11 @@ mod tests {
     }
 
     fn status(code: i32, retry_after: Option<u64>) -> ClaudeError {
-        ClaudeError::Status { code, body: String::new(), retry_after: retry_after.map(Duration::from_secs) }
+        ClaudeError::Status {
+            code,
+            body: String::new(),
+            retry_after: retry_after.map(Duration::from_secs),
+        }
     }
 
     #[test]
@@ -539,7 +757,11 @@ mod tests {
 
     #[test]
     fn does_not_retry_client_errors() {
-        for e in [status(400, None), status(401, None), ClaudeError::MaxTokens { partial: String::new() }] {
+        for e in [
+            status(400, None),
+            status(401, None),
+            ClaudeError::MaxTokens { partial: String::new() },
+        ] {
             let calls = Cell::new(0);
             let mut e = Some(e);
             let r: Result<(), _> = Backoff::default().run(&mut |_| panic!("no wait expected"), || {
@@ -566,17 +788,120 @@ mod tests {
 
     #[test]
     fn parses_cli_envelopes() {
-        let ok = parse_cli_envelope(r#"{"is_error":false,"result":"PONG","subtype":"success"}"#).unwrap();
+        let ok = parse_cli_envelope(r#"{"is_error":false,"result":"PONG","subtype":"success"}"#, "claude-opus-5-5").unwrap();
         assert_eq!(ok.text, "PONG");
+        assert_eq!(ok.usage, Usage::default());
+        assert!(ok.per_model.is_empty());
         assert!(matches!(
-            parse_cli_envelope(r#"{"is_error":true,"result":"boom","subtype":"error_during_execution"}"#),
+            parse_cli_envelope(r#"{"is_error":true,"result":"boom","subtype":"error_during_execution"}"#, "m"),
             Err(ClaudeError::Status { .. })
         ));
         assert!(matches!(
-            parse_cli_envelope(r#"{"is_error":false,"result":"{","stop_reason":"max_tokens"}"#),
+            parse_cli_envelope(r#"{"is_error":false,"result":"{","stop_reason":"max_tokens"}"#, "m"),
             Err(ClaudeError::MaxTokens { .. })
         ));
-        assert!(matches!(parse_cli_envelope("not json"), Err(ClaudeError::Parse(_))));
+        assert!(matches!(parse_cli_envelope("not json", "m"), Err(ClaudeError::Parse(_))));
+    }
+
+    #[test]
+    fn parses_cli_usage_and_picks_the_answering_model() {
+        let stdout = r#"{
+            "is_error": false, "result": "song text", "stop_reason": "end_turn",
+            "usage": {"input_tokens": 6120, "output_tokens": 5310,
+                      "cache_read_input_tokens": 0, "cache_creation_input_tokens": 4988,
+                      "output_tokens_details": {"thinking_tokens": 2760}},
+            "modelUsage": {
+                "claude-opus-5-5": {"inputTokens": 6000, "outputTokens": 5310,
+                    "cacheReadInputTokens": 0, "cacheCreationInputTokens": 4988,
+                    "thinkingTokens": 2760, "costUSD": 0.40},
+                "claude-haiku-4-5": {"inputTokens": 120, "outputTokens": 8, "costUSD": 0.01}
+            },
+            "total_cost_usd": 0.41, "duration_ms": 61234
+        }"#;
+        let r = parse_cli_envelope(stdout, "claude-opus-5-5").unwrap();
+        assert_eq!(r.text, "song text");
+        assert_eq!(r.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(r.usage.input_tokens, Some(6120));
+        assert_eq!(r.usage.output_tokens, Some(5310));
+        assert_eq!(r.usage.cache_read_input_tokens, Some(0));
+        assert_eq!(r.usage.cache_creation_input_tokens, Some(4988));
+        assert_eq!(r.usage.thinking_tokens, Some(2760));
+        assert_eq!(r.cost_usd, Some(0.41));
+        assert_eq!(r.duration_ms, Some(61234));
+        assert_eq!(r.per_model.len(), 2);
+        assert_eq!(r.per_model[0].model, "claude-haiku-4-5"); // sorted by id
+        assert_eq!(r.per_model[1].model, "claude-opus-5-5");
+        assert_eq!(r.per_model[1].cost_usd, Some(0.40));
+    }
+
+    #[test]
+    fn cli_model_tie_prefers_the_requested_model() {
+        let per_model = vec![
+            ModelUsage {
+                model: "claude-a".into(),
+                usage: Usage {
+                    output_tokens: Some(10),
+                    ..Usage::default()
+                },
+                cost_usd: None,
+            },
+            ModelUsage {
+                model: "claude-b".into(),
+                usage: Usage {
+                    output_tokens: Some(10),
+                    ..Usage::default()
+                },
+                cost_usd: None,
+            },
+        ];
+        assert_eq!(pick_answering_model(&per_model, "claude-b").as_deref(), Some("claude-b"));
+        assert_eq!(pick_answering_model(&per_model, "claude-z").as_deref(), Some("claude-a"));
+        assert_eq!(pick_answering_model(&[], "claude-a"), None);
+    }
+
+    #[test]
+    fn parses_a_minimal_cli_envelope() {
+        let r = parse_cli_envelope(r#"{"is_error":false,"result":"x"}"#, "claude-opus-5-5").unwrap();
+        assert_eq!(r.usage, Usage::default());
+        assert!(r.per_model.is_empty());
+        assert_eq!(r.cost_usd, None);
+        assert_eq!(r.duration_ms, None);
+        assert_eq!(r.model, None);
+    }
+
+    #[test]
+    fn parses_api_usage() {
+        let v = json!({
+            "content": [{"type": "text", "text": "hi"}],
+            "stop_reason": "end_turn",
+            "model": "claude-opus-5-5",
+            "usage": {"input_tokens": 100, "output_tokens": 50,
+                      "cache_read_input_tokens": 10, "cache_creation_input_tokens": 20},
+        });
+        let r = parse_api_reply(&v).unwrap();
+        assert_eq!(r.usage.input_tokens, Some(100));
+        assert_eq!(r.usage.output_tokens, Some(50));
+        assert_eq!(r.usage.cache_read_input_tokens, Some(10));
+        assert_eq!(r.usage.cache_creation_input_tokens, Some(20));
+        assert_eq!(r.usage.thinking_tokens, None);
+        assert_eq!(r.cost_usd, None);
+        assert_eq!(
+            r.per_model,
+            vec![ModelUsage {
+                model: "claude-opus-5-5".into(),
+                usage: r.usage.clone(),
+                cost_usd: None
+            }]
+        );
+    }
+
+    #[test]
+    fn transport_parses_and_round_trips_serde() {
+        assert_eq!("CLI".parse::<Transport>().unwrap(), Transport::Cli);
+        assert_eq!("api".parse::<Transport>().unwrap(), Transport::Api);
+        assert!("ftp".parse::<Transport>().is_err());
+        assert_eq!(serde_json::to_string(&Transport::Api).unwrap(), "\"api\"");
+        assert_eq!(serde_json::from_str::<Transport>("\"cli\"").unwrap(), Transport::Cli);
     }
 
     #[test]

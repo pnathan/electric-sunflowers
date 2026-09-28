@@ -22,7 +22,7 @@ pub(crate) struct Grid {
 }
 
 impl Grid {
-    fn of(meter: Meter) -> Grid {
+    pub(crate) fn of(meter: Meter) -> Grid {
         let g = meter.grid();
         let beat_u = 2 * g.sub as i64;
         Grid { bar_u: beat_u * g.beats as i64, beat_u, compound: meter == Meter::Six8, bpb: g.beats as i64 }
@@ -72,7 +72,7 @@ impl Grid {
     }
 
     /// `d` units from `st` as notatable values, largest first.
-    fn split(&self, mut st: i64, mut d: i64, rest: bool) -> Vec<(i64, i64)> {
+    pub(crate) fn split(&self, mut st: i64, mut d: i64, rest: bool) -> Vec<(i64, i64)> {
         const VALS: [i64; 8] = [16, 12, 8, 6, 4, 3, 2, 1];
         let mut out = Vec::new();
         while d > 0 {

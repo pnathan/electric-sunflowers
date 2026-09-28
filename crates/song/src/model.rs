@@ -1,6 +1,7 @@
-//! Typed song model: Song, Section, Mode, Meter, SectionKind, DrumKit, Voice, Band.
-//! Every value is in range after `wire::normalize`; the render path does not
-//! validate again.
+//! Typed song model: Song, Section, Mode, Meter, SectionKind, DrumKit, Voice, Band,
+//! duet parts (Part, SingerId, Blend, Duet) and singer phrasing (Phrasing,
+//! Delivery, Endings). Every value is in range after `wire::normalize`; the
+//! render path does not validate again.
 
 use crate::chord::{ChordId, ChordTable};
 use crate::phoneme::Phoneme;
@@ -237,6 +238,134 @@ impl Default for Band {
     }
 }
 
+named_enum! {
+    /// Note delivery: how legato or clipped the singer is (design 5.1).
+    /// Sets `voice::phrasing::PhrasingParams` (sustain, onset share, lead-in,
+    /// vibrato, glide, swell, breath).
+    pub enum Delivery ("delivery") {
+        Legato = "legato",
+        Flowing = "flowing",
+        Parlando = "parlando",
+        Detached = "detached",
+    }
+}
+
+named_enum! {
+    /// How a phrase-final note ends. Sets the phrase-end fade in
+    /// `voice::phrasing::PhrasingParams` (end_len, fade_depth, fade_from).
+    pub enum Endings ("endings") {
+        Held = "held",
+        Released = "released",
+        Clipped = "clipped",
+    }
+}
+
+/// A singer's articulation: how notes are delivered and how phrases end.
+/// `Default` is Flowing + Released, today's articulation exactly, so a song
+/// without a `phrasing` field renders unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+pub struct Phrasing {
+    pub delivery: Delivery,
+    pub endings: Endings,
+}
+
+impl Default for Phrasing {
+    fn default() -> Phrasing {
+        Phrasing { delivery: Delivery::Flowing, endings: Endings::Released }
+    }
+}
+
+named_enum! {
+    /// Which singer of a duet, `A` or `B`. `A` is always the top-level
+    /// `Song::voice`; `B` is `Duet::voice`.
+    pub enum SingerId ("singer") {
+        A = "A",
+        B = "B",
+    }
+}
+
+named_enum! {
+    /// How the other singer sings a shared line against the melody: a
+    /// harmony interval (`harmony_line`, chord tones first) or the same
+    /// tune in another octave.
+    pub enum Blend ("blend") {
+        Harmony = "harmony",
+        Octave = "octave",
+    }
+}
+
+/// Who sings one lyric line: one singer alone, or both, one carrying the
+/// melody and the other in harmony or another octave (design 4.3).
+/// `Default` is `Solo(A)`, today's only case, so a song without duet fields
+/// renders unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Part {
+    Solo(SingerId),
+    Both { melody: SingerId, blend: Blend },
+}
+
+impl Default for Part {
+    fn default() -> Part {
+        Part::Solo(SingerId::A)
+    }
+}
+
+impl Part {
+    /// The singer who carries the tune.
+    pub fn melody(self) -> SingerId {
+        match self {
+            Part::Solo(s) => s,
+            Part::Both { melody, .. } => melody,
+        }
+    }
+
+    /// The other singer and how they blend, on a shared line; `None` when
+    /// the line is sung by one singer alone.
+    pub fn other(self) -> Option<(SingerId, Blend)> {
+        match self {
+            Part::Solo(_) => None,
+            Part::Both { melody, blend } => {
+                let other = match melody {
+                    SingerId::A => SingerId::B,
+                    SingerId::B => SingerId::A,
+                };
+                Some((other, blend))
+            }
+        }
+    }
+}
+
+/// `{"sing": "A"|"B"|"both", "lead"?: "A"|"B", "blend"?: "harmony"|"octave"}`,
+/// the wire shape of a shared line's part (design 4.3). `lead` and `blend`
+/// are present only when the line is shared.
+impl Serialize for Part {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        match self {
+            Part::Solo(id) => {
+                let mut m = s.serialize_map(Some(1))?;
+                m.serialize_entry("sing", id.as_str())?;
+                m.end()
+            }
+            Part::Both { melody, blend } => {
+                let mut m = s.serialize_map(Some(3))?;
+                m.serialize_entry("sing", "both")?;
+                m.serialize_entry("lead", melody.as_str())?;
+                m.serialize_entry("blend", blend.as_str())?;
+                m.end()
+            }
+        }
+    }
+}
+
+/// Singer B of a duet: their voice type, and their own phrasing (falls back
+/// to the song's `phrasing`, then to `Phrasing::default`, in `phrasing_of`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct Duet {
+    pub voice: Voice,
+    pub phrasing: Option<Phrasing>,
+}
+
 /// The chords of one bar: one or two, in order. A two-chord bar changes
 /// chord after `MeterGrid::split` beats.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -301,6 +430,9 @@ pub struct Syllable {
 pub struct Line {
     pub syllables: Vec<Syllable>,
     pub bars: Vec<BarChords>,
+    /// Which singer(s) carry this line. `Part::default()` (`Solo(A)`) outside
+    /// a duet, always.
+    pub part: Part,
 }
 
 impl Line {
@@ -402,6 +534,11 @@ pub struct Song {
     pub break_lead: BreakLead,
     /// Style id, set when a style is applied.
     pub style: Option<String>,
+    /// Singer A's phrasing, and the song's default; `None` means the style's
+    /// default (or, unstyled, `Phrasing::default()`) applies (design 5.1).
+    pub phrasing: Option<Phrasing>,
+    /// Singer B, when the song is a duet; `None` is solo.
+    pub duet: Option<Duet>,
     /// At least one section is sung.
     pub sections: Vec<Section>,
     /// Every chord the song uses; `BarChords` index into it.
@@ -425,6 +562,31 @@ impl Song {
 
     pub fn chord(&self, id: ChordId) -> &crate::chord::Chord {
         self.chords.get(id)
+    }
+
+    /// Whether the song has a singer B.
+    pub fn is_duet(&self) -> bool {
+        self.duet.is_some()
+    }
+
+    /// A singer's voice type: `A` is always `Some(self.voice)`; `B` is the
+    /// duet's voice, or `None` outside a duet.
+    pub fn voice_of(&self, s: SingerId) -> Option<Voice> {
+        match s {
+            SingerId::A => Some(self.voice),
+            SingerId::B => self.duet.as_ref().map(|d| d.voice),
+        }
+    }
+
+    /// A singer's phrasing: `B`'s own if set, else the song's, else
+    /// `Phrasing::default()`; `A`'s is the song's, else the default.
+    pub fn phrasing_of(&self, s: SingerId) -> Phrasing {
+        match s {
+            SingerId::B => {
+                self.duet.as_ref().and_then(|d| d.phrasing).or(self.phrasing).unwrap_or_default()
+            }
+            SingerId::A => self.phrasing.unwrap_or_default(),
+        }
     }
 }
 
@@ -465,7 +627,11 @@ mod tests {
             word_end: false,
             phones: vec![],
         };
-        let l = Line { syllables: vec![syl("hel", 0), syl("lo", 0), syl("world", 1)], bars: vec![] };
+        let l = Line {
+            syllables: vec![syl("hel", 0), syl("lo", 0), syl("world", 1)],
+            bars: vec![],
+            part: Part::default(),
+        };
         assert_eq!(l.words().collect::<Vec<_>>(), vec!["hello", "world"]);
         assert_eq!(l.text(), "hel lo world");
     }

@@ -17,7 +17,10 @@ fn persona_age_follows_the_year() {
     for (year, age) in [(2026, 27), (2031, 32)] {
         assert_eq!(persona_age(year), age);
         let p = song_prompt("a dance", None, &dir, "playful", year);
-        assert!(p.contains(&format!("it is {year}, so you are {age}.")), "{year}");
+        assert!(
+            p.contains(&format!("it is {year}, so you are {age}.")),
+            "{year}"
+        );
     }
 }
 
@@ -29,10 +32,21 @@ fn prompt_carries_direction_plan_register_and_band() {
         let form = dir.form.form();
         assert!(p.contains("\"\"\"hay in June\"\"\"\nIt will be sung by a alto.\nSTYLE: "));
         assert!(p.contains(&format!("STYLE: {}. Idiom: {}.", dir.label, dir.idiom)));
-        assert!(p.contains(&format!("Mode: {}. Meter: {}. Tempo: {} to {} bpm", dir.mode, dir.meter, dir.tempo_lo, dir.tempo_hi)));
-        assert!(p.contains(&format!("FORM: {}. {}\nFollow this plan exactly, in this order:\n{}\n", form.label, form.note, form.plan_text())));
+        assert!(p.contains(&format!(
+            "Mode: {}. Meter: {}. Tempo: {} to {} bpm",
+            dir.mode, dir.meter, dir.tempo_lo, dir.tempo_hi
+        )));
+        assert!(p.contains(&format!(
+            "FORM: {}. {}\nFollow this plan exactly, in this order:\n{}\n",
+            form.label,
+            form.note,
+            form.plan_text()
+        )));
         assert!(p.contains("- If the prompt leaves the feeling open, write it as: tender."));
-        assert!(p.contains(&format!("Set \"guitar\" to \"{}\" and \"band\" to {{\"drums\":\"{}\",\"bass\":{},", dir.guitar, dir.band.drums, dir.band.bass)));
+        assert!(p.contains(&format!(
+            "Set \"guitar\" to \"{}\" and \"band\" to {{\"drums\":\"{}\",\"bass\":{},",
+            dir.guitar, dir.band.drums, dir.band.bass
+        )));
         assert!(p.is_ascii());
     }
 }
@@ -48,7 +62,10 @@ fn prompt_without_voice_keeps_the_blank_line() {
 
 #[test]
 fn schema_is_the_song_crates() {
-    assert_eq!(songwriter::schema::song_schema(), song::schema::json_schema());
+    assert_eq!(
+        songwriter::schema::song_schema(),
+        song::schema::json_schema()
+    );
 }
 
 #[test]
@@ -67,7 +84,11 @@ struct Mock {
 impl Claude for Mock {
     fn complete(&self, req: &Request) -> Result<Reply, ClaudeError> {
         *self.seen.borrow_mut() = Some(req.clone());
-        Ok(Reply { text: self.reply.clone(), model: Some("mock".into()), stop_reason: Some("end_turn".into()) })
+        Ok(Reply {
+            model: Some("mock".into()),
+            stop_reason: Some("end_turn".into()),
+            ..Reply::text_only(self.reply.clone())
+        })
     }
 }
 
@@ -86,13 +107,19 @@ fn write_song_sends_schema_and_extracts_the_song() {
     assert_eq!(w.direction.style, StyleId::Oldtime);
     assert!(REGISTERS.contains(&w.register));
     assert_eq!(w.model.as_deref(), Some("mock"));
+    assert_eq!(w.generation.model.as_deref(), Some("mock"));
+    assert_eq!(w.generation.requested_model, "claude-fable-5-1");
+    assert_eq!(w.generation.effort, "medium");
+    assert_eq!(w.generation.transport, songwriter::claude::Transport::Cli); // Mock does not override transport()
 
     let seen = mock.seen.borrow().clone().expect("request sent");
     assert_eq!(seen.model, "claude-fable-5-1");
     assert_eq!(seen.effort, Effort::Medium);
     assert_eq!(seen.json_schema, Some(song::schema::json_schema()));
     assert!(seen.prompt.contains("STYLE: Old-time string band."));
-    assert!(seen.prompt.contains(&format!("write it as: {}.", w.register)));
+    assert!(seen
+        .prompt
+        .contains(&format!("write it as: {}.", w.register)));
 
     // Same seed, same draws.
     let again = write_song(&mock, &req, &mut rng(9)).expect("mock reply parses");
@@ -102,7 +129,10 @@ fn write_song_sends_schema_and_extracts_the_song() {
 
 #[test]
 fn write_song_reports_a_reply_without_json() {
-    let mock = Mock { reply: "I would rather not.".into(), seen: RefCell::new(None) };
+    let mock = Mock {
+        reply: "I would rather not.".into(),
+        seen: RefCell::new(None),
+    };
     let r = write_song(&mock, &WriteRequest::new("x", 2026), &mut rng(1));
     assert!(matches!(r, Err(songwriter::WriteSongError::NoJsonFound(_))));
 }

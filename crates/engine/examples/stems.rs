@@ -111,7 +111,7 @@ fn run() -> Result<(), String> {
         "mix_s": mix_s,
         "stems": written,
         "blocks_present_total": blocks,
-        "slapback_blocks": stems.slapback.as_ref().map(|s| s.present_blocks()),
+        "slapback_blocks": stems.get(TrackId::Lead).and_then(|p| p.slap.as_ref()).map(|s| s.present_blocks()),
     });
     let p = out.join("render.json");
     std::fs::write(&p, serde_json::to_string_pretty(&info).map_err(|e| e.to_string())? + "\n")

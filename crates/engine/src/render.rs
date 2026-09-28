@@ -46,14 +46,13 @@ impl Progress for NoProgress {
 }
 
 /// The processed tracks of one render: the cache the mixer sums, so band
-/// toggles are a re-mix only.
+/// toggles are a re-mix only. Each track's slapback (if its strip has one)
+/// is in its `ProcessedStem.slap`.
 #[derive(Clone, Debug)]
 pub struct Stems {
     pub len: usize,
     /// Indexed by `TrackId as usize`; `None` for a silent or absent track.
     pub tracks: [Option<ProcessedStem>; N_TRACKS],
-    /// The lead's slapback, level applied; `None` without a lead.
-    pub slapback: Option<SparseBuf>,
 }
 
 impl Stems {
@@ -69,7 +68,6 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// Where the tasks store their results.
 struct Store {
     tracks: Mutex<[Option<ProcessedStem>; N_TRACKS]>,
-    slapback: Mutex<Option<SparseBuf>>,
 }
 
 impl Store {
@@ -78,11 +76,8 @@ impl Store {
         if audio.is_silent() {
             return;
         }
-        let Some((stem, slap)) = run_strip(id.strip(), audio) else { return };
+        let Some(stem) = run_strip(id.strip(), audio) else { return };
         lock(&self.tracks)[id.index()] = Some(stem);
-        if slap.is_some() {
-            *lock(&self.slapback) = slap;
-        }
     }
 }
 
@@ -121,7 +116,7 @@ pub fn render(song: &Song, seed: u64, voice: Option<Voice>, progress: &dyn Progr
     let arr = arrange::arrange(song, &prepared, seed);
     let v = &arr.vocals;
 
-    let results = Store { tracks: Mutex::new(Default::default()), slapback: Mutex::new(None) };
+    let results = Store { tracks: Mutex::new(Default::default()) };
     let (doubles, choir, done) = (Joint::<2>::new(), Joint::<4>::new(), AtomicUsize::new(0));
     let (store, doubles, choir, done, arr) = (&results, &doubles, &choir, &done, &arr);
     let finish = move || progress.advance(done.fetch_add(1, Ordering::Relaxed) + 1, TASKS);
@@ -172,8 +167,7 @@ pub fn render(song: &Song, seed: u64, voice: Option<Voice>, progress: &dyn Progr
         }
     });
 
-    let Store { tracks, slapback } = results;
+    let Store { tracks } = results;
     let tracks = tracks.into_inner().unwrap_or_else(|e| e.into_inner());
-    let slapback = slapback.into_inner().unwrap_or_else(|e| e.into_inner());
-    (prepared, Stems { len, tracks, slapback })
+    (prepared, Stems { len, tracks })
 }

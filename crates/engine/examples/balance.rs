@@ -45,7 +45,8 @@ fn main() {
         Some(out)
     };
     let lead = dense(TrackId::Lead).expect("lead stem");
-    let duck = engine::mix::duck_gains(&stems, &song.band);
+    let settings = engine::MixSettings::default_for(&stems);
+    let duck = engine::mix::duck_gains(&stems, &song.band, &settings);
     // Frames where the lead sings: 2048-sample blocks within 20 dB of its loudest.
     const B: usize = 2048;
     let rms: Vec<f64> = lead.chunks(B).map(|c| (c.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / c.len() as f64).sqrt()).collect();

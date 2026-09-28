@@ -352,7 +352,10 @@ mod tests {
 
     impl songwriter::claude::Claude for Canned {
         fn complete(&self, _: &songwriter::claude::Request) -> Result<songwriter::claude::Reply, songwriter::claude::ClaudeError> {
-            Ok(songwriter::claude::Reply { text: self.0.clone(), model: Some("canned".into()), stop_reason: None })
+            Ok(songwriter::claude::Reply {
+                model: Some("canned".into()),
+                ..songwriter::claude::Reply::text_only(self.0.clone())
+            })
         }
     }
 

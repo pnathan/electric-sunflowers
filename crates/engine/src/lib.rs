@@ -5,15 +5,22 @@
 //! - `vocals`, `band`: render one track's events into a stem.
 //! - `strip`: EQ, gated loudness, compressor, slapback.
 //! - `render`: the task graph (`render`), producing `Stems`.
-//! - `mix`: the block mixer, bus compressor and peak normalisation.
+//! - `mix`: the block mixer, bus compressor and peak normalisation,
+//!   parameterised by `MixSettings`.
+//! - `mixset`: `MixSettings`, the per-track fader/pan/mute/solo and the
+//!   ducking depth (a sidecar, never a writing decision; design section 3.2).
+//! - `print`: one printed stem or the printed reverb return (design
+//!   section 3.3).
 //! - `sheet`: the song sheet (sections, lyrics, chords, times) as rendered.
 //!
-//! `render` once, then `mix` as often as the band changes.
+//! `render` once, then `mix` as often as the band or the mix settings change.
 
 use std::sync::OnceLock;
 
 pub mod band;
 pub mod mix;
+pub mod mixset;
+pub mod print;
 pub mod render;
 pub mod sheet;
 pub mod stem;
@@ -21,7 +28,9 @@ pub mod strip;
 pub mod track;
 pub mod vocals;
 
-pub use mix::{mix, Stereo};
+pub use mix::{mix, mix_with, premix, Stereo};
+pub use mixset::{MixSettings, TrackMix};
+pub use print::{mix_gain, print_reverb, print_stem};
 pub use render::{render, NoProgress, Progress, Stems};
 pub use sheet::{sheet_from, song_sheet, SheetBar, SheetChord, SheetLine, SheetSection, SheetSyllable, SheetWord, SongSheet};
 pub use stem::{SparseBuf, Stem};

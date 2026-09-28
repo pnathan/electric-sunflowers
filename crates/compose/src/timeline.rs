@@ -95,6 +95,26 @@ impl Timeline {
         self.t[i] + (beat - i as f64) * (self.t[i + 1] - self.t[i])
     }
 
+    /// Beat at `t` seconds, the inverse of `to_time`: binary search on `t`
+    /// for the enclosing beat, then linear interpolation inside it. Before
+    /// the start and past the end the same linear rule as `to_time` applies
+    /// (the final ritard's beat length holds past the end), so `to_beat` is
+    /// a true inverse everywhere `to_time` is defined.
+    pub fn to_beat(&self, t: f64) -> f64 {
+        let nb = self.nb;
+        if t >= self.t[nb] {
+            return nb as f64 + (t - self.t[nb]) / (self.base * (1.0 + RIT_DEPTH));
+        }
+        if t <= self.t[0] {
+            return (t - self.t[0]) / self.base;
+        }
+        // self.t is nondecreasing; find i with t[i] <= t <= t[i+1].
+        let i = self.t.partition_point(|&x| x <= t).saturating_sub(1).min(nb - 1);
+        let (a, b) = (self.t[i], self.t[i + 1]);
+        let frac = if b > a { (t - a) / (b - a) } else { 0.0 };
+        i as f64 + frac
+    }
+
     /// Index into `segs` of the segment sounding at `beat`, by binary
     /// search; beats before the song take the first segment, beats after
     /// it the last. A normalised song has at least one bar, so `segs` is
@@ -164,6 +184,23 @@ mod tests {
         assert!((tl.beat_dur((nb - 1) as f64) - 0.5 * (1.0 + RIT_DEPTH)).abs() < 1e-12);
         for b in 8..nb {
             assert!(tl.beat_dur(b as f64) > tl.beat_dur(b as f64 - 1.0) - 1e-12);
+        }
+    }
+
+    #[test]
+    fn to_beat_is_the_inverse_of_to_time() {
+        let (song, form) = form_of(json!({
+            "key":"C","meter":"4/4","tempo":120,
+            "sections":[{"type":"verse","lines":[{"syl":"*a b *c d","chords":["C","F","G","C"]}]}]
+        }));
+        let tl = Timeline::new(&form, song.tempo_bpm);
+        let nb = tl.nb as f64;
+        let mut b = -4.0;
+        while b < nb + 4.0 {
+            let t = tl.to_time(b);
+            let back = tl.to_beat(t);
+            assert!((back - b).abs() < 1e-9, "beat {b} -> t {t} -> {back}");
+            b += 0.1;
         }
     }
 

@@ -61,7 +61,7 @@ fn demo_mix_is_finite_and_normalised() {
     for id in TrackId::ALL {
         assert!(stems.get(id).is_some(), "demo has no {} stem", id.name());
     }
-    assert!(stems.slapback.is_some());
+    assert!(stems.get(TrackId::Lead).is_some_and(|p| p.slap.is_some()));
 }
 
 #[test]

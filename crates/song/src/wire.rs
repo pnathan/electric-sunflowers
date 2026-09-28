@@ -34,12 +34,23 @@
 //! - A section with no usable line is instrumental if it has chords (a verse
 //!   or chorus becomes an interlude), else it is dropped.
 //! - Hard errors: not a JSON object; no sung section; no parseable chord.
+//! - `phrasing` (top level and `duet.phrasing`): absent is `None`, silently
+//!   (a style, or `Phrasing::default`, applies later); present but not an
+//!   object is `None` too, with both fields reported defaulted; an object
+//!   fills each field, defaulting an absent or unknown one.
+//! - `duet`: absent is solo, silently. Present but not an object, or with no
+//!   usable `voice`, is solo, reported. A line's `sing` (`A`, `B` or `both`,
+//!   case-insensitive; a section's is the default of its lines) picks its
+//!   `Part`; `B`/`both` without a duet reads as `A`. `lead`/`blend` on a
+//!   shared line pick the melody singer and the blend; on a line that is
+//!   not shared they are ignored. A duet where singer B never sings is
+//!   read as solo.
 
 use crate::chord::{parse_detail, Chord, ChordId, ChordTable};
 use crate::g2p::g2p;
 use crate::model::{
-    Band, BarChords, BreakLead, GuitarPattern, Line, Meter, Mode, Section, SectionBody, SectionKind,
-    SectionRole, Song, Syllable, Voice,
+    Band, BarChords, Blend, BreakLead, Delivery, Duet, Endings, GuitarPattern, Line, Meter, Mode, Part,
+    Phrasing, Section, SectionBody, SectionKind, SectionRole, SingerId, Song, Syllable, Voice,
 };
 use crate::phoneme::Phoneme;
 use crate::pitch::Pc;
@@ -80,9 +91,36 @@ pub struct WireSong {
     pub voice: Option<String>,
     #[serde(deserialize_with = "loose_obj")]
     pub band: Option<WireBand>,
+    /// Outer `None`: the key is absent (solo, silently). `Some(None)`: present
+    /// but not an object.
+    #[serde(deserialize_with = "loose_obj_seen")]
+    pub phrasing: Option<Option<WirePhrasing>>,
+    /// Outer `None`: the key is absent (solo, silently). `Some(None)`:
+    /// present but not an object.
+    #[serde(deserialize_with = "loose_obj_seen")]
+    pub duet: Option<Option<WireDuet>>,
     /// `None` entries were not JSON objects.
     #[serde(deserialize_with = "loose_objs")]
     pub sections: Vec<Option<WireSection>>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct WirePhrasing {
+    #[serde(deserialize_with = "loose_str")]
+    pub delivery: Option<String>,
+    #[serde(deserialize_with = "loose_str")]
+    pub endings: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct WireDuet {
+    #[serde(deserialize_with = "loose_str")]
+    pub voice: Option<String>,
+    /// Same presence-sensitive shape as `WireSong::phrasing`.
+    #[serde(deserialize_with = "loose_obj_seen")]
+    pub phrasing: Option<Option<WirePhrasing>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -113,6 +151,15 @@ pub struct WireSection {
     pub kind: Option<String>,
     #[serde(deserialize_with = "loose_bool")]
     pub same: Option<bool>,
+    /// Default part of this section's lines (`A`, `B` or `both`).
+    #[serde(deserialize_with = "loose_str")]
+    pub sing: Option<String>,
+    /// Default melody singer of a shared line in this section.
+    #[serde(deserialize_with = "loose_str")]
+    pub lead: Option<String>,
+    /// Default blend of a shared line in this section.
+    #[serde(deserialize_with = "loose_str")]
+    pub blend: Option<String>,
     /// `None` entries were not JSON objects.
     #[serde(deserialize_with = "loose_objs")]
     pub lines: Vec<Option<WireLine>>,
@@ -133,6 +180,16 @@ pub struct WireLine {
     pub ph: Option<String>,
     #[serde(deserialize_with = "loose_chords")]
     pub chords: Option<Vec<String>>,
+    /// This line's own part; absent means the section default.
+    #[serde(deserialize_with = "loose_str")]
+    pub sing: Option<String>,
+    /// This line's own melody singer; presence matters even when unusable,
+    /// for `IgnoredPartField` on a line that turns out not to be shared.
+    #[serde(deserialize_with = "loose_str_seen")]
+    pub lead: Option<Option<String>>,
+    /// This line's own blend; same presence rule as `lead`.
+    #[serde(deserialize_with = "loose_str_seen")]
+    pub blend: Option<Option<String>>,
 }
 
 /// String, or a number or boolean written as text; anything else is absent.
@@ -195,6 +252,24 @@ fn loose_chords<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<String>>, 
 fn loose_obj<'de, D: Deserializer<'de>, T: for<'a> Deserialize<'a>>(d: D) -> Result<Option<T>, D::Error> {
     let v = Value::deserialize(d)?;
     Ok(if v.is_object() { T::deserialize(v).ok() } else { None })
+}
+
+/// Wraps `loose_str` so absence of the JSON key can be told apart from a
+/// present-but-unusable value: serde only calls a field's
+/// `deserialize_with` when the key is in the input (a missing key uses
+/// `Default::default()` from the struct's `#[serde(default)]`), so wrapping
+/// the result in an extra `Some` here means outer `None` is exactly "key
+/// absent" and outer `Some` is exactly "key present" (inner `None` when its
+/// value was not a usable string, number or boolean).
+fn loose_str_seen<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
+    Ok(Some(loose_str(d)?))
+}
+
+/// Same presence-tracking wrapper as `loose_str_seen`, for `loose_obj`.
+fn loose_obj_seen<'de, D: Deserializer<'de>, T: for<'a> Deserialize<'a>>(
+    d: D,
+) -> Result<Option<Option<T>>, D::Error> {
+    Ok(Some(loose_obj(d)?))
 }
 
 fn loose_objs<'de, D: Deserializer<'de>, T: for<'a> Deserialize<'a>>(d: D) -> Result<Vec<Option<T>>, D::Error> {
@@ -272,6 +347,20 @@ pub enum Repair {
     PhonemeFallback { section: usize, line: usize, syllable: usize },
     /// `same: true` with no earlier sung section of that type.
     MissingRepeatSource { section: usize },
+    /// `duet` not an object, or its `voice` absent or unknown; the song
+    /// stays solo.
+    DuetDropped { reason: &'static str },
+    /// `sing` text not `A`, `B` or `both`; read as `A`.
+    UnknownPart { section: usize, line: Option<usize>, text: String },
+    /// `sing` named `B` or `both` in a song with no duet; read as `A`. One
+    /// per section when it comes from the section's own default, rather
+    /// than once per line that inherits it.
+    PartWithoutDuet { section: usize, line: Option<usize> },
+    /// `lead` or `blend` given on a line that is not shared; ignored.
+    IgnoredPartField { section: usize, line: usize, field: &'static str },
+    /// A duet where singer B sings no line, alone, as the melody or as the
+    /// other voice; the song is read as solo.
+    UnusedDuet,
 }
 
 impl fmt::Display for Repair {
@@ -306,6 +395,23 @@ impl fmt::Display for Repair {
                 write!(f, "section {section} line {line} syllable {syllable}: ARPAbet unusable, G2P used")
             }
             MissingRepeatSource { section } => write!(f, "section {section}: same without an earlier section"),
+            DuetDropped { reason } => write!(f, "duet dropped: {reason}"),
+            UnknownPart { section, line: Some(l), text } => {
+                write!(f, "section {section} line {l}: sing {text:?} unknown, read as A")
+            }
+            UnknownPart { section, line: None, text } => {
+                write!(f, "section {section}: sing {text:?} unknown, read as A")
+            }
+            PartWithoutDuet { section, line: Some(l) } => {
+                write!(f, "section {section} line {l}: sing without a duet, read as A")
+            }
+            PartWithoutDuet { section, line: None } => {
+                write!(f, "section {section}: sing without a duet, read as A")
+            }
+            IgnoredPartField { section, line, field } => {
+                write!(f, "section {section} line {line}: {field} ignored, the line is not shared")
+            }
+            UnusedDuet => f.write_str("duet dropped: singer B sings no line"),
         }
     }
 }
@@ -361,6 +467,132 @@ fn flag(v: Option<bool>, default: bool, field: &'static str, rep: &mut Vec<Repai
         rep.push(Repair::DefaultedField { field });
         default
     })
+}
+
+/// A `phrasing` object (top-level, or `duet.phrasing`): absent gives `None`
+/// silently (the style, or `Phrasing::default`, applies later); present but
+/// not an object gives `None` too, since nothing in it is usable, but both
+/// fields are still reported defaulted; present as an object fills each
+/// field, defaulting an absent or unknown one with its own `DefaultedField`.
+fn phrasing_field(
+    p: Option<Option<WirePhrasing>>,
+    delivery_field: &'static str,
+    endings_field: &'static str,
+    rep: &mut Vec<Repair>,
+) -> Option<Phrasing> {
+    let wp = match p? {
+        Some(wp) => wp,
+        None => {
+            rep.push(Repair::DefaultedField { field: delivery_field });
+            rep.push(Repair::DefaultedField { field: endings_field });
+            return None;
+        }
+    };
+    let delivery = pick(wp.delivery.as_deref(), Delivery::Flowing, delivery_field, rep);
+    let endings = pick(wp.endings.as_deref(), Endings::Released, endings_field, rep);
+    Some(Phrasing { delivery, endings })
+}
+
+/// The top-level `duet` object: absent gives solo silently; present but not
+/// an object, or with no usable `voice`, gives solo with `DuetDropped`; a
+/// usable duet keeps its own phrasing under `duet.phrasing`.
+fn duet_header(d: Option<Option<WireDuet>>, rep: &mut Vec<Repair>) -> Option<Duet> {
+    let wd = match d? {
+        Some(wd) => wd,
+        None => {
+            rep.push(Repair::DuetDropped { reason: "duet is not an object" });
+            return None;
+        }
+    };
+    let voice = match wd.voice.as_deref().and_then(|v| v.parse::<Voice>().ok()) {
+        Some(v) => v,
+        None => {
+            rep.push(Repair::DuetDropped { reason: "duet.voice is absent or unknown" });
+            return None;
+        }
+    };
+    let phrasing = phrasing_field(wd.phrasing, "duet.phrasing.delivery", "duet.phrasing.endings", rep);
+    Some(Duet { voice, phrasing })
+}
+
+/// A `sing` value: `A`, `B` or `both`, case-insensitive, surrounding
+/// whitespace ignored.
+#[derive(Clone, Copy, PartialEq)]
+enum SingText {
+    A,
+    B,
+    Both,
+}
+
+fn parse_sing(text: &str) -> Option<SingText> {
+    let t = text.trim();
+    if t.eq_ignore_ascii_case("A") {
+        Some(SingText::A)
+    } else if t.eq_ignore_ascii_case("B") {
+        Some(SingText::B)
+    } else if t.eq_ignore_ascii_case("both") {
+        Some(SingText::Both)
+    } else {
+        None
+    }
+}
+
+/// One `sing` value (a section's own default, or a line's), given its
+/// already-flattened text (`None`: absent, or a JSON type with no text to
+/// read; both are silent). Unknown text reads as `A` with `UnknownPart`.
+/// `B`/`both` in a song without a duet reads as `A` with `PartWithoutDuet`;
+/// called once for a section's own default regardless of how many lines
+/// inherit it, and once per line that gives its own `sing`.
+fn resolve_sing(
+    text: Option<String>,
+    is_duet: bool,
+    section: usize,
+    line: Option<usize>,
+    rep: &mut Vec<Repair>,
+) -> SingText {
+    match text {
+        None => SingText::A,
+        Some(text) => match parse_sing(&text) {
+            None => {
+                rep.push(Repair::UnknownPart { section, line, text });
+                SingText::A
+            }
+            Some(SingText::A) => SingText::A,
+            Some(_) if !is_duet => {
+                rep.push(Repair::PartWithoutDuet { section, line });
+                SingText::A
+            }
+            Some(sel) => sel,
+        },
+    }
+}
+
+/// A shared line's `lead` (default `SingerId::A`) or `blend` (default
+/// `Blend::Harmony`): absent text keeps `default`; present but unparseable
+/// reads as `default` with a `DefaultedField` named `field` ("lines.lead" /
+/// "lines.blend").
+fn resolve_named<T: std::str::FromStr + Copy>(
+    text: Option<String>,
+    default: T,
+    field: &'static str,
+    rep: &mut Vec<Repair>,
+) -> T {
+    match text {
+        None => default,
+        Some(t) => match t.parse::<T>() {
+            Ok(v) => v,
+            Err(_) => {
+                rep.push(Repair::DefaultedField { field });
+                default
+            }
+        },
+    }
+}
+
+fn ignore_if_present(present: bool, field: &'static str, section: usize, line: usize, rep: &mut Vec<Repair>) {
+    if present {
+        rep.push(Repair::IgnoredPartField { section, line, field });
+    }
 }
 
 /// Mode named by the text after the key's note name, if any.
@@ -672,6 +904,10 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         }
     };
 
+    let duet = duet_header(w.duet, &mut rep);
+    let is_duet = duet.is_some();
+    let phrasing = phrasing_field(w.phrasing, "phrasing.delivery", "phrasing.endings", &mut rep);
+
     let mut sec_rep = Vec::new();
     let mut ch = Chords {
         table: ChordTable::new(),
@@ -707,6 +943,13 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             }
         }
 
+        // The section's own defaults for lines that give no `sing`/`lead`/
+        // `blend` of their own; computed once, so many lines inheriting an
+        // unusable default are one repair, not one each.
+        let sing_default = resolve_sing(ws.sing, is_duet, si, None, ch.rep);
+        let lead_default = resolve_named(ws.lead, SingerId::A, "lines.lead", ch.rep);
+        let blend_default = resolve_named(ws.blend, Blend::Harmony, "lines.blend", ch.rep);
+
         let mut lines = Vec::new();
         for (li, wl) in ws.lines.into_iter().enumerate() {
             let Some(wl) = wl else {
@@ -721,7 +964,39 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             }
             assign_phones(&mut syls, wl.ph.as_deref(), si, li, ch.rep);
             let bars = ch.bars(wl.chords.as_deref().unwrap_or(&[]), LINE_MAX_BARS, si, Some(li));
-            lines.push(Line { syllables: syls, bars });
+
+            let sing_sel = match wl.sing {
+                Some(t) => resolve_sing(Some(t), is_duet, si, Some(li), ch.rep),
+                None => sing_default,
+            };
+            let lead_present = wl.lead.is_some();
+            let blend_present = wl.blend.is_some();
+            let lead_text = wl.lead.flatten();
+            let blend_text = wl.blend.flatten();
+            let part = match sing_sel {
+                SingText::A => {
+                    ignore_if_present(lead_present, "lead", si, li, ch.rep);
+                    ignore_if_present(blend_present, "blend", si, li, ch.rep);
+                    Part::Solo(SingerId::A)
+                }
+                SingText::B => {
+                    ignore_if_present(lead_present, "lead", si, li, ch.rep);
+                    ignore_if_present(blend_present, "blend", si, li, ch.rep);
+                    Part::Solo(SingerId::B)
+                }
+                SingText::Both => {
+                    let melody = match lead_text {
+                        Some(t) => resolve_named(Some(t), SingerId::A, "lines.lead", ch.rep),
+                        None => lead_default,
+                    };
+                    let blend = match blend_text {
+                        Some(t) => resolve_named(Some(t), Blend::Harmony, "lines.blend", ch.rep),
+                        None => blend_default,
+                    };
+                    Part::Both { melody, blend }
+                }
+            };
+            lines.push(Line { syllables: syls, bars, part });
         }
 
         if !lines.is_empty() {
@@ -759,6 +1034,13 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
     }
     rep.extend(sec_rep);
 
+    let duet = if duet.is_some() && !duet_used(&sections) {
+        rep.push(Repair::UnusedDuet);
+        None
+    } else {
+        duet
+    };
+
     let song = Song {
         title,
         note,
@@ -771,10 +1053,18 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         band,
         break_lead: BreakLead::Both,
         style: None,
+        phrasing,
+        duet,
         sections,
         chords,
     };
     Ok((song, rep))
+}
+
+/// Whether singer B sings any line: alone, as the melody of a shared line,
+/// or as the other voice of one. If not, a duet header is unused.
+fn duet_used(sections: &[Section]) -> bool {
+    sections.iter().flat_map(Section::lines).any(|l| matches!(l.part, Part::Solo(SingerId::B) | Part::Both { .. }))
 }
 
 // ---------------------------------------------------------------- back to wire
@@ -822,7 +1112,27 @@ pub fn to_wire(song: &Song) -> Value {
                                     ph.push_str(p.symbol());
                                 }
                             }
-                            serde_json::json!({ "syl": syl, "ph": ph, "chords": bars_text(song, &l.bars) })
+                            let mut lo = serde_json::json!({
+                                "syl": syl, "ph": ph, "chords": bars_text(song, &l.bars)
+                            });
+                            if l.part != Part::default() {
+                                let o = lo.as_object_mut().expect("object literal");
+                                match l.part {
+                                    Part::Solo(id) => {
+                                        o.insert("sing".into(), Value::String(id.as_str().into()));
+                                    }
+                                    Part::Both { melody, blend } => {
+                                        o.insert("sing".into(), Value::String("both".into()));
+                                        if melody != SingerId::A {
+                                            o.insert("lead".into(), Value::String(melody.as_str().into()));
+                                        }
+                                        if blend != Blend::Harmony {
+                                            o.insert("blend".into(), Value::String(blend.as_str().into()));
+                                        }
+                                    }
+                                }
+                            }
+                            lo
                         })
                         .collect();
                     o.insert("lines".into(), Value::Array(ls));
@@ -834,7 +1144,7 @@ pub fn to_wire(song: &Song) -> Value {
         }
         sections.push(Value::Object(o));
     }
-    serde_json::json!({
+    let mut top = serde_json::json!({
         "title": song.title,
         "note": song.note,
         "key": song.key.name(song.flats()),
@@ -854,7 +1164,23 @@ pub fn to_wire(song: &Song) -> Value {
             "doubles": song.band.doubles,
         },
         "sections": sections,
-    })
+    });
+    let o = top.as_object_mut().expect("object literal");
+    if let Some(p) = song.phrasing {
+        o.insert("phrasing".into(), phrasing_to_wire(p));
+    }
+    if let Some(d) = &song.duet {
+        let mut dv = serde_json::json!({ "voice": d.voice.as_str() });
+        if let Some(p) = d.phrasing {
+            dv.as_object_mut().expect("object literal").insert("phrasing".into(), phrasing_to_wire(p));
+        }
+        o.insert("duet".into(), dv);
+    }
+    top
+}
+
+fn phrasing_to_wire(p: Phrasing) -> Value {
+    serde_json::json!({ "delivery": p.delivery.as_str(), "endings": p.endings.as_str() })
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@
 //!
 //! Page units are px at the SVG's own `width` x `height`.
 
+pub mod full;
 pub mod glyphs;
 mod layout;
 mod score;

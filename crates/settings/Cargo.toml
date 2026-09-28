@@ -8,3 +8,5 @@ publish.workspace = true
 [dependencies]
 serde = { workspace = true }
 toml = "0.9"
+song = { path = "../song" }
+songwriter = { path = "../songwriter" }

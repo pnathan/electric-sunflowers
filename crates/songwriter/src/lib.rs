@@ -9,12 +9,17 @@
 pub mod claude;
 pub mod prompt;
 pub mod schema;
+pub mod sidecar;
 pub mod styles;
+pub mod usage;
+
+use std::time::Instant;
 
 use sfcore::random::{tag, Tag};
 use song::Voice;
 
 pub use sfcore::random::Rng;
+pub use usage::{Generation, ModelUsage, Usage};
 
 use claude::{Claude, ClaudeError, Effort, Request};
 use styles::{Direction, StyleId};
@@ -41,7 +46,14 @@ pub struct WriteRequest<'a> {
 
 impl<'a> WriteRequest<'a> {
     pub fn new(mood: &'a str, year: i32) -> Self {
-        WriteRequest { mood, voice: None, style: None, year, model: None, effort: Effort::default() }
+        WriteRequest {
+            mood,
+            voice: None,
+            style: None,
+            year,
+            model: None,
+            effort: Effort::default(),
+        }
     }
 }
 
@@ -54,13 +66,19 @@ pub struct Written {
     pub direction: Direction,
     /// The register the prompt gave for an open feeling.
     pub register: &'static str,
-    /// The model that answered, when the transport reports it.
+    /// The model that answered, when the transport reports it. Equal to
+    /// `generation.model`.
     pub model: Option<String>,
+    /// Usage, cost and timing of the call that wrote this song.
+    pub generation: Generation,
 }
 
 /// Writes one song. Draws from `rng`: the style direction (see
 /// `styles::style_direction`), then the register. Extracts the first JSON
 /// object from the reply, tolerating a code fence or prose around it.
+/// Measures `wall_ms` around `claude.complete` only; a failed call (a
+/// refusal, a cut-off reply, a status error) records no usage on purpose
+/// (`WriteSongError` carries only `ClaudeError`).
 pub fn write_song(claude: &dyn Claude, req: &WriteRequest, rng: &mut Rng) -> Result<Written, WriteSongError> {
     let direction = styles::style_direction(req.style, rng);
     let register = prompt::pick_register(rng);
@@ -73,10 +91,31 @@ pub fn write_song(claude: &dyn Claude, req: &WriteRequest, rng: &mut Rng) -> Res
     creq.effort = req.effort;
     creq.json_schema = Some(schema::song_schema());
 
+    let start = Instant::now();
     let reply = claude.complete(&creq).map_err(WriteSongError::Claude)?;
+    let wall_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+
     let json = extract_json_object(&reply.text).ok_or_else(|| WriteSongError::NoJsonFound(reply.text.clone()))?;
     let raw = serde_json::from_str(json).map_err(|e| WriteSongError::InvalidJson(e.to_string()))?;
-    Ok(Written { raw, direction, register, model: reply.model })
+    let generation = Generation {
+        transport: claude.transport(),
+        requested_model: creq.model.clone(),
+        effort: req.effort.as_str().to_string(),
+        model: reply.model.clone(),
+        stop_reason: reply.stop_reason.clone(),
+        usage: reply.usage.clone(),
+        per_model: reply.per_model.clone(),
+        cost_usd: reply.cost_usd,
+        duration_ms: reply.duration_ms,
+        wall_ms,
+    };
+    Ok(Written {
+        raw,
+        direction,
+        register,
+        model: generation.model.clone(),
+        generation,
+    })
 }
 
 #[derive(Debug)]

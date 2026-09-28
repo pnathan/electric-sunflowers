@@ -3,8 +3,39 @@
 //! (`additionalProperties: false`) and lists `required`. Enum lists come
 //! from the model enums (`NAMES`), so schema and parser cannot disagree.
 
-use crate::model::{DrumKit, GuitarPattern, Meter, Mode, SectionKind, Voice};
+use crate::model::{Blend, Delivery, DrumKit, Endings, GuitarPattern, Meter, Mode, SectionKind, SingerId, Voice};
 use serde_json::{json, Value};
+
+/// `SingerId::NAMES` ("A", "B") plus "both", the enum list of `sing`.
+fn sing_names() -> Vec<&'static str> {
+    let mut v = SingerId::NAMES.to_vec();
+    v.push("both");
+    v
+}
+
+fn phrasing_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "delivery": {"type": "string", "enum": Delivery::NAMES},
+            "endings": {"type": "string", "enum": Endings::NAMES}
+        },
+        "required": ["delivery", "endings"],
+        "additionalProperties": false
+    })
+}
+
+fn duet_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "voice": {"type": "string", "enum": Voice::NAMES},
+            "phrasing": phrasing_schema()
+        },
+        "required": ["voice"],
+        "additionalProperties": false
+    })
+}
 
 fn line_schema() -> Value {
     json!({
@@ -12,7 +43,10 @@ fn line_schema() -> Value {
         "properties": {
             "syl": {"type": "string"},
             "ph": {"type": "string"},
-            "chords": {"type": "array", "items": {"type": "string"}}
+            "chords": {"type": "array", "items": {"type": "string"}},
+            "sing": {"type": "string", "enum": sing_names()},
+            "lead": {"type": "string", "enum": SingerId::NAMES},
+            "blend": {"type": "string", "enum": Blend::NAMES}
         },
         "required": ["syl", "ph", "chords"],
         "additionalProperties": false
@@ -26,7 +60,10 @@ fn section_schema() -> Value {
             "type": {"type": "string", "enum": SectionKind::NAMES},
             "same": {"type": "boolean"},
             "chords": {"type": "array", "items": {"type": "string"}},
-            "lines": {"type": "array", "items": line_schema()}
+            "lines": {"type": "array", "items": line_schema()},
+            "sing": {"type": "string", "enum": sing_names()},
+            "lead": {"type": "string", "enum": SingerId::NAMES},
+            "blend": {"type": "string", "enum": Blend::NAMES}
         },
         "required": ["type"],
         "additionalProperties": false
@@ -65,6 +102,8 @@ pub fn json_schema() -> Value {
             "guitar": {"type": "string", "enum": GuitarPattern::NAMES},
             "voice": {"type": "string", "enum": Voice::NAMES},
             "band": band_schema(),
+            "phrasing": phrasing_schema(),
+            "duet": duet_schema(),
             "sections": {"type": "array", "items": section_schema()}
         },
         "required": ["title", "note", "key", "mode", "meter", "tempo", "guitar", "voice", "band", "sections"],
@@ -94,6 +133,24 @@ mod tests {
         for n in names(&p["voice"]) {
             assert!(n.parse::<Voice>().is_ok());
         }
+
+        assert_eq!(names(&p["phrasing"]["properties"]["delivery"]), Delivery::NAMES);
+        assert_eq!(names(&p["phrasing"]["properties"]["endings"]), Endings::NAMES);
+        assert_eq!(names(&p["duet"]["properties"]["voice"]), Voice::NAMES);
+        assert_eq!(names(&p["duet"]["properties"]["phrasing"]["properties"]["delivery"]), Delivery::NAMES);
+
+        let line = &p["sections"]["items"]["properties"]["lines"]["items"]["properties"];
+        assert_eq!(names(&line["sing"]), sing_names());
+        assert_eq!(names(&line["lead"]), SingerId::NAMES);
+        assert_eq!(names(&line["blend"]), Blend::NAMES);
+        let sec = &p["sections"]["items"]["properties"];
+        assert_eq!(names(&sec["sing"]), sing_names());
+        assert_eq!(names(&sec["lead"]), SingerId::NAMES);
+        assert_eq!(names(&sec["blend"]), Blend::NAMES);
+        assert!(sing_names().contains(&"both"));
+        for n in SingerId::NAMES {
+            assert!(n.parse::<SingerId>().is_ok());
+        }
     }
 
     #[test]
@@ -103,5 +160,10 @@ mod tests {
         assert_eq!(s["properties"]["band"]["additionalProperties"], false);
         assert_eq!(s["properties"]["sections"]["items"]["additionalProperties"], false);
         assert_eq!(s["properties"]["sections"]["items"]["properties"]["lines"]["items"]["additionalProperties"], false);
+        assert_eq!(s["properties"]["phrasing"]["additionalProperties"], false);
+        assert_eq!(s["properties"]["duet"]["additionalProperties"], false);
+        assert_eq!(s["properties"]["duet"]["properties"]["phrasing"]["additionalProperties"], false);
+        assert_eq!(s["properties"]["duet"]["required"], json!(["voice"]));
+        assert_eq!(s["properties"]["phrasing"]["required"], json!(["delivery", "endings"]));
     }
 }

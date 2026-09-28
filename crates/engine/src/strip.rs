@@ -36,10 +36,13 @@ pub const MAX_EQ: usize = 4;
 
 /// A track after its strip: EQ and compression applied; `level` is applied
 /// by the mixer (and by anything that reads the stem at its mixed level).
+/// `slap` is the strip's slapback, level and slap gain already applied, as
+/// the mixer adds it to the buses (design section 3.3).
 #[derive(Clone, Debug)]
 pub struct ProcessedStem {
     pub audio: Stem,
     pub level: f32,
+    pub slap: Option<SparseBuf>,
 }
 
 /// The strip's EQ as a fixed array of sections.
@@ -188,8 +191,8 @@ pub fn slapback(x: &SparseBuf, s: &Slapback, gain: f32) -> SparseBuf {
 }
 
 /// Runs `strip` over `audio`. Returns `None` for a silent track, else the
-/// processed stem and, for a strip with a slapback, the slapback buffer.
-pub fn run_strip(strip: &Strip, mut audio: Stem) -> Option<(ProcessedStem, Option<SparseBuf>)> {
+/// processed stem, its `slap` buffer set for a strip with a slapback.
+pub fn run_strip(strip: &Strip, mut audio: Stem) -> Option<ProcessedStem> {
     let len = audio.len();
     let rms = match &mut audio {
         Stem::Mono(x) => active_rms(&eq_channel(x, strip), len),
@@ -212,7 +215,7 @@ pub fn run_strip(strip: &Strip, mut audio: Stem) -> Option<(ProcessedStem, Optio
         (Some(s), Stem::Mono(x)) => Some(slapback(x, s, s.level * level as f32)),
         _ => None,
     };
-    Some((ProcessedStem { audio, level: level as f32 }, slap))
+    Some(ProcessedStem { audio, level: level as f32, slap })
 }
 
 #[cfg(test)]
@@ -251,12 +254,12 @@ mod tests {
     fn lead_strip_levels_and_slaps() {
         let n = 60_000;
         let x: Vec<f32> = (0..n).map(|i| if (5000..30_000).contains(&i) { 0.3 * (i as f32 * 0.05).sin() } else { 0.0 }).collect();
-        let (p, slap) = run_strip(TrackId::Lead.strip(), Stem::Mono(SparseBuf::from_dense(&x))).expect("not silent");
+        let p = run_strip(TrackId::Lead.strip(), Stem::Mono(SparseBuf::from_dense(&x))).expect("not silent");
         let Stem::Mono(y) = &p.audio else { panic!("lead is mono") };
         let scaled: Vec<f32> = y.to_dense().iter().map(|v| v * p.level).collect();
         let r = active_rms_dense(&scaled);
         assert!(r > 0.05 && r < 0.12, "{r}");
-        let s = slap.expect("lead has a slapback").to_dense();
+        let s = p.slap.expect("lead has a slapback").to_dense();
         let d = (0.34 * SR_F).round() as usize;
         assert!(s[..d].iter().all(|&v| v == 0.0));
         assert!(s[d + 5000..d + 30_000].iter().any(|&v| v.abs() > 1e-3));
