@@ -1,18 +1,33 @@
 #!/usr/bin/env bash
 # Sound gate (docs/engine-design.md section 12, docs/rewrite-plan.json
-# sound_gate). Renders the demo stems for seeds 1234 and 2718, measures
-# them with target/release/soundgate, runs the vowel and Helmholtz probes,
-# times the demo render threaded and on one thread, and prints PASS/FAIL.
+# sound_gate). Renders the demo stems for 8 seeds (8 takes of the demo
+# song), measures them with target/release/soundgate, runs the vowel and
+# Helmholtz probes, times the demo render threaded and on one thread, and
+# prints PASS/FAIL.
 #
 # usage: scripts/gate.sh [--strict] [--against DIR] [--capture-baseline] [--targets] LABEL
-#   --strict            LTAS tolerance 0.5 dB (100 Hz-10 kHz) / 1 dB (other bands);
-#                       default 3 / 6 dB.
-#   --against DIR       compare LTAS and pitch with another run (e.g. out/gate/w1)
-#                       instead of tests/soundgate/baseline.
-#   --capture-baseline  copy this run's JSON results into tests/soundgate/baseline/.
+#   default LTAS check: take-robust. Per stem, the mean over seeds of the
+#                       1/3-octave LTAS against tests/soundgate/baseline-mean/
+#                       (soundgate compare-mean: a band passes within 3 dB
+#                       100 Hz-10 kHz / 6 dB elsewhere, or within 2x the
+#                       baseline's seed-to-seed std; mean gated RMS 2 dB;
+#                       mean active fraction 15 pts; mix peak every seed;
+#                       lead pitch pooled over seeds).
+#   --strict            also compare seeds 1234 and 2718 one by one against
+#                       tests/soundgate/baseline/sS at 0.5 dB (100 Hz-10 kHz)
+#                       / 1 dB (other bands), with per-seed pitch: for
+#                       refactors that must not change the samples.
+#   --against DIR       compare with another gate run (e.g. out/gate/w3)
+#                       instead of the committed baselines: DIR/ltas-mean.json,
+#                       and DIR/sS for --strict.
+#   --capture-baseline  copy this run's results into the baselines:
+#                       ltas-mean.json, vow.txt, helmholtz.txt into
+#                       tests/soundgate/baseline-mean/, and the per-seed JSON
+#                       of seeds 1234 and 2718 into tests/soundgate/baseline/.
 #   --targets           also report the design's perf goals (not enforced).
 # Thread invariance (sha256 of the two demo WAVs equal) is always checked.
-# Output goes to out/gate/LABEL/. Exit status 1 when any line fails.
+# Output goes to out/gate/LABEL/; WAVs are kept for seeds 1234 and 2718 only.
+# Exit status 1 when any line fails.
 # Perf: 3 timings per configuration (min wall, max RSS), checked against the
 # first pass row of perf.tsv (fail above +50%) and reported against the last
 # pass row. Every run appends a row with status pass/fail/loaded.
@@ -32,7 +47,7 @@ while [[ $# -gt 0 ]]; do
         --against) against="${2:?--against needs a directory}"; shift 2 ;;
         --capture-baseline) capture=1; shift ;;
         --targets) targets=1; shift ;;
-        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
         -*) echo "gate: unknown option $1" >&2; exit 2 ;;
         *) [[ -z "$label" ]] || { echo "gate: one LABEL only" >&2; exit 2; }; label="$1"; shift ;;
     esac
@@ -40,11 +55,15 @@ done
 [[ -n "$label" ]] || { echo "usage: scripts/gate.sh [--strict] [--against DIR] [--capture-baseline] [--targets] LABEL" >&2; exit 2; }
 [[ "$label" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "gate: LABEL must match [A-Za-z0-9._-]+" >&2; exit 2; }
 
-if [[ $strict -eq 1 ]]; then tol_mid=0.5; tol_edge=1.0; else tol_mid=3.0; tol_edge=6.0; fi
-seeds=(1234 2718)
+# strict per-seed tolerance; the mean check uses soundgate's defaults (3/6 dB, 2 sd)
+tol_mid=0.5; tol_edge=1.0
+seeds=(1234 2718 1 7 42 99 314 1618)
+keep_seeds=(1234 2718)
 out="out/gate/$label"
 base_dir="tests/soundgate/baseline"
+mean_dir="tests/soundgate/baseline-mean"
 ref_dir="${against:-$base_dir}"
+ref_mean="${against:-$mean_dir}/ltas-mean.json"
 perf="tests/soundgate/perf.tsv"
 mkdir -p "$out"
 
@@ -68,6 +87,7 @@ fi
 
 for s in "${seeds[@]}"; do
     d="$out/s$s"
+    rm -rf "$d"
     mkdir -p "$d"
     echo "== stems seed $s"
     cargo run --release -q -p engine "${features[@]}" --example stems -- --seed "$s" --out "$d"
@@ -76,28 +96,55 @@ for s in "${seeds[@]}"; do
         record FAIL "ltas run s$s" "$(tail -n 1 "$d/ltas.txt")"
     fi
     target/release/soundgate pitch "$d/lead.wav" "$d/notes.json" | tee "$d/pitch.txt"
+    if [[ " ${keep_seeds[*]} " != *" $s "* ]]; then rm -f "$d"/*.wav; fi
 
     ref="$ref_dir/s$s"
-    if [[ $capture -eq 1 && -z "$against" ]]; then
-        record INFO "ltas s$s" "captured as baseline"
-        record INFO "pitch s$s" "$(head -n 1 "$d/pitch.txt")"
-    elif [[ -f "$ref/ltas.json" ]]; then
-        echo "-- ltas s$s against $ref (mid $tol_mid dB, edge $tol_edge dB)"
-        if target/release/soundgate compare "$ref/ltas.json" "$d/ltas.json" --tol-mid "$tol_mid" --tol-edge "$tol_edge" | tee "$d/compare.txt"; then
-            record PASS "ltas s$s" "all files within $tol_mid/$tol_edge dB, active 15 pts, mix rms/peak"
+    if [[ $strict -eq 1 && " ${keep_seeds[*]} " == *" $s "* ]]; then
+        if [[ -f "$ref/ltas.json" ]]; then
+            echo "-- strict ltas s$s against $ref (mid $tol_mid dB, edge $tol_edge dB)"
+            if target/release/soundgate compare "$ref/ltas.json" "$d/ltas.json" --tol-mid "$tol_mid" --tol-edge "$tol_edge" | tee "$d/compare.txt"; then
+                record PASS "strict ltas s$s" "all files within $tol_mid/$tol_edge dB, active 15 pts, mix rms/peak"
+            else
+                record FAIL "strict ltas s$s" "see $d/compare.txt"
+            fi
+            if pc=$(target/release/soundgate pitch-compare "$ref/lead.pitch.json" "$d/lead.pitch.json"); then
+                record PASS "strict pitch s$s" "$pc"
+            else
+                record FAIL "strict pitch s$s" "$pc"
+            fi
         else
-            record FAIL "ltas s$s" "see $d/compare.txt"
+            record FAIL "strict ltas s$s" "no reference $ref/ltas.json"
         fi
-        pr="$ref/lead.pitch.json"
-        if pc=$(target/release/soundgate pitch-compare "$pr" "$d/lead.pitch.json"); then
-            record PASS "pitch s$s" "$pc"
-        else
-            record FAIL "pitch s$s" "$pc"
-        fi
-    else
-        record FAIL "ltas s$s" "no reference $ref/ltas.json"
     fi
 done
+
+echo "== ltas mean over ${#seeds[@]} seeds"
+dirs=()
+for s in "${seeds[@]}"; do dirs+=("$out/s$s"); done
+if ! target/release/soundgate mean "$out/ltas-mean.json" "${dirs[@]}" | tee "$out/mean.txt"; then
+    record FAIL "ltas mean" "NaN/inf in some seed; see $out/s*/ltas.txt"
+fi
+if [[ $capture -eq 1 && -z "$against" ]]; then
+    record INFO "ltas mean" "captured as baseline"
+    record INFO "pitch pooled" "$(grep '^pitch pooled' "$out/mean.txt")"
+elif [[ -f "$ref_mean" ]]; then
+    echo "-- ltas mean against $ref_mean"
+    if target/release/soundgate compare-mean "$ref_mean" "$out/ltas-mean.json" --bands > "$out/compare-mean-bands.txt"; then
+        mean_ok=1
+    else
+        mean_ok=0
+    fi
+    sed -n '/^seeds base/,$p' "$out/compare-mean-bands.txt" | tee "$out/compare-mean.txt"
+    worst=$(awk 'NR>2 && $1!="pitch" && $NF!="PASS"{print $1}' "$out/compare-mean.txt" | paste -sd, -)
+    if [[ $mean_ok -eq 1 ]]; then
+        record PASS "ltas mean" "every stem within 3/6 dB or 2 sd; rms 2 dB, active 15 pts, mix peak"
+        record PASS "pitch pooled" "$(grep '^pitch pooled' "$out/compare-mean.txt" | sed 's/^pitch pooled: //')"
+    else
+        record FAIL "ltas mean / pitch" "${worst:-pitch}: see $out/compare-mean.txt and compare-mean-bands.txt"
+    fi
+else
+    record FAIL "ltas mean" "no reference $ref_mean"
+fi
 
 echo "== vowel distance"
 vow_line=$(cargo run --release -q -p voice --example vow 2>/dev/null | grep 'mean vowel distance' | tail -n 1 || true)
@@ -207,13 +254,17 @@ fi
 [[ "$same" == yes ]] && record PASS "thread invariance" "sha256 equal" || record FAIL "thread invariance" "demo.wav != demo1.wav"
 
 if [[ $capture -eq 1 ]]; then
-    for s in "${seeds[@]}"; do
+    mkdir -p "$mean_dir"
+    cp "$out/ltas-mean.json" "$mean_dir/"
+    echo "$vow_line" > "$mean_dir/vow.txt"
+    echo "$helm_line" > "$mean_dir/helmholtz.txt"
+    for s in "${keep_seeds[@]}"; do
         mkdir -p "$base_dir/s$s"
         cp "$out/s$s/ltas.json" "$out/s$s/lead.pitch.json" "$out/s$s/notes.json" "$out/s$s/render.json" "$base_dir/s$s/"
     done
     echo "$vow_line" > "$base_dir/vow.txt"
     echo "$helm_line" > "$base_dir/helmholtz.txt"
-    record INFO "baseline" "captured into $base_dir"
+    record INFO "baseline" "captured into $mean_dir and $base_dir (seeds ${keep_seeds[*]})"
 fi
 
 commit=$(git rev-parse --short HEAD)
@@ -223,7 +274,8 @@ printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$label" "$commit" "$status" "
 record INFO "perf.tsv" "row $label status $status"
 
 echo
-echo "== sound gate $label (tolerance $tol_mid/$tol_edge dB, reference ${against:-$base_dir})"
+if [[ $strict -eq 1 ]]; then mode="mean + strict per-seed $tol_mid/$tol_edge dB"; else mode="mean over ${#seeds[@]} seeds"; fi
+echo "== sound gate $label ($mode, reference ${against:-$mean_dir})"
 printf '%s\n' "${results[@]}" | tee "$out/gate.txt"
 if [[ $fails -gt 0 ]]; then
     echo "FAIL: $fails check(s)"

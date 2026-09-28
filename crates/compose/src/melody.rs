@@ -555,6 +555,23 @@ mod tests {
     }
 
     #[test]
+    fn line_key_separates_bar_boundaries() {
+        // Same kind, line index and text: 'C G' in one bar, then 'C' | 'G'.
+        let s = song(json!({"sections":[
+            {"type":"verse","lines":[{"syl":"one *two three *four","chords":["C G"]}]},
+            {"type":"verse","lines":[{"syl":"one *two three *four","chords":["C","G"]}]},
+            {"type":"verse","lines":[{"syl":"one *two three *four","chords":["C G"]}]}
+        ]}));
+        let form = crate::form::build_form(&s, 0);
+        assert_eq!(form.lines.len(), 3);
+        let k: Vec<LineKey> = (0..3).map(|i| line_key(&form, i, SectionKind::Verse)).collect();
+        assert_eq!(form.lines[0].n_bars, 1);
+        assert_eq!(form.lines[1].n_bars, 2);
+        assert_ne!(k[0], k[1]);
+        assert_eq!(k[0], k[2]);
+    }
+
+    #[test]
     fn event_keys_are_distinct() {
         assert_ne!(event_key(1, 0, 0), event_key(0, 1, 0));
         assert_ne!(event_key(0, 1, 0), event_key(0, 0, 1));

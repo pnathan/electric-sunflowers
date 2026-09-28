@@ -15,3 +15,6 @@ w2-verify	f79f435+dirty	fail	3	2.81	3.25	889	9.53	702	yes
 w2-verify2	f79f435+dirty	pass	3	2.14	3.22	889	9.40	701	yes
 w3-close	bbd9e6b+dirty	fail	3	1.61	2.69	924	7.43	704	yes
 w3-final	bbd9e6b+dirty	fail	3	2.59	2.83	898	8.34	704	yes
+w3-gate-capture	1f1f5d4+dirty	pass	3	3.00	2.75	930	7.66	704	yes
+w3-gate	1f1f5d4+dirty	pass	3	4.38	2.72	929	7.68	704	yes
+w3-review	1f1f5d4+dirty	pass	3	3.13	2.72	892	7.71	704	yes

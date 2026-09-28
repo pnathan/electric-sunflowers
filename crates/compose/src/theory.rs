@@ -148,4 +148,18 @@ mod tests {
         // Diminished seventh on the raised seventh: B D F Ab in C major.
         assert_eq!(scale("Bdim7", Mode::Major), vec![0, 2, 4, 5, 7, 8, 11]);
     }
+
+    fn scale_on(tonic: Pc, sym: &str, mode: Mode) -> Vec<u8> {
+        let c = Chord::parse(sym).unwrap();
+        let s = local_scale(tonic, mode, &c);
+        (0..12u8).filter(|&p| s.contains(Pc::new(p as i32))).collect()
+    }
+
+    #[test]
+    fn local_scale_alters_the_lettered_step_in_other_keys() {
+        // D major in F major: F# replaces F (not G), Bb stays.
+        assert_eq!(scale_on(Pc::new(5), "D", Mode::Major), vec![0, 2, 4, 6, 7, 9, 10]);
+        // E major in A minor: G# replaces G (not A).
+        assert_eq!(scale_on(Pc::new(9), "E", Mode::Minor), vec![0, 2, 4, 5, 8, 9, 11]);
+    }
 }

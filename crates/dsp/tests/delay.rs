@@ -122,6 +122,19 @@ fn thiran1_phase_delay_matches_delta() {
 }
 
 #[test]
+fn thiran1_range_clamps() {
+    // `new` clamps to [0.5, 1.5]; `with_max` widens the top.
+    assert!((Thiran1::new(3.0).phase_delay(0.0) - 1.5).abs() < 1e-12);
+    assert!((Thiran1::new(0.1).phase_delay(0.0) - 0.5).abs() < 1e-12);
+    let mut t = Thiran1::with_max(3.0, 3.5);
+    assert!((t.phase_delay(0.0) - 3.0).abs() < 1e-12);
+    t.set_delay(9.0);
+    assert!((t.phase_delay(0.0) - 3.5).abs() < 1e-12);
+    t.set_delay(f64::NAN);
+    assert!((t.phase_delay(0.0) - 1.0).abs() < 1e-12);
+}
+
+#[test]
 fn one_pole_phase_delay_limits() {
     let a: f64 = 0.2;
     assert!((one_pole_phase_delay(a, 0.0) - 0.25).abs() < 1e-12);

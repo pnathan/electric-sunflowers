@@ -21,8 +21,10 @@
 //!   Karjalainen, Laine 1996). Without a glide the allpass delay delta is
 //!   in [0.5, 1.5). With a glide, `L` is taken from the sharp starting
 //!   period, so the allpass starts in [0.5, 1.5) and carries the whole glide
-//!   (delta up to 1.5 plus the glide in samples, at most `DELTA_MAX`); see
-//!   `FracAllpass`.
+//!   (delta up to 1.5 plus the glide in samples, at most `DELTA_MAX`):
+//!   `dsp::delay::Thiran1::with_max`. Its phase delay at D = 3 is 2.6
+//!   samples at 0.5 rad/sample (3.5 kHz), which on the 538-sample loop of
+//!   E2 moves the 42nd harmonic by 1.2 cents.
 //! - Two polarisations, summed without coupling: the main one at
 //!   `-detune / 4` cents with the full T60, the second at `+detune` cents,
 //!   amplitude 0.42 and 0.62 T60. With the default detune 1.4 that is -0.35
@@ -61,7 +63,7 @@
 //! stop). Each span runs one inner loop with no branch per sample. The delay
 //! line is `f32`; filter state is `f64`.
 
-use dsp::delay::{one_pole_phase_delay, DelayLine};
+use dsp::delay::{one_pole_phase_delay, DelayLine, Thiran1};
 use dsp::onepole::OnePole;
 use sfcore::random::Rng;
 use sfcore::SR_F;
@@ -375,44 +377,6 @@ impl PluckScratch {
     }
 }
 
-/// First-order Thiran allpass fractional delay `y = c x + x1 - c y1`,
-/// `c = (1 - D) / (1 + D)` (Thiran 1971), for D in [0.5, `DELTA_MAX`].
-/// The pole -c lies inside the unit circle for every D > 0. Its phase delay
-/// is D at DC and falls with frequency; at D = 3 it is 2.6 samples at
-/// w = 0.5 rad/sample (3.5 kHz), which on the 538-sample loop of E2 moves
-/// the 42nd harmonic by 1.2 cents. `dsp::delay::Thiran1` clamps D to
-/// [0.5, 1.5], which cut the tension glide on notes whose steady delta sits
-/// low in that range; this local copy has the wider range.
-#[derive(Clone, Copy, Debug, Default)]
-struct FracAllpass {
-    c: f64,
-    x1: f64,
-    y1: f64,
-}
-
-impl FracAllpass {
-    fn new(delta: f64) -> Self {
-        let mut a = FracAllpass::default();
-        a.set_delay(delta);
-        a
-    }
-
-    /// Sets the delay, clamped to [0.5, `DELTA_MAX`]; NaN maps to 1.
-    #[inline]
-    fn set_delay(&mut self, delta: f64) {
-        let d = if delta.is_nan() { 1.0 } else { delta.clamp(0.5, DELTA_MAX) };
-        self.c = (1.0 - d) / (1.0 + d);
-    }
-
-    #[inline(always)]
-    fn tick(&mut self, x: f64) -> f64 {
-        let y = self.c * x + self.x1 - self.c * self.y1;
-        self.x1 = x;
-        self.y1 = y;
-        y
-    }
-}
-
 /// `|H(e^jw)|` of the loss filter `(1 - p) / (1 - p z^-1)`.
 #[inline]
 pub(crate) fn loss_mag(p: f64, w: f64) -> f64 {
@@ -426,7 +390,7 @@ struct Loop<'a> {
     tap: usize,
     lp: OnePole,
     g: f64,
-    ap: FracAllpass,
+    ap: Thiran1,
 }
 
 impl Loop<'_> {
@@ -578,7 +542,7 @@ pub fn pluck_into(out: &mut [f32], start: usize, f0: f64, len: usize, p: &PluckP
         for &x in &exc[..l] {
             line.push(x as f32);
         }
-        let mut lpl = Loop { line, tap: l - 1, lp, g, ap: FracAllpass::new(n_start - tau - lf) };
+        let mut lpl = Loop { line, tap: l - 1, lp, g, ap: Thiran1::with_max(n_start - tau - lf, DELTA_MAX) };
         // Warm-up: one pass round the loop with no output.
         for _ in 0..l {
             lpl.step(l - 1);

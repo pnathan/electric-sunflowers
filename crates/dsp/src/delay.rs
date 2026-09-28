@@ -149,29 +149,51 @@ impl SchroederAllpass {
 /// First-order Thiran allpass for fractional delay (Thiran 1971; Laakso,
 /// Valimaki, Karjalainen, Laine 1996, section 3.4):
 /// `H(z) = (c + z^-1) / (1 + c z^-1)`, `c = (1 - delta) / (1 + delta)`.
-/// Its phase delay is `delta` at DC and falls slowly with frequency. Keep
-/// delta in [0.5, 1.5): then |c| <= 1/3, the pole stays well inside the unit
-/// circle and the delay error stays small up to about fs/4. A waveguide loop
-/// splits its period into an integer line plus this delta.
+/// Its phase delay is `delta` at DC and falls slowly with frequency. With
+/// delta in [0.5, 1.5] (`new`), |c| <= 1/3, the pole stays well inside the
+/// unit circle and the delay error stays small up to about fs/4. The pole
+/// -c is inside the unit circle for every delta > 0, so `with_max` allows a
+/// wider range where a loop glides its delay (the plucked string's tension
+/// glide: at delta 3 the phase delay is 2.6 samples at 0.5 rad/sample). A
+/// waveguide loop splits its period into an integer line plus this delta.
 /// State in `f64`: this filter sits inside recirculating loops.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Thiran1 {
     c: f64,
     x1: f64,
     y1: f64,
+    /// Upper clamp for delta; the lower clamp is `THIRAN_MIN`.
+    max: f64,
+}
+
+/// Lowest Thiran delta: below 0.5 the phase delay error grows fast.
+pub const THIRAN_MIN: f64 = 0.5;
+/// Default highest Thiran delta.
+pub const THIRAN_MAX: f64 = 1.5;
+
+impl Default for Thiran1 {
+    fn default() -> Self {
+        Thiran1 { c: 0.0, x1: 0.0, y1: 0.0, max: THIRAN_MAX }
+    }
 }
 
 impl Thiran1 {
+    /// Delta clamped to [0.5, 1.5].
     pub fn new(delta: f64) -> Self {
-        let mut t = Thiran1::default();
+        Self::with_max(delta, THIRAN_MAX)
+    }
+
+    /// Delta clamped to [0.5, `max`]; `max` below 0.5 is raised to 0.5.
+    pub fn with_max(delta: f64, max: f64) -> Self {
+        let mut t = Thiran1 { max: max.max(THIRAN_MIN), ..Thiran1::default() };
         t.set_delay(delta);
         t
     }
 
-    /// Set the fractional delay. Clamped to [0.5, 1.5]; NaN maps to 1.
+    /// Set the fractional delay. Clamped to [0.5, max]; NaN maps to 1.
     #[inline]
     pub fn set_delay(&mut self, delta: f64) {
-        let d = if delta.is_nan() { 1.0 } else { delta.clamp(0.5, 1.5) };
+        let d = if delta.is_nan() { 1.0 } else { delta.clamp(THIRAN_MIN, self.max) };
         self.c = (1.0 - d) / (1.0 + d);
     }
 

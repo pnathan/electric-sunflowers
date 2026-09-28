@@ -7,10 +7,15 @@
 //! - `soundgate pitch WAV NOTES`: YIN note check, write WAV's stem + .pitch.json.
 //! - `soundgate pitch-compare BASE NEW`: compare two pitch reports; exit 1
 //!   on failure.
+//! - `soundgate mean OUT DIR...`: summarise DIR/ltas.json (and
+//!   DIR/lead.pitch.json when every DIR has one) over seeds; write OUT.
+//! - `soundgate compare-mean BASE NEW [--bands]`: take-robust comparison of
+//!   two summaries (see `soundgate::mean`); exit 1 on any failure.
 
 use clap::{Parser, Subcommand};
 use soundgate::compare::{compare_ltas, compare_pitch, table, LtasFile, Tolerances};
 use soundgate::ltas::{analyse, NOMINAL_HZ};
+use soundgate::mean::{band_table, compare_means, compare_pitch_pool, mean_table, summarise, BandTol, MeanFile};
 use soundgate::pitch::{check, Note, PitchReport};
 use soundgate::wav;
 use std::collections::BTreeMap;
@@ -43,6 +48,30 @@ enum Cmd {
     Pitch { wav: PathBuf, notes: PathBuf },
     /// Compare two pitch reports (fraction within 50 cents, octave errors).
     PitchCompare { base: PathBuf, new: PathBuf },
+    /// Summarise per-seed runs (DIR/ltas.json, DIR/lead.pitch.json) into OUT.
+    Mean {
+        out: PathBuf,
+        #[arg(required = true)]
+        dirs: Vec<PathBuf>,
+    },
+    /// Compare two summaries: mean LTAS per file against fixed limits or the
+    /// base seed-to-seed spread, mean level and activity, pooled pitch.
+    CompareMean {
+        base: PathBuf,
+        new: PathBuf,
+        /// Fixed tolerance for bands 100 Hz-10 kHz, dB.
+        #[arg(long, default_value_t = 3.0)]
+        tol_mid: f64,
+        /// Fixed tolerance for the other bands, dB.
+        #[arg(long, default_value_t = 6.0)]
+        tol_edge: f64,
+        /// A band also passes within K times the base seed-to-seed std.
+        #[arg(long, default_value_t = 2.0)]
+        k: f64,
+        /// Print every band of every file.
+        #[arg(long)]
+        bands: bool,
+    },
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(p: &Path) -> Result<T, String> {
@@ -140,6 +169,91 @@ fn cmd_pitch_compare(base: &Path, new: &Path) -> Result<bool, String> {
     Ok(f.is_empty())
 }
 
+fn cmd_mean(out: &Path, dirs: &[PathBuf]) -> Result<bool, String> {
+    let mut runs = Vec::new();
+    let mut labels = Vec::new();
+    for d in dirs {
+        runs.push(read_json::<LtasFile>(&d.join("ltas.json"))?);
+        labels.push(d.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
+    }
+    let pp: Vec<PathBuf> = dirs.iter().map(|d| d.join("lead.pitch.json")).collect();
+    let pitch: Vec<PitchReport> =
+        if pp.iter().all(|p| p.is_file()) { pp.iter().map(|p| read_json(p)).collect::<Result<_, _>>()? } else { vec![] };
+    let m = summarise(labels, &runs, &pitch)?;
+    for (k, f) in &m.files {
+        let (mut wi, mut ws) = (0, 0.0f64);
+        for (i, &s) in f.std_db.iter().enumerate() {
+            if s > ws {
+                (wi, ws) = (i, s);
+            }
+        }
+        println!(
+            "{:<16} seeds {}  gated {:7.2} +- {:.2} dBFS  active {:5.1}%  widest spread {:.2} dB at {} Hz",
+            k,
+            f.seeds,
+            f.gated_rms_mean,
+            f.gated_rms_std,
+            100.0 * f.active_mean,
+            ws,
+            NOMINAL_HZ[wi]
+        );
+    }
+    if let Some(p) = &m.pitch {
+        println!(
+            "pitch pooled over {} seeds: {}/{} within 50 cents ({:.3}), octave errors {} ({:.2}/seed)",
+            p.seeds, p.within_50c, p.notes_analysed, p.fraction_within_50c, p.octave_errors, p.octave_errors_per_seed
+        );
+    }
+    write_json(out, &m)?;
+    println!("wrote {}", out.display());
+    Ok(m.files.values().all(|f| f.nonfinite == 0))
+}
+
+fn cmd_compare_mean(base: &Path, new: &Path, tol: BandTol, bands: bool) -> Result<bool, String> {
+    if !(tol.mid_db >= 0.0 && tol.edge_db >= 0.0 && tol.k >= 0.0) {
+        return Err("tolerances must be non-negative".into());
+    }
+    let b: MeanFile = read_json(base)?;
+    let n: MeanFile = read_json(new)?;
+    let rows = compare_means(&b, &n, &tol);
+    if bands {
+        for (k, bf) in &b.files {
+            if let Some(nf) = n.files.get(k) {
+                print!("{}", band_table(k, bf, nf, &tol));
+            }
+        }
+    }
+    println!(
+        "seeds base {} new {}; band limit max({}/{} dB, {} x base sd)",
+        b.seeds.len(),
+        n.seeds.len(),
+        tol.mid_db,
+        tol.edge_db,
+        tol.k
+    );
+    print!("{}", mean_table(&rows));
+    let mut ok = !rows.is_empty() && rows.iter().all(|r| r.fails.is_empty());
+    match (&b.pitch, &n.pitch) {
+        (Some(bp), Some(np)) => {
+            let f = compare_pitch_pool(bp, np);
+            println!(
+                "pitch pooled: fraction {:.3} (base {:.3})  octave errors/seed {:.2} (base {:.2})  {}",
+                np.fraction_within_50c,
+                bp.fraction_within_50c,
+                np.octave_errors_per_seed,
+                bp.octave_errors_per_seed,
+                if f.is_empty() { "PASS".to_string() } else { format!("FAIL {}", f.join(", ")) }
+            );
+            ok &= f.is_empty();
+        }
+        _ => {
+            println!("pitch pooled: FAIL missing on one side");
+            ok = false;
+        }
+    }
+    Ok(ok)
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let r = match cli.cmd {
@@ -149,6 +263,10 @@ fn main() -> ExitCode {
         }
         Cmd::Pitch { wav, notes } => cmd_pitch(&wav, &notes),
         Cmd::PitchCompare { base, new } => cmd_pitch_compare(&base, &new),
+        Cmd::Mean { out, dirs } => cmd_mean(&out, &dirs),
+        Cmd::CompareMean { base, new, tol_mid, tol_edge, k, bands } => {
+            cmd_compare_mean(&base, &new, BandTol { mid_db: tol_mid, edge_db: tol_edge, k }, bands)
+        }
     };
     match r {
         Ok(true) => ExitCode::SUCCESS,
