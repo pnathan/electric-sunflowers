@@ -25,11 +25,14 @@
 use std::fmt::Write as _;
 
 use crate::drawn;
-use crate::full::model::{BarCol, Cell, Clef, Ev, FullScore, Group, Head, Notehead, PartBar, PartId, PartScore, StaffDef};
+use crate::full::model::{
+    BarCol, Cell, Clef, Ev, FullScore, Group, Head, Notehead, PartBar, PartId, PartScore, StaffDef,
+};
 use crate::glyphs::{self, Glyph};
 use crate::layout::{
-    self, chord_text, chord_w, esc, fmt_time, glyph, glyph_w, head_glyph, line, lyric_w, rest_glyph, text, Page, HEAD_W, LABEL_PX, LYRIC_PX, MARGIN,
-    PAD_L, PAD_R, SP, STEM_LEN, STEM_W, WHOLE_W,
+    self, chord_text, chord_w, esc, fmt_time, glyph, glyph_w, head_glyph, line, lyric_w,
+    rest_glyph, text, Page, HEAD_W, LABEL_PX, LYRIC_PX, MARGIN, PAD_L, PAD_R, SP, STEM_LEN, STEM_W,
+    WHOLE_W,
 };
 
 const CHORD_PX: f64 = 13.0;
@@ -76,7 +79,12 @@ fn clef_w(clef: Clef) -> f64 {
 
 /// Column width: the lead sheet's own duration curve (`event_w`'s `base`),
 /// widened for an accidental, a lyric, or a chord symbol at this column.
-fn col_w(gap: i64, accidental: bool, lyric: Option<(&str, bool)>, chord: Option<&str>) -> (f64, f64) {
+fn col_w(
+    gap: i64,
+    accidental: bool,
+    lyric: Option<(&str, bool)>,
+    chord: Option<&str>,
+) -> (f64, f64) {
     let mut base = SP * (1.7 + 1.2 * ((1 + gap.max(1)) as f64).log2());
     let mut lo: f64 = if accidental { 1.3 * SP } else { 0.0 };
     if let Some((l, hyphen)) = lyric {
@@ -94,7 +102,13 @@ fn col_w(gap: i64, accidental: bool, lyric: Option<(&str, bool)>, chord: Option<
 /// One bar's onset columns, pooled from every staff's every voice: (unit,
 /// left offset from the column's `ex`, natural width).
 fn bar_columns(bar: &BarCol, staves: &[StaffDef], bar_u: i64) -> BarNat {
-    let mut units: Vec<i64> = bar.cells.iter().flat_map(|c| c.voices.iter()).flat_map(|v| v.iter()).map(|e| e.s).collect();
+    let mut units: Vec<i64> = bar
+        .cells
+        .iter()
+        .flat_map(|c| c.voices.iter())
+        .flat_map(|v| v.iter())
+        .map(|e| e.s)
+        .collect();
     units.sort_unstable();
     units.dedup();
     if units.is_empty() {
@@ -109,7 +123,9 @@ fn bar_columns(bar: &BarCol, staves: &[StaffDef], bar_u: i64) -> BarNat {
         let mut lyric: Option<(&str, bool)> = None;
         for (si, cell) in bar.cells.iter().enumerate() {
             for voice in &cell.voices {
-                let Some(e) = voice.iter().find(|e| e.s == u) else { continue };
+                let Some(e) = voice.iter().find(|e| e.s == u) else {
+                    continue;
+                };
                 let Some(c) = &e.chord else { continue };
                 if !c.tie_in && c.heads.iter().any(|h| h.accidental.is_some()) {
                     accidental = true;
@@ -139,7 +155,11 @@ fn staff_rows(staves: &[StaffDef]) -> (Vec<Row>, f64) {
     let mut y = 0.0;
     let mut rows = Vec::with_capacity(staves.len());
     for (i, st) in staves.iter().enumerate() {
-        y += if i == 0 { ROW_PAD + LABEL_ROOM } else { ROW_PAD };
+        y += if i == 0 {
+            ROW_PAD + LABEL_ROOM
+        } else {
+            ROW_PAD
+        };
         rows.push(Row { top: y });
         y += 4.0 * SP + ROW_PAD;
         if lyric_staff(st.part) {
@@ -237,9 +257,19 @@ fn key_w(fifths: i32) -> f64 {
 /// Space at a system's start: the widest clef plus the key signature (and,
 /// on the first system, the time signature).
 fn head_w(staves: &[StaffDef], fifths: i32, first: bool) -> f64 {
-    let clef = staves.iter().map(|s| clef_w(s.clef)).fold(0.0_f64, f64::max);
+    let clef = staves
+        .iter()
+        .map(|s| clef_w(s.clef))
+        .fold(0.0_f64, f64::max);
     let pitched = staves.iter().any(|s| s.clef != Clef::Percussion);
-    1.2 * SP + clef + if pitched { key_w(fifths) + 0.6 * SP } else { 0.6 * SP } + if first { 3.0 * SP } else { 0.0 }
+    1.2 * SP
+        + clef
+        + if pitched {
+            key_w(fifths) + 0.6 * SP
+        } else {
+            0.6 * SP
+        }
+        + if first { 3.0 * SP } else { 0.0 }
 }
 
 /// One voice's stem direction: fixed by voice index when the staff carries
@@ -291,13 +321,26 @@ fn draw_system(
     sys_out.push((t0, t1, MARGIN, oy, width - 2.0 * MARGIN, sys_h));
 
     let mut s = String::new();
-    let _ = write!(s, r#"<g class="system" data-bar="{}" data-t0="{}" data-t1="{}" transform="translate(0,{oy:.2})">"#, bars[first].bar, fmt_time(t0), fmt_time(t1));
+    let _ = write!(
+        s,
+        r#"<g class="system" data-bar="{}" data-t0="{}" data-t1="{}" transform="translate(0,{oy:.2})">"#,
+        bars[first].bar,
+        fmt_time(t0),
+        fmt_time(t1)
+    );
 
     // Staves, clefs, key signature, time signature (first system only).
     let sys_end = MARGIN + head + nat[first..end].iter().map(|x| x.0).sum::<f64>() * scale;
     for (i, st) in staves.iter().enumerate() {
         for l in 0..5 {
-            line(&mut s, MARGIN, rows[i].top + l as f64 * SP, sys_end, rows[i].top + l as f64 * SP, 0.13 * SP);
+            line(
+                &mut s,
+                MARGIN,
+                rows[i].top + l as f64 * SP,
+                sys_end,
+                rows[i].top + l as f64 * SP,
+                0.13 * SP,
+            );
         }
         draw_clef(&mut s, st, MARGIN + 0.6 * SP, rows[i].top, fifths);
         if is_first_system {
@@ -331,7 +374,15 @@ fn draw_system(
     // Part names, full on the first system, abbreviated after.
     for (i, st) in staves.iter().enumerate() {
         let name = if is_first_system { st.name } else { st.abbrev };
-        text(&mut s, MARGIN - 0.6 * SP, rows[i].top + 2.2 * SP, 11.0, "end", r#" class="staffname""#, &esc(name));
+        text(
+            &mut s,
+            MARGIN - 0.6 * SP,
+            rows[i].top + 2.2 * SP,
+            11.0,
+            "end",
+            r#" class="staffname""#,
+            &esc(name),
+        );
     }
 
     // Bar-by-bar content.
@@ -350,7 +401,14 @@ fn draw_system(
                 let t_a = bar.t0 + (u as f64 / bar_u as f64) * (bar.t1 - bar.t0);
                 let next_u = cols.iter().find(|c| c.0 > u).map_or(bar_u, |c| c.0);
                 let t_b = bar.t0 + (next_u as f64 / bar_u as f64) * (bar.t1 - bar.t0);
-                notes_out.push((t_a, t_b, ex, oy + rows[0].top - ROW_PAD - LABEL_ROOM, bw_col, sys_h));
+                notes_out.push((
+                    t_a,
+                    t_b,
+                    ex,
+                    oy + rows[0].top - ROW_PAD - LABEL_ROOM,
+                    bw_col,
+                    sys_h,
+                ));
                 ex += bw_col;
             }
         }
@@ -358,13 +416,26 @@ fn draw_system(
         // Section label and chord symbols above the top staff (and the
         // guitar staff, if present, at the same units).
         if let Some(lb) = &bar.label {
-            text(&mut s, x + 0.2 * SP, rows[0].top - ROW_PAD - 0.2 * SP, LABEL_PX, "start", r#" font-weight="bold" font-style="italic""#, &esc(lb));
+            text(
+                &mut s,
+                x + 0.2 * SP,
+                rows[0].top - ROW_PAD - 0.2 * SP,
+                LABEL_PX,
+                "start",
+                r#" font-weight="bold" font-style="italic""#,
+                &esc(lb),
+            );
         }
         let guitar_row = staves.iter().position(|s| s.part == PartId::Guitar);
         for (u, cname) in &bar.chords {
             let cx = col_x.iter().find(|c| c.0 == *u).map_or(x, |c| c.1);
             for ri in std::iter::once(0).chain(guitar_row) {
-                let _ = write!(&mut s, r#"<text class="chord" x="{cx:.1}" y="{:.1}" font-size="{CHORD_PX}" font-weight="bold">{}</text>"#, rows[ri].top - 0.7 * SP, chord_text(cname));
+                let _ = write!(
+                    &mut s,
+                    r#"<text class="chord" x="{cx:.1}" y="{:.1}" font-size="{CHORD_PX}" font-weight="bold">{}</text>"#,
+                    rows[ri].top - 0.7 * SP,
+                    chord_text(cname)
+                );
             }
         }
 
@@ -375,8 +446,21 @@ fn draw_system(
             let y_top = rows[gi].top;
             let y_bot = rows[gj - 1].top + 4.0 * SP;
             if k == last_bar {
-                line(&mut s, bx - 0.75 * SP, y_top, bx - 0.75 * SP, y_bot, 0.16 * SP);
-                let _ = write!(&mut s, r##"<rect x="{:.2}" y="{y_top:.2}" width="{:.2}" height="{:.2}" fill="#111"/>"##, bx - 0.5 * SP, 0.5 * SP, y_bot - y_top);
+                line(
+                    &mut s,
+                    bx - 0.75 * SP,
+                    y_top,
+                    bx - 0.75 * SP,
+                    y_bot,
+                    0.16 * SP,
+                );
+                let _ = write!(
+                    &mut s,
+                    r##"<rect x="{:.2}" y="{y_top:.2}" width="{:.2}" height="{:.2}" fill="#111"/>"##,
+                    bx - 0.5 * SP,
+                    0.5 * SP,
+                    y_bot - y_top
+                );
             } else {
                 line(&mut s, bx, y_top, bx, y_bot, 0.16 * SP);
             }
@@ -387,7 +471,16 @@ fn draw_system(
             let cell = &bar.cells[si];
             let n_voices = cell.voices.len();
             for (vi, voice) in cell.voices.iter().enumerate() {
-                draw_voice(&mut s, voice, &col_x, st.clef, n_voices, vi, rows[si].top, sys_end - MARGIN);
+                draw_voice(
+                    &mut s,
+                    voice,
+                    &col_x,
+                    st.clef,
+                    n_voices,
+                    vi,
+                    rows[si].top,
+                    sys_end - MARGIN,
+                );
             }
         }
         x += bw;
@@ -401,7 +494,16 @@ fn draw_system(
 /// One voice's events in one bar: rests, noteheads (or drawn heads),
 /// stems, dots, ties, lyrics.
 #[allow(clippy::too_many_arguments)]
-fn draw_voice(s: &mut String, voice: &[Ev], col_x: &[(i64, f64)], clef: Clef, n_voices: usize, vi: usize, row_top: f64, sys_end_local: f64) {
+fn draw_voice(
+    s: &mut String,
+    voice: &[Ev],
+    col_x: &[(i64, f64)],
+    clef: Clef,
+    n_voices: usize,
+    vi: usize,
+    row_top: f64,
+    sys_end_local: f64,
+) {
     let x_of = |u: i64| col_x.iter().find(|c| c.0 == u).map_or(MARGIN, |c| c.1);
     let low_rest = n_voices > 1 && vi == 1;
     for (ei, e) in voice.iter().enumerate() {
@@ -415,27 +517,60 @@ fn draw_voice(s: &mut String, voice: &[Ev], col_x: &[(i64, f64)], clef: Clef, n_
             continue;
         };
         let steps: Vec<i32> = chord.heads.iter().map(|h| h.step).collect();
-        let rep = *steps.iter().min_by_key(|&&a| (a - 34).unsigned_abs()).unwrap_or(&34);
+        let rep = *steps
+            .iter()
+            .min_by_key(|&&a| (a - 34).unsigned_abs())
+            .unwrap_or(&34);
         let up = stem_up(n_voices, vi, rep);
         let offsets = chord_offsets(&chord.heads);
         let hw = if e.d >= 16 { WHOLE_W } else { HEAD_W };
-        let stem_x = if up { x + hw - STEM_W * 0.5 } else { x + STEM_W * 0.5 };
+        let stem_x = if up {
+            x + hw - STEM_W * 0.5
+        } else {
+            x + STEM_W * 0.5
+        };
         let (y_min, y_max) = (
-            chord.heads.iter().map(|h| y_step(clef, h.step)).fold(f64::INFINITY, f64::min),
-            chord.heads.iter().map(|h| y_step(clef, h.step)).fold(f64::NEG_INFINITY, f64::max),
+            chord
+                .heads
+                .iter()
+                .map(|h| y_step(clef, h.step))
+                .fold(f64::INFINITY, f64::min),
+            chord
+                .heads
+                .iter()
+                .map(|h| y_step(clef, h.step))
+                .fold(f64::NEG_INFINITY, f64::max),
         );
-        let stem_end = if up { y_min - STEM_LEN } else { y_max + STEM_LEN };
+        let stem_end = if up {
+            y_min - STEM_LEN
+        } else {
+            y_max + STEM_LEN
+        };
         for (hi, h) in chord.heads.iter().enumerate() {
             let hx = x + offsets[hi];
             let hy = row_top + y_step(clef, h.step);
             let mut lp = 28;
             while lp >= h.step {
-                line(s, hx - 0.4 * SP, row_top + y_step(clef, lp), hx + hw + 0.4 * SP, row_top + y_step(clef, lp), 0.16 * SP);
+                line(
+                    s,
+                    hx - 0.4 * SP,
+                    row_top + y_step(clef, lp),
+                    hx + hw + 0.4 * SP,
+                    row_top + y_step(clef, lp),
+                    0.16 * SP,
+                );
                 lp -= 2;
             }
             let mut lp = 40;
             while lp <= h.step {
-                line(s, hx - 0.4 * SP, row_top + y_step(clef, lp), hx + hw + 0.4 * SP, row_top + y_step(clef, lp), 0.16 * SP);
+                line(
+                    s,
+                    hx - 0.4 * SP,
+                    row_top + y_step(clef, lp),
+                    hx + hw + 0.4 * SP,
+                    row_top + y_step(clef, lp),
+                    0.16 * SP,
+                );
                 lp += 2;
             }
             if let Some(a) = h.accidental {
@@ -457,10 +592,25 @@ fn draw_voice(s: &mut String, voice: &[Ev], col_x: &[(i64, f64)], clef: Clef, n_
             }
         }
         if let Some(txt) = &chord.text {
-            text(s, x + hw * 0.5, row_top + y_max + 2.4 * SP, 10.0, "middle", "", &esc(txt));
+            text(
+                s,
+                x + hw * 0.5,
+                row_top + y_max + 2.4 * SP,
+                10.0,
+                "middle",
+                "",
+                &esc(txt),
+            );
         }
         if e.d < 16 {
-            line(s, stem_x, row_top + if up { y_min } else { y_max }, stem_x, row_top + stem_end, STEM_W);
+            line(
+                s,
+                stem_x,
+                row_top + if up { y_min } else { y_max },
+                stem_x,
+                row_top + stem_end,
+                STEM_W,
+            );
             let flag_d = e.d;
             if flag_d < 4 {
                 let g = match (flag_d == 1, up) {
@@ -473,7 +623,10 @@ fn draw_voice(s: &mut String, voice: &[Ev], col_x: &[(i64, f64)], clef: Clef, n_
             }
         }
         if chord.tie_out {
-            let x2 = voice.get(ei + 1).map_or(x + hw + 2.0 * SP, |_| x + hw + 2.0 * SP).min(MARGIN + sys_end_local);
+            let x2 = voice
+                .get(ei + 1)
+                .map_or(x + hw + 2.0 * SP, |_| x + hw + 2.0 * SP)
+                .min(MARGIN + sys_end_local);
             let x1 = x + hw + 0.15 * SP;
             let below = up;
             let yy = row_top + y_step(clef, rep) + if below { 0.6 * SP } else { -0.6 * SP };
@@ -487,12 +640,27 @@ fn draw_voice(s: &mut String, voice: &[Ev], col_x: &[(i64, f64)], clef: Clef, n_
             );
         }
         if let Some(l) = &chord.lyric {
-            text(s, x + hw * 0.5, row_top + 4.0 * SP + ROW_PAD + 1.6 * SP, LYRIC_PX, "middle", r#" class="lyric""#, &esc(l));
+            text(
+                s,
+                x + hw * 0.5,
+                row_top + 4.0 * SP + ROW_PAD + 1.6 * SP,
+                LYRIC_PX,
+                "middle",
+                r#" class="lyric""#,
+                &esc(l),
+            );
             if chord.hyphen {
                 let a = x + hw * 0.5 + lyric_w(l) * 0.5 + 0.3 * SP;
                 let b = (a + 1.4 * SP).min(MARGIN + sys_end_local);
                 if b > a {
-                    line(s, a, row_top + 4.0 * SP + ROW_PAD + 1.2 * SP, b, row_top + 4.0 * SP + ROW_PAD + 1.2 * SP, 0.9);
+                    line(
+                        s,
+                        a,
+                        row_top + 4.0 * SP + ROW_PAD + 1.2 * SP,
+                        b,
+                        row_top + 4.0 * SP + ROW_PAD + 1.2 * SP,
+                        0.9,
+                    );
                 }
             }
         }
@@ -506,7 +674,10 @@ fn svg_document(width: f64, height: f64, body: &str) -> String {
         r##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{width:.0}" height="{height:.0}" viewBox="0 0 {width:.0} {height:.0}" font-family="{}" fill="#111">"##,
         layout::FONT
     );
-    let _ = write!(svg, r##"<rect width="{width:.0}" height="{height:.0}" fill="#fff"/><defs>"##);
+    let _ = write!(
+        svg,
+        r##"<rect width="{width:.0}" height="{height:.0}" fill="#fff"/><defs>"##
+    );
     for g in glyphs::ALL {
         let _ = write!(svg, r#"<path id="g-{}" d="{}"/>"#, g.name, g.path);
     }
@@ -525,7 +696,11 @@ pub(crate) fn layout_full(score: &FullScore) -> Page {
         let g = score.meter.grid();
         2 * g.sub as i64 * g.beats as i64
     };
-    let nat: Vec<BarNat> = score.bars.iter().map(|b| bar_columns(b, &score.staves, bar_u)).collect();
+    let nat: Vec<BarNat> = score
+        .bars
+        .iter()
+        .map(|b| bar_columns(b, &score.staves, bar_u))
+        .collect();
 
     let mut systems: Vec<(usize, usize)> = Vec::new();
     let mut i = 0;
@@ -534,7 +709,10 @@ pub(crate) fn layout_full(score: &FullScore) -> Page {
         let avail = width - 2.0 * MARGIN - head;
         let mut j = i;
         let mut w = 0.0;
-        while j < score.bars.len() && score.bars[j].chunk == score.bars[i].chunk && (j == i || w + nat[j].0 <= avail) {
+        while j < score.bars.len()
+            && score.bars[j].chunk == score.bars[i].chunk
+            && (j == i || w + nat[j].0 <= avail)
+        {
             w += nat[j].0;
             j += 1;
         }
@@ -546,8 +724,24 @@ pub(crate) fn layout_full(score: &FullScore) -> Page {
     let mut notes_out = Vec::new();
     let mut sys_out = Vec::new();
     let mut cursor = MARGIN + 44.0;
-    text(&mut body, width * 0.5, MARGIN + 18.0, 22.0, "middle", "", &esc(&score.title));
-    text(&mut body, width - MARGIN, MARGIN + 40.0, 13.0, "end", "", &esc(&score.caption));
+    text(
+        &mut body,
+        width * 0.5,
+        MARGIN + 18.0,
+        22.0,
+        "middle",
+        "",
+        &esc(&score.title),
+    );
+    text(
+        &mut body,
+        width - MARGIN,
+        MARGIN + 40.0,
+        13.0,
+        "end",
+        "",
+        &esc(&score.caption),
+    );
     cursor += 1.0 * SP;
 
     for (si, &(first, end)) in systems.iter().enumerate() {
@@ -571,7 +765,13 @@ pub(crate) fn layout_full(score: &FullScore) -> Page {
     }
 
     let height = (cursor + MARGIN * 0.5).ceil();
-    Page { svg: svg_document(width, height, &body), width, height, notes: notes_out, systems: sys_out }
+    Page {
+        svg: svg_document(width, height, &body),
+        width,
+        height,
+        notes: notes_out,
+        systems: sys_out,
+    }
 }
 
 /// Lays out one part's own view: bars flow and wrap to the page width (no
@@ -580,7 +780,13 @@ pub(crate) fn layout_full(score: &FullScore) -> Page {
 /// in time-signature digits above it. Section labels are printed as
 /// rehearsal marks (boxed letters are not attempted; the label text
 /// itself, as the lead sheet prints it).
-pub(crate) fn layout_part(part: &PartScore, meter: song::Meter, fifths: i32, title: &str, width: f64) -> Page {
+pub(crate) fn layout_part(
+    part: &PartScore,
+    meter: song::Meter,
+    fifths: i32,
+    title: &str,
+    width: f64,
+) -> Page {
     let staves = std::slice::from_ref(&part.staff);
     let bar_u = {
         let g = meter.grid();
@@ -595,16 +801,49 @@ pub(crate) fn layout_part(part: &PartScore, meter: song::Meter, fifths: i32, tit
     let mut pbs = Vec::with_capacity(part.bars.len());
     for (chunk, pb) in part.bars.iter().enumerate() {
         match pb {
-            PartBar::Bar { bar, sec, chunk: _, label, chords, t0, t1, cell } => {
+            PartBar::Bar {
+                bar,
+                sec,
+                chunk: _,
+                label,
+                chords,
+                t0,
+                t1,
+                cell,
+            } => {
                 pbs.push(PB {
-                    bar: BarCol { bar: *bar, sec: *sec, chunk, label: label.clone(), chords: chords.clone(), t0: *t0, t1: *t1, cells: vec![cell.clone()] },
+                    bar: BarCol {
+                        bar: *bar,
+                        sec: *sec,
+                        chunk,
+                        label: label.clone(),
+                        chords: chords.clone(),
+                        t0: *t0,
+                        t1: *t1,
+                        cells: vec![cell.clone()],
+                    },
                     multi: None,
                 });
             }
             PartBar::MultiRest { bars } => {
-                let rest_ev = Ev { s: 0, d: bar_u, chord: None };
+                let rest_ev = Ev {
+                    s: 0,
+                    d: bar_u,
+                    chord: None,
+                };
                 pbs.push(PB {
-                    bar: BarCol { bar: 0, sec: 0, chunk, label: None, chords: Vec::new(), t0: 0.0, t1: 0.0, cells: vec![Cell { voices: vec![vec![rest_ev]] }] },
+                    bar: BarCol {
+                        bar: 0,
+                        sec: 0,
+                        chunk,
+                        label: None,
+                        chords: Vec::new(),
+                        t0: 0.0,
+                        t1: 0.0,
+                        cells: vec![Cell {
+                            voices: vec![vec![rest_ev]],
+                        }],
+                    },
                     multi: Some(*bars),
                 });
             }
@@ -641,16 +880,41 @@ pub(crate) fn layout_part(part: &PartScore, meter: song::Meter, fifths: i32, tit
     let mut notes_out = Vec::new();
     let mut sys_out = Vec::new();
     let mut cursor = MARGIN + 44.0;
-    text(&mut body, width * 0.5, MARGIN + 18.0, 22.0, "middle", "", &esc(title));
+    text(
+        &mut body,
+        width * 0.5,
+        MARGIN + 18.0,
+        22.0,
+        "middle",
+        "",
+        &esc(title),
+    );
     cursor += SP;
 
     for (si, &(first, end)) in systems.iter().enumerate() {
-        let h = draw_system(&mut body, &mut notes_out, &mut sys_out, staves, &bars, first, end, width, fifths, meter, si == 0, cursor, &nat, bar_u);
+        let h = draw_system(
+            &mut body,
+            &mut notes_out,
+            &mut sys_out,
+            staves,
+            &bars,
+            first,
+            end,
+            width,
+            fifths,
+            meter,
+            si == 0,
+            cursor,
+            &nat,
+            bar_u,
+        );
         // Multi-bar rests in this system: overdraw the restHBar and count.
         for k in first..end {
             if let Some(n) = pbs[k].multi {
                 let bw = nat[k].0.min(width) * 1.0;
-                let x0 = MARGIN + head_w(staves, fifths, si == 0) + nat[first..k].iter().map(|x| x.0).sum::<f64>();
+                let x0 = MARGIN
+                    + head_w(staves, fifths, si == 0)
+                    + nat[first..k].iter().map(|x| x.0).sum::<f64>();
                 let row_top = staff_rows(staves).0[0].top;
                 let mid = cursor + row_top + 2.0 * SP;
                 let mut g = String::new();
@@ -665,13 +929,29 @@ pub(crate) fn layout_part(part: &PartScore, meter: song::Meter, fifths: i32, tit
     }
 
     let height = (cursor + MARGIN * 0.5).ceil();
-    Page { svg: svg_document(width, height, &body), width, height, notes: notes_out, systems: sys_out }
+    Page {
+        svg: svg_document(width, height, &body),
+        width,
+        height,
+        notes: notes_out,
+        systems: sys_out,
+    }
 }
 
 /// The bar count over a multi-bar rest, in time-signature digits.
 fn draw_multirest_count(out: &mut String, cx: f64, y: f64, n: usize) {
-    let digits: Vec<usize> = if n == 0 { vec![0] } else { n.to_string().chars().map(|c| c.to_digit(10).unwrap() as usize).collect() };
-    let widths: Vec<f64> = digits.iter().map(|&d| glyph_w(&glyphs::TIME_SIG[d]) * 0.7).collect();
+    let digits: Vec<usize> = if n == 0 {
+        vec![0]
+    } else {
+        n.to_string()
+            .chars()
+            .map(|c| c.to_digit(10).unwrap() as usize)
+            .collect()
+    };
+    let widths: Vec<f64> = digits
+        .iter()
+        .map(|&d| glyph_w(&glyphs::TIME_SIG[d]) * 0.7)
+        .collect();
     let total: f64 = widths.iter().sum();
     let mut x = cx - total * 0.5;
     for (&d, &w) in digits.iter().zip(&widths) {

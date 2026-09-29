@@ -75,11 +75,23 @@ pub enum Segment {
     /// Nasal murmur: voicing with widened bandwidths.
     Nasal { f: Formants3, av: f64 },
     /// Frication noise at centre `ff`, bandwidth `fbw`, over optional voicing.
-    Fricative { f: Formants3, av: f64, af: f64, ff: f64, fbw: f64 },
+    Fricative {
+        f: Formants3,
+        av: f64,
+        af: f64,
+        ff: f64,
+        fbw: f64,
+    },
     /// Aspiration noise through the tract; `b1x` Hz of extra F1 bandwidth.
     Aspiration { f: Formants3, ah: f64, b1x: f64 },
     /// Stop or affricate release: frication band plus aspiration.
-    Burst { f: Formants3, af: f64, ff: f64, fbw: f64, ah: f64 },
+    Burst {
+        f: Formants3,
+        af: f64,
+        ff: f64,
+        fbw: f64,
+        ah: f64,
+    },
     /// Oral closure; `av` is the voicing that leaks through (voiced stops).
     Closure { f: Formants3, av: f64 },
     /// Audible in-breath before a phrase.
@@ -179,20 +191,32 @@ pub fn nuc_targets(nu: &[Phoneme]) -> Vec<NucTarget> {
     let mut out = Vec::with_capacity(nu.len().max(1) + 1);
     for &p in nu {
         if let Some(pair) = p.diphthong_targets() {
-            out.extend(pair.iter().filter_map(|&v| vowel_formants(v)).map(|f| NucTarget {
+            out.extend(
+                pair.iter()
+                    .filter_map(|&v| vowel_formants(v))
+                    .map(|f| NucTarget {
+                        f,
+                        kind: NucKind::Vowel,
+                        av: 1.0,
+                    }),
+            );
+        } else if let Some(f) = vowel_formants(p) {
+            out.push(NucTarget {
                 f,
                 kind: NucKind::Vowel,
                 av: 1.0,
-            }));
-        } else if let Some(f) = vowel_formants(p) {
-            out.push(NucTarget { f, kind: NucKind::Vowel, av: 1.0 });
+            });
         } else if let Some(c) = consonant(p) {
             let kind = match c.class {
                 ConsClass::Sonorant => NucKind::Sonorant,
                 ConsClass::Nasal => NucKind::Nasal,
                 _ => continue,
             };
-            out.push(NucTarget { f: c.formants, kind, av: c.av });
+            out.push(NucTarget {
+                f: c.formants,
+                kind,
+                av: c.av,
+            });
         }
     }
     if out.is_empty() {
@@ -210,7 +234,15 @@ pub fn cons_dur(p: Phoneme, coda: bool) -> f64 {
         return 0.0;
     };
     match c.class {
-        ConsClass::Stop => c.closure + STOP_BURST + if coda || c.voiced { 0.0 } else { STOP_ASPIRATION },
+        ConsClass::Stop => {
+            c.closure
+                + STOP_BURST
+                + if coda || c.voiced {
+                    0.0
+                } else {
+                    STOP_ASPIRATION
+                }
+        }
         ConsClass::Affricate => c.closure + AFFRICATE_BURST + c.fric_dur,
         ConsClass::Nasal if coda => CODA_NASAL,
         _ => c.dur,
@@ -246,7 +278,11 @@ pub fn split_ph(ph: &[Phoneme]) -> (Vec<Phoneme>, Vec<Phoneme>, Vec<Phoneme>) {
     let first = ph.iter().position(|p| p.is_vowel());
     let last = ph.iter().rposition(|p| p.is_vowel());
     match (first, last) {
-        (Some(i0), Some(i1)) => (ph[..i0].to_vec(), ph[i0..=i1].to_vec(), ph[i1 + 1..].to_vec()),
+        (Some(i0), Some(i1)) => (
+            ph[..i0].to_vec(),
+            ph[i0..=i1].to_vec(),
+            ph[i1 + 1..].to_vec(),
+        ),
         _ => (Vec::new(), vec![DEFAULT_NUCLEUS], ph.to_vec()),
     }
 }
@@ -263,14 +299,29 @@ pub fn syllables(notes: &[VocalNote], p: &VoiceParams, ph: &PhrasingParams) -> V
             let onset_dur = onset.iter().map(|&ph| cons_dur(ph, false) * cs).collect();
             let coda_dur = coda.iter().map(|&ph| cons_dur(ph, true) * cs).collect();
             let targets = nuc_targets(&nucleus);
-            Syllable { onset, nucleus, coda, onset_dur, coda_dur, onset_scale: 1.0, onset_start: n.t0, vowel_start: n.t0, targets }
+            Syllable {
+                onset,
+                nucleus,
+                coda,
+                onset_dur,
+                coda_dur,
+                onset_scale: 1.0,
+                onset_start: n.t0,
+                vowel_start: n.t0,
+                targets,
+            }
         })
         .collect();
 
     for k in 1..notes.len() {
         let (n, prev) = (&notes[k], &notes[k - 1]);
         let single_td = matches!(syl[k].onset.as_slice(), [Phoneme::T | Phoneme::D]);
-        if single_td && !n.stress && !n.phrase_start && syl[k - 1].coda.is_empty() && n.t0 - prev.t1 < FLAP_GAP {
+        if single_td
+            && !n.stress
+            && !n.phrase_start
+            && syl[k - 1].coda.is_empty()
+            && n.t0 - prev.t1 < FLAP_GAP
+        {
             syl[k].onset = vec![Phoneme::Dx];
             syl[k].onset_dur = vec![cons_dur(Phoneme::Dx, false)];
         }
@@ -279,7 +330,11 @@ pub fn syllables(notes: &[VocalNote], p: &VoiceParams, ph: &PhrasingParams) -> V
     for k in 0..notes.len() {
         let n = &notes[k];
         let d: f64 = syl[k].onset_dur.iter().sum();
-        let avail = if k > 0 { (n.t0 - notes[k - 1].t0) * ph.onset_share } else { FIRST_ONSET };
+        let avail = if k > 0 {
+            (n.t0 - notes[k - 1].t0) * ph.onset_share
+        } else {
+            FIRST_ONSET
+        };
         let s = if d > avail && d > 0.0 { avail / d } else { 1.0 };
         syl[k].onset_scale = s;
         // Onset consonants of scaled length `dd` span [t0 - lead_in dd,
@@ -338,9 +393,20 @@ impl Plan<'_> {
 
 /// The timed segments of `notes` sung by voice `p` (settings already
 /// applied), sorted by start time. See the module doc for the rules.
-pub fn plan_segments(notes: &[VocalNote], p: &VoiceParams, settings: &VoiceSettings) -> Vec<(Span, Segment)> {
+pub fn plan_segments(
+    notes: &[VocalNote],
+    p: &VoiceParams,
+    settings: &VoiceSettings,
+) -> Vec<(Span, Segment)> {
     let mut out = Vec::with_capacity(notes.len() * 8);
-    plan_syllables(notes, &syllables(notes, p, &settings.phrasing), 0..notes.len(), p, settings, &mut out);
+    plan_syllables(
+        notes,
+        &syllables(notes, p, &settings.phrasing),
+        0..notes.len(),
+        p,
+        settings,
+        &mut out,
+    );
     out
 }
 
@@ -356,7 +422,10 @@ pub fn plan_syllables(
     out: &mut Vec<(Span, Segment)>,
 ) {
     out.clear();
-    let sc = Scale { f1s: p.f1s, fs: p.fs };
+    let sc = Scale {
+        f1s: p.f1s,
+        fs: p.fs,
+    };
     let mut plan = Plan { segs: out };
     let range = range.start.min(notes.len())..range.end.min(notes.len()).min(syl.len());
 
@@ -405,7 +474,14 @@ pub fn plan_syllables(
                 let f = [0, 1, 2].map(|q| loc[q] + (vf0[q] - loc[q]) * e);
                 let t0 = s.vowel_start + tt * j as f64 / CV_STEPS as f64;
                 let t1 = s.vowel_start + tt * (j as f64 + 1.0) / CV_STEPS as f64;
-                plan.put(t0, t1, Segment::Vowel { f, av: amp * (0.7 + 0.3 * a) });
+                plan.put(
+                    t0,
+                    t1,
+                    Segment::Vowel {
+                        f,
+                        av: amp * (0.7 + 0.3 * a),
+                    },
+                );
             }
             n_start = s.vowel_start + tt;
         }
@@ -416,7 +492,14 @@ pub fn plan_syllables(
         } else {
             let tail = clamp(vlen * 0.3, 0.05, 0.18);
             let each = tail / (vt.len() - 1) as f64;
-            plan.put(n_start, coda_start - tail, Segment::Vowel { f: sc.of(vt[0].f), av: amp });
+            plan.put(
+                n_start,
+                coda_start - tail,
+                Segment::Vowel {
+                    f: sc.of(vt[0].f),
+                    av: amp,
+                },
+            );
             for (j, v) in vt.iter().enumerate().skip(1) {
                 let a = coda_start - tail + (j - 1) as f64 * each;
                 plan.put(a, a + each, v.segment(sc.of(v.f), amp));
@@ -438,7 +521,13 @@ pub fn plan_syllables(
             let phrase = next.is_some_and(|(nn, _)| nn.phrase_start);
             if phrase && next_on - coda_end > BREATH_PAUSE && settings.breath_pauses {
                 plan.put(coda_end, next_on - BREATH_START, Segment::Silence { f: nf });
-                plan.put(next_on - BREATH_START, next_on - BREATH_END, Segment::Breath { f: sc.of(BREATH_FORMANTS) });
+                plan.put(
+                    next_on - BREATH_START,
+                    next_on - BREATH_END,
+                    Segment::Breath {
+                        f: sc.of(BREATH_FORMANTS),
+                    },
+                );
                 plan.put(next_on - BREATH_END, next_on, Segment::Silence { f: nf });
             } else {
                 plan.put(coda_end, next_on, Segment::Silence { f: nf });
@@ -470,14 +559,36 @@ fn consonant_segments(
             let t = sc.of(c.formants);
             let f = [0, 1, 2].map(|i| t[i] * 0.75 + vf[i] * 0.25);
             let av = amp * c.av;
-            let seg = if c.class == ConsClass::Nasal { Segment::Nasal { f, av } } else { Segment::Sonorant { f, av } };
+            let seg = if c.class == ConsClass::Nasal {
+                Segment::Nasal { f, av }
+            } else {
+                Segment::Sonorant { f, av }
+            };
             plan.put(t0, t1, seg);
         }
         ConsClass::Fricative => {
             let av = if c.voiced { amp * c.vv } else { 0.0 };
-            plan.put(t0, t1, Segment::Fricative { f: vf, av, af: c.af * amp, ff: c.ff, fbw: c.bw });
+            plan.put(
+                t0,
+                t1,
+                Segment::Fricative {
+                    f: vf,
+                    av,
+                    af: c.af * amp,
+                    ff: c.ff,
+                    fbw: c.bw,
+                },
+            );
         }
-        ConsClass::Aspirate => plan.put(t0, t1, Segment::Aspiration { f: vf, ah: 0.5 * amp, b1x: 0.0 }),
+        ConsClass::Aspirate => plan.put(
+            t0,
+            t1,
+            Segment::Aspiration {
+                f: vf,
+                ah: 0.5 * amp,
+                b1x: 0.0,
+            },
+        ),
         ConsClass::Stop | ConsClass::Affricate => {
             let loc = sc.locus(c, vf);
             let cf = [0, 1, 2].map(|i| loc[i] * 0.6 + vf[i] * 0.4);
@@ -496,15 +607,53 @@ fn consonant_segments(
                     Locus::Velar => 1800.0,
                 };
                 let af = if coda { 0.4 } else { 0.7 } * amp * BURST_GAIN;
-                plan.put(cl, cl + STOP_BURST, Segment::Burst { f: cf, af, ff, fbw: c.bw, ah: 0.12 * amp });
+                plan.put(
+                    cl,
+                    cl + STOP_BURST,
+                    Segment::Burst {
+                        f: cf,
+                        af,
+                        ff,
+                        fbw: c.bw,
+                        ah: 0.12 * amp,
+                    },
+                );
                 if !coda && !c.voiced {
-                    plan.put(cl + STOP_BURST, t1, Segment::Aspiration { f: vf, ah: 0.4 * amp, b1x: 320.0 });
+                    plan.put(
+                        cl + STOP_BURST,
+                        t1,
+                        Segment::Aspiration {
+                            f: vf,
+                            ah: 0.4 * amp,
+                            b1x: 320.0,
+                        },
+                    );
                 }
             } else {
                 let b1 = cl + AFFRICATE_BURST * k;
-                plan.put(cl, b1, Segment::Burst { f: cf, af: 0.6 * amp, ff: c.ff, fbw: c.bw, ah: 0.0 });
+                plan.put(
+                    cl,
+                    b1,
+                    Segment::Burst {
+                        f: cf,
+                        af: 0.6 * amp,
+                        ff: c.ff,
+                        fbw: c.bw,
+                        ah: 0.0,
+                    },
+                );
                 let av = if c.voiced { amp * 0.3 } else { 0.0 };
-                plan.put(b1, t1, Segment::Fricative { f: vf, av, af: c.af * amp, ff: c.ff, fbw: c.bw });
+                plan.put(
+                    b1,
+                    t1,
+                    Segment::Fricative {
+                        f: vf,
+                        av,
+                        af: c.af * amp,
+                        ff: c.ff,
+                        fbw: c.bw,
+                    },
+                );
             }
         }
     }
@@ -555,7 +704,10 @@ mod tests {
     #[test]
     fn split_vowel_run_and_cluster() {
         let (on, nu, co) = split_ph(&ph(&["s", "t", "aa", "ih", "n"]));
-        assert_eq!((on, nu, co), (ph(&["s", "t"]), ph(&["aa", "ih"]), ph(&["n"])));
+        assert_eq!(
+            (on, nu, co),
+            (ph(&["s", "t"]), ph(&["aa", "ih"]), ph(&["n"]))
+        );
     }
 
     #[test]
@@ -578,14 +730,20 @@ mod tests {
         assert_eq!(t.len(), 2);
         assert!(t.iter().all(|x| x.kind == NucKind::Vowel));
         let t = nuc_targets(&ph(&["ey"]));
-        assert_eq!(t.iter().map(|x| x.f).collect::<Vec<_>>(), vec![[450.0, 2020.0, 2600.0], [340.0, 2210.0, 2780.0]]);
+        assert_eq!(
+            t.iter().map(|x| x.f).collect::<Vec<_>>(),
+            vec![[450.0, 2020.0, 2600.0], [340.0, 2210.0, 2780.0]]
+        );
         let t = nuc_targets(&[]);
         assert_eq!(Some(t[0].f), vowel_formants(Phoneme::Aa));
     }
 
     /// Spans of the segments inside [t0, t1).
     fn inside(plan: &[(Span, Segment)], t0: f64, t1: f64) -> Vec<(Span, Segment)> {
-        plan.iter().filter(|(sp, _)| sp.t0 >= t0 - 1e-9 && sp.t0 < t1).cloned().collect()
+        plan.iter()
+            .filter(|(sp, _)| sp.t0 >= t0 - 1e-9 && sp.t0 < t1)
+            .cloned()
+            .collect()
     }
 
     /// "the RIV-er ci-ty": the unstressed /t/ of "ty" after an open "ci"
@@ -607,12 +765,24 @@ mod tests {
             assert_eq!(syl[4].onset, vec![Phoneme::Dx], "{voice:?}");
             let plan = plan_segments(&notes, &p, &settings);
             let on = inside(&plan, syl[4].onset_start, notes[4].t0);
-            let clos: Vec<_> = on.iter().filter(|(_, g)| matches!(g, Segment::Closure { .. })).collect();
+            let clos: Vec<_> = on
+                .iter()
+                .filter(|(_, g)| matches!(g, Segment::Closure { .. }))
+                .collect();
             assert_eq!(clos.len(), 1);
-            assert!((clos[0].0.len() - 0.02).abs() < 1e-9, "{voice:?} closure {}", clos[0].0.len());
-            assert!(matches!(clos[0].1, Segment::Closure { av, .. } if av > 0.0), "flap closure is voiced");
+            assert!(
+                (clos[0].0.len() - 0.02).abs() < 1e-9,
+                "{voice:?} closure {}",
+                clos[0].0.len()
+            );
+            assert!(
+                matches!(clos[0].1, Segment::Closure { av, .. } if av > 0.0),
+                "flap closure is voiced"
+            );
             assert!(on.iter().any(|(_, g)| matches!(g, Segment::Burst { .. })));
-            assert!(!on.iter().any(|(_, g)| matches!(g, Segment::Aspiration { .. })));
+            assert!(!on
+                .iter()
+                .any(|(_, g)| matches!(g, Segment::Aspiration { .. })));
 
             // Stressed, the same /t/ is a full voiceless stop.
             let mut stressed = notes.clone();
@@ -623,17 +793,30 @@ mod tests {
             let plan = plan_segments(&stressed, &p, &settings);
             let on = inside(&plan, syl[4].onset_start, stressed[4].t0);
             let cs = p.cons_scale;
-            let len = |pred: fn(&Segment) -> bool| -> f64 { on.iter().filter(|(_, g)| pred(g)).map(|(sp, _)| sp.len()).sum() };
+            let len = |pred: fn(&Segment) -> bool| -> f64 {
+                on.iter()
+                    .filter(|(_, g)| pred(g))
+                    .map(|(sp, _)| sp.len())
+                    .sum()
+            };
             let clos = len(|g| matches!(g, Segment::Closure { av, .. } if *av == 0.0));
             let burst = len(|g| matches!(g, Segment::Burst { .. }));
             let asp = len(|g| matches!(g, Segment::Aspiration { b1x, .. } if *b1x > 0.0));
             assert!((clos - 0.045 * cs).abs() < 1e-9, "{voice:?} closure {clos}");
             assert!((burst - STOP_BURST).abs() < 1e-9, "{voice:?} burst {burst}");
             let want = (0.045 + STOP_BURST + STOP_ASPIRATION) * cs - 0.045 * cs - STOP_BURST;
-            assert!((asp - want).abs() < 1e-9, "{voice:?} aspiration {asp} want {want}");
+            assert!(
+                (asp - want).abs() < 1e-9,
+                "{voice:?} aspiration {asp} want {want}"
+            );
             // The CV transition follows the release.
             let cv = inside(&plan, stressed[4].t0, stressed[4].t0 + CV_TRANSITION);
-            assert_eq!(cv.iter().filter(|(_, g)| matches!(g, Segment::Vowel { .. })).count(), CV_STEPS);
+            assert_eq!(
+                cv.iter()
+                    .filter(|(_, g)| matches!(g, Segment::Vowel { .. }))
+                    .count(),
+                CV_STEPS
+            );
         }
     }
 
@@ -641,21 +824,39 @@ mod tests {
     #[test]
     fn t_after_coda_or_gap_does_not_flap() {
         let p = voice_params(Voice::Baritone);
-        let notes = [note(0.5, 0.9, &["s", "ih", "n"], true), note(1.0, 1.4, &["t", "iy"], false)];
-        assert_eq!(syllables(&notes, &p, &PhrasingParams::default())[1].onset, vec![Phoneme::T]);
-        let notes = [note(0.5, 0.9, &["s", "ih"], true), note(1.2, 1.6, &["t", "iy"], false)];
-        assert_eq!(syllables(&notes, &p, &PhrasingParams::default())[1].onset, vec![Phoneme::T]);
+        let notes = [
+            note(0.5, 0.9, &["s", "ih", "n"], true),
+            note(1.0, 1.4, &["t", "iy"], false),
+        ];
+        assert_eq!(
+            syllables(&notes, &p, &PhrasingParams::default())[1].onset,
+            vec![Phoneme::T]
+        );
+        let notes = [
+            note(0.5, 0.9, &["s", "ih"], true),
+            note(1.2, 1.6, &["t", "iy"], false),
+        ];
+        assert_eq!(
+            syllables(&notes, &p, &PhrasingParams::default())[1].onset,
+            vec![Phoneme::T]
+        );
     }
 
     /// Onsets take at most 45% of the inter-onset interval.
     #[test]
     fn onset_compression() {
         let p = voice_params(Voice::Soprano);
-        let notes = [note(0.5, 0.6, &["aa"], true), note(0.62, 0.8, &["s", "t", "r", "aa"], true)];
+        let notes = [
+            note(0.5, 0.6, &["aa"], true),
+            note(0.62, 0.8, &["s", "t", "r", "aa"], true),
+        ];
         let syl = syllables(&notes, &p, &PhrasingParams::default());
         let used = notes[1].t0 - syl[1].onset_start;
         assert!(syl[1].onset_scale < 1.0);
-        assert!((used - 0.12 * PhrasingParams::default().onset_share).abs() < 1e-12, "{used}");
+        assert!(
+            (used - 0.12 * PhrasingParams::default().onset_share).abs() < 1e-12,
+            "{used}"
+        );
     }
 
     /// `lead_in` moves the vowel start by `(1 - lead_in) * D`, where `D` is
@@ -664,7 +865,10 @@ mod tests {
     #[test]
     fn lead_in_moves_the_vowel_start() {
         let p = voice_params(Voice::Tenor);
-        let notes = [note(1.0, 1.6, &["s", "t", "aa"], true), note(2.0, 2.6, &["b", "aa"], true)];
+        let notes = [
+            note(1.0, 1.6, &["s", "t", "aa"], true),
+            note(2.0, 2.6, &["b", "aa"], true),
+        ];
         let default = PhrasingParams::default();
         let syl0 = syllables(&notes, &p, &default);
         assert_eq!(syl0[0].vowel_start, notes[0].t0);
@@ -674,9 +878,18 @@ mod tests {
             let ph = PhrasingParams { lead_in, ..default };
             let syl = syllables(&notes, &p, &ph);
             let dd: f64 = syl[0].onset_dur.iter().sum::<f64>() * syl[0].onset_scale;
-            assert!((dd - d).abs() < 1e-9, "onset compression must not depend on lead_in");
-            assert!((syl[0].vowel_start - (notes[0].t0 + (1.0 - lead_in) * dd)).abs() < 1e-9, "lead_in {lead_in}");
-            assert!((syl[0].onset_start - (notes[0].t0 - lead_in * dd)).abs() < 1e-9, "lead_in {lead_in}");
+            assert!(
+                (dd - d).abs() < 1e-9,
+                "onset compression must not depend on lead_in"
+            );
+            assert!(
+                (syl[0].vowel_start - (notes[0].t0 + (1.0 - lead_in) * dd)).abs() < 1e-9,
+                "lead_in {lead_in}"
+            );
+            assert!(
+                (syl[0].onset_start - (notes[0].t0 - lead_in * dd)).abs() < 1e-9,
+                "lead_in {lead_in}"
+            );
         }
     }
 
@@ -688,8 +901,16 @@ mod tests {
         b.phrase_start = true;
         let notes = [note(0.5, 1.0, &["aa"], true), b];
         let on = plan_segments(&notes, &p, &VoiceSettings::default());
-        assert!(on.iter().any(|(sp, g)| matches!(g, Segment::Breath { .. }) && (sp.t1 - (3.0 - BREATH_END)).abs() < 1e-9));
-        let off = plan_segments(&notes, &p, &VoiceSettings { breath_pauses: false, ..VoiceSettings::default() });
+        assert!(on.iter().any(|(sp, g)| matches!(g, Segment::Breath { .. })
+            && (sp.t1 - (3.0 - BREATH_END)).abs() < 1e-9));
+        let off = plan_segments(
+            &notes,
+            &p,
+            &VoiceSettings {
+                breath_pauses: false,
+                ..VoiceSettings::default()
+            },
+        );
         assert!(!off.iter().any(|(_, g)| matches!(g, Segment::Breath { .. })));
     }
 

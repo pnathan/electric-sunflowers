@@ -47,7 +47,12 @@ impl Bar<'_> {
         self.j += 1;
         let t = self.tl.to_time(beat) + JITTER * r.bipolar();
         let vel = vel * (0.9 + 0.2 * r.uniform());
-        self.out.push(DrumHit { t, kind, vel: vel as f32, pan: pan as f32 });
+        self.out.push(DrumHit {
+            t,
+            kind,
+            vel: vel as f32,
+            pan: pan as f32,
+        });
     }
 }
 
@@ -75,21 +80,40 @@ pub fn plan(kit: DrumKit, form: &Form, tl: &Timeline, seed: u64) -> Option<Vec<D
             continue;
         }
         let b0 = (bi as i32 * bpb) as f64;
-        let mut h = Bar { tl, seed, bar: bi as u64, j: 0, out: &mut hits };
+        let mut h = Bar {
+            tl,
+            seed,
+            bar: bi as u64,
+            j: 0,
+            out: &mut hits,
+        };
         if bi + 1 == nb {
             h.hit(DrumKind::Kick, b0, 0.7, 0.0);
-            let tail = if kit == DrumKit::Brushes { DrumKind::Swish { dur: LAST_SWISH } } else { DrumKind::Ride };
+            let tail = if kit == DrumKit::Brushes {
+                DrumKind::Swish { dur: LAST_SWISH }
+            } else {
+                DrumKind::Ride
+            };
             h.hit(tail, b0, 0.5, 0.35);
             continue;
         }
         let sec_end = bi + 1 == sec.start_bar + sec.n_bars;
-        let fill = sec_end && form.sections.get(bar.sec + 1).is_some_and(|nx| nx.intensity > sec.intensity);
+        let fill = sec_end
+            && form
+                .sections
+                .get(bar.sec + 1)
+                .is_some_and(|nx| nx.intensity > sec.intensity);
 
         if kit == DrumKit::Brushes {
             for b in 0..bpb {
                 let beat = b0 + b as f64;
                 let dur = (tl.beat_dur(beat) * 0.95) as f32;
-                h.hit(DrumKind::Swish { dur }, beat, 0.35 + 0.1 * level as f64, -0.1);
+                h.hit(
+                    DrumKind::Swish { dur },
+                    beat,
+                    0.35 + 0.1 * level as f64,
+                    -0.1,
+                );
             }
             let (taps, tap_vel, kicks): (&[f64], f64, &[(f64, f64)]) = match meter {
                 Meter::Four4 => (&[1.0, 3.0], 0.5, &[(0.0, 0.45), (2.0, 0.35)]),
@@ -118,7 +142,11 @@ pub fn plan(kit: DrumKit, form: &Form, tl: &Timeline, seed: u64) -> Option<Vec<D
             for &k in kicks {
                 h.hit(DrumKind::Kick, b0 + k, 0.75, 0.0);
             }
-            let sn = if kit == DrumKit::Soft { DrumKind::Rim } else { DrumKind::Snare };
+            let sn = if kit == DrumKit::Soft {
+                DrumKind::Rim
+            } else {
+                DrumKind::Snare
+            };
             let sn_vel = if meter == Meter::Three4 { 0.45 } else { 0.6 };
             for &k in snares {
                 if fill && k >= (bpb - 1) as f64 {
@@ -127,7 +155,11 @@ pub fn plan(kit: DrumKit, form: &Form, tl: &Timeline, seed: u64) -> Option<Vec<D
                 h.hit(sn, b0 + k, sn_vel, -0.12);
             }
             if level >= 2 {
-                let kind = if kit == DrumKit::Soft { DrumKind::Shaker } else { DrumKind::Hat };
+                let kind = if kit == DrumKit::Soft {
+                    DrumKind::Shaker
+                } else {
+                    DrumKind::Hat
+                };
                 for s in 0..(bpb * sub) {
                     let vel = if s % sub == 0 { 0.55 } else { 0.35 };
                     h.hit(kind, b0 + s as f64 / sub as f64, vel, 0.45);
@@ -144,8 +176,17 @@ pub fn plan(kit: DrumKit, form: &Form, tl: &Timeline, seed: u64) -> Option<Vec<D
             let fb = b0 + (bpb - 1) as f64;
             let steps = if sub == 3 { 3 } else { 4 };
             for k in 0..steps {
-                let kind = if kit == DrumKit::Brushes { DrumKind::Tap } else { DrumKind::Tom { hz: FILL_HZ[k % 4] } };
-                h.hit(kind, fb + k as f64 / steps as f64, 0.45 + k as f64 * 0.08, -0.3 + k as f64 * 0.2);
+                let kind = if kit == DrumKit::Brushes {
+                    DrumKind::Tap
+                } else {
+                    DrumKind::Tom { hz: FILL_HZ[k % 4] }
+                };
+                h.hit(
+                    kind,
+                    fb + k as f64 / steps as f64,
+                    0.45 + k as f64 * 0.08,
+                    -0.3 + k as f64 * 0.2,
+                );
             }
         }
         if bi == sec.start_bar && sec.intensity.level() >= 3 && kit != DrumKit::Brushes {

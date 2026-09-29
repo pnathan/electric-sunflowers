@@ -5,7 +5,10 @@
 use std::ops::Range;
 
 use song::chord::transpose_symbol;
-use song::{BarChords, Chord, ChordId, Meter, MeterGrid, Part, SectionBody, SectionKind, SectionRole, Song, Syllable};
+use song::{
+    BarChords, Chord, ChordId, Meter, MeterGrid, Part, SectionBody, SectionKind, SectionRole, Song,
+    Syllable,
+};
 
 /// A metric bar: its chord(s) plus the section and line it belongs to.
 #[derive(Clone, Debug)]
@@ -166,9 +169,13 @@ fn transposed_chords(song: &Song, transpose: i32) -> (Vec<Chord>, Vec<ChordId>) 
             c.clone()
         } else {
             // A transposed symbol still starts with a note name, so it parses.
-            Chord::parse(&transpose_symbol(&c.symbol, transpose, flats)).unwrap_or_else(|_| c.clone())
+            Chord::parse(&transpose_symbol(&c.symbol, transpose, flats))
+                .unwrap_or_else(|_| c.clone())
         };
-        let first = chords.iter().position(|x| x.symbol == t.symbol).map_or(id, |i| canon[i]);
+        let first = chords
+            .iter()
+            .position(|x| x.symbol == t.symbol)
+            .map_or(id, |i| canon[i]);
         chords.push(t);
         canon.push(first);
     }
@@ -206,7 +213,11 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
     let per_bar = if nl != 0 { ns / nl as f64 } else { 4.0 };
     let slots = grid.slots() as f64;
     let bar_dur = grid.beats as f64 * 60.0 / song.tempo_bpm;
-    let stretch = if slots / per_bar < 1.75 && bar_dur * 4.0 <= 8.4 { 2 } else { 1 };
+    let stretch = if slots / per_bar < 1.75 && bar_dur * 4.0 <= 8.4 {
+        2
+    } else {
+        1
+    };
 
     for s in &song.sections {
         let o = occ_of[s.kind as usize];
@@ -221,7 +232,11 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
                     for b in &ln.bars {
                         let (xs, n) = expand(map(b), stretch);
                         for x in &xs[..n] {
-                            bars.push(Bar { chords: *x, sec: sec_idx, line: Some(lines.len()) });
+                            bars.push(Bar {
+                                chords: *x,
+                                sec: sec_idx,
+                                line: Some(lines.len()),
+                            });
                         }
                     }
                     sec_lines.push(lines.len());
@@ -242,7 +257,11 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
                 for b in bs {
                     let (xs, n) = expand(map(b), stretch);
                     for x in &xs[..n] {
-                        bars.push(Bar { chords: *x, sec: sec_idx, line: None });
+                        bars.push(Bar {
+                            chords: *x,
+                            sec: sec_idx,
+                            line: None,
+                        });
                     }
                 }
             }
@@ -260,7 +279,9 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
     }
 
     // Lifts: every chorus, or with no sung chorus every verse after the first.
-    let has_chorus = sections.iter().any(|s| s.kind == SectionKind::Chorus && s.is_sung());
+    let has_chorus = sections
+        .iter()
+        .any(|s| s.kind == SectionKind::Chorus && s.is_sung());
     let lifted = |s: &Sec| {
         if has_chorus {
             s.kind == SectionKind::Chorus
@@ -309,7 +330,10 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
             } else {
                 2 + i32::from(i + 2 >= n_lift)
             };
-            s.lift = Some(Lift { index: u8::try_from(i).unwrap_or(u8::MAX), is_final });
+            s.lift = Some(Lift {
+                index: u8::try_from(i).unwrap_or(u8::MAX),
+                is_final,
+            });
         }
         s.intensity = match level {
             0 => Intensity::Quiet,
@@ -319,7 +343,15 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
         };
     }
 
-    Form { meter, bars, lines, sections, chords, transpose, stretch }
+    Form {
+        meter,
+        bars,
+        lines,
+        sections,
+        chords,
+        transpose,
+        stretch,
+    }
 }
 
 #[cfg(test)]
@@ -344,8 +376,20 @@ mod tests {
         }));
         let form = build_form(&song, 0);
         assert_eq!(form.sections.len(), 4);
-        assert_eq!(form.sections[2].lift, Some(Lift { index: 0, is_final: false }));
-        assert_eq!(form.sections[3].lift, Some(Lift { index: 1, is_final: true }));
+        assert_eq!(
+            form.sections[2].lift,
+            Some(Lift {
+                index: 0,
+                is_final: false
+            })
+        );
+        assert_eq!(
+            form.sections[3].lift,
+            Some(Lift {
+                index: 1,
+                is_final: true
+            })
+        );
         assert!(form.sections[3].is_repeat_lift());
         assert_eq!(form.sections[1].intensity, Intensity::Low);
         assert_eq!(form.sections[1].beats(&form.meter), 8.0..12.0);

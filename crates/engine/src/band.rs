@@ -117,7 +117,13 @@ fn drums(hits: &[DrumHit], seed: u64, len: usize) -> Option<Stem> {
         r.clear();
         r.resize(n, 0.0f32);
         let mut rng = Rng::event(seed, DRUM_HIT, k as u64);
-        render_hit(&DrumHit { t: 0.0, ..*hit }, &mut rng, &mut l, &mut r, &mut scratch);
+        render_hit(
+            &DrumHit { t: 0.0, ..*hit },
+            &mut rng,
+            &mut l,
+            &mut r,
+            &mut scratch,
+        );
         let at = sample_at(hit.t);
         stem[0].add_at(at, &l, 1.0);
         stem[1].add_at(at, &r, 1.0);

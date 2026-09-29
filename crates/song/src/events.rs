@@ -49,11 +49,15 @@ pub enum DrumKind {
     /// Brush tap on the snare head.
     Tap,
     /// Brush swirl lasting `dur` seconds.
-    Swish { dur: f32 },
+    Swish {
+        dur: f32,
+    },
     Hat,
     Shaker,
     /// Tom tuned to `hz`.
-    Tom { hz: f32 },
+    Tom {
+        hz: f32,
+    },
     Ride,
 }
 
@@ -141,7 +145,10 @@ impl SingStyle {
         glide: 0.028,
         scoop: true,
         breath_pauses: true,
-        phrasing: Phrasing { delivery: crate::model::Delivery::Flowing, endings: crate::model::Endings::Released },
+        phrasing: Phrasing {
+            delivery: crate::model::Delivery::Flowing,
+            endings: crate::model::Endings::Released,
+        },
     };
 }
 

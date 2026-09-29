@@ -157,12 +157,18 @@ impl Yin {
         }
         let voiced = pick.is_some();
         let t = pick.unwrap_or_else(|| {
-            (self.tau_min..hi).min_by(|&a, &b| self.dn[a].total_cmp(&self.dn[b])).unwrap_or(self.tau_min)
+            (self.tau_min..hi)
+                .min_by(|&a, &b| self.dn[a].total_cmp(&self.dn[b]))
+                .unwrap_or(self.tau_min)
         });
         // step 5: parabolic interpolation on the raw d(tau)
         let (y0, y1, y2) = (self.d[t - 1], self.d[t], self.d[t + 1]);
         let den = y0 - 2.0 * y1 + y2;
-        let off = if den.abs() > 1e-15 { (0.5 * (y0 - y2) / den).clamp(-1.0, 1.0) } else { 0.0 };
+        let off = if den.abs() > 1e-15 {
+            (0.5 * (y0 - y2) / den).clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
         Some((self.sr / (t as f64 + off), voiced))
     }
 }
@@ -173,7 +179,11 @@ fn median(v: &mut [f64]) -> Option<f64> {
     }
     v.sort_by(|a, b| a.total_cmp(b));
     let k = v.len() / 2;
-    Some(if v.len() % 2 == 1 { v[k] } else { 0.5 * (v[k - 1] + v[k]) })
+    Some(if v.len() % 2 == 1 {
+        v[k]
+    } else {
+        0.5 * (v[k - 1] + v[k])
+    })
 }
 
 /// Cents from the pitch of MIDI note `midi` (A4 = 440 Hz) to `f`.
@@ -230,14 +240,25 @@ pub fn check(x: &[f64], sample_rate: u32, notes: &[Note]) -> PitchReport {
         if let Some(c) = c {
             abs_c.push(c.abs());
         }
-        out.push(NoteResult { t0: nt.t0, t1: nt.t1, midi: nt.midi, f0, cents: c, octave_error: oct });
+        out.push(NoteResult {
+            t0: nt.t0,
+            t1: nt.t1,
+            midi: nt.midi,
+            f0,
+            cents: c,
+            octave_error: oct,
+        });
     }
     let analysed = out.len();
     PitchReport {
         notes_total: notes.len(),
         notes_analysed: analysed,
         within_50c: within,
-        fraction_within_50c: if analysed > 0 { within as f64 / analysed as f64 } else { 0.0 },
+        fraction_within_50c: if analysed > 0 {
+            within as f64 / analysed as f64
+        } else {
+            0.0
+        },
         octave_errors: octave,
         median_abs_cents: median(&mut abs_c),
         notes: out,
@@ -252,16 +273,33 @@ mod tests {
     fn sawtooth_220_within_2_cents() {
         let sr = 44100u32;
         let f = 220.0;
-        let x: Vec<f64> = (0..sr as usize).map(|i| {
-            let ph = (f * i as f64 / sr as f64).fract();
-            2.0 * ph - 1.0
-        }).collect();
+        let x: Vec<f64> = (0..sr as usize)
+            .map(|i| {
+                let ph = (f * i as f64 / sr as f64).fract();
+                2.0 * ph - 1.0
+            })
+            .collect();
         let mut yin = Yin::new(sr);
         let f0 = segment_f0(&mut yin, &x, 4410, 39690).unwrap();
         let c = cents(f0, 57.0);
         assert!(c.abs() < 2.0, "f0 {f0} Hz, {c} cents");
 
-        let r = check(&x, sr, &[Note { t0: 0.1, t1: 0.9, midi: 57.0 }, Note { t0: 0.1, t1: 0.2, midi: 57.0 }]);
+        let r = check(
+            &x,
+            sr,
+            &[
+                Note {
+                    t0: 0.1,
+                    t1: 0.9,
+                    midi: 57.0,
+                },
+                Note {
+                    t0: 0.1,
+                    t1: 0.2,
+                    midi: 57.0,
+                },
+            ],
+        );
         assert_eq!(r.notes_analysed, 1);
         assert_eq!(r.within_50c, 1);
         assert_eq!(r.octave_errors, 0);
@@ -270,8 +308,18 @@ mod tests {
     #[test]
     fn octave_error_flagged() {
         let sr = 44100u32;
-        let x: Vec<f64> = (0..sr as usize).map(|i| (2.0 * std::f64::consts::PI * 440.0 * i as f64 / sr as f64).sin()).collect();
-        let r = check(&x, sr, &[Note { t0: 0.1, t1: 0.9, midi: 57.0 }]);
+        let x: Vec<f64> = (0..sr as usize)
+            .map(|i| (2.0 * std::f64::consts::PI * 440.0 * i as f64 / sr as f64).sin())
+            .collect();
+        let r = check(
+            &x,
+            sr,
+            &[Note {
+                t0: 0.1,
+                t1: 0.9,
+                midi: 57.0,
+            }],
+        );
         assert_eq!(r.within_50c, 0);
         assert_eq!(r.octave_errors, 1);
     }

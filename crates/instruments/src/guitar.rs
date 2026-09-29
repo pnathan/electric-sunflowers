@@ -50,7 +50,12 @@ pub struct GuitarTuning {
 }
 
 /// Shipped guitar settings.
-pub const TUNING: GuitarTuning = GuitarTuning { damping: 0.18, attack: 1.0, glide: 5.0, sympathetic: 1.0 };
+pub const TUNING: GuitarTuning = GuitarTuning {
+    damping: 0.18,
+    attack: 1.0,
+    glide: 5.0,
+    sympathetic: 1.0,
+};
 
 /// Open strings, MIDI: E2 A2 D3 G3 B3 E4.
 pub const OPEN_STRINGS: [u8; 6] = [40, 45, 50, 55, 59, 64];
@@ -97,7 +102,10 @@ impl SympString {
         SympString {
             buf: vec![0.0; d as usize],
             q: 0,
-            lp: OnePole { a: 1.0 - SYMP_POLE, z: 0.0 },
+            lp: OnePole {
+                a: 1.0 - SYMP_POLE,
+                z: 0.0,
+            },
             ap: Thiran1::new(delta),
             g: (rho / mag).min(0.99995),
         }
@@ -135,7 +143,11 @@ impl Sympathetic {
     /// Loops for `OPEN_STRINGS`; `level` multiplies the 1.2% excitation
     /// (`TUNING.sympathetic` is 1).
     pub fn new(level: f64) -> Self {
-        Sympathetic { strings: OPEN_STRINGS.map(SympString::new), excite: SYMP_EXCITE * level, asleep: true }
+        Sympathetic {
+            strings: OPEN_STRINGS.map(SympString::new),
+            excite: SYMP_EXCITE * level,
+            asleep: true,
+        }
     }
 
     /// Adds the sympathetic strings' response to `buf` in place. Each
@@ -176,7 +188,12 @@ impl Sympathetic {
 
 /// Renders the six guitar strings into a new buffer of `len` samples with
 /// `params` (normally `PluckParams::GUITAR`). No sympathetic strings.
-pub fn render_strings(strings: &[Vec<StringNote>; 6], params: &PluckParams, seed: u64, len: usize) -> Vec<f32> {
+pub fn render_strings(
+    strings: &[Vec<StringNote>; 6],
+    params: &PluckParams,
+    seed: u64,
+    len: usize,
+) -> Vec<f32> {
     let mut out = vec![0.0f32; len];
     let mut scratch = PluckScratch::new();
     let mut order: Vec<usize> = Vec::new();
@@ -190,7 +207,10 @@ pub fn render_strings(strings: &[Vec<StringNote>; 6], params: &PluckParams, seed
             if let Some(&k2) = order.get(j + 1) {
                 end = end.min(notes[k2].t + RESTRIKE_S);
             }
-            let (Ok(start), Ok(n_len)) = (usize::try_from(sample_at(n.t)), usize::try_from(sample_at(end - n.t))) else {
+            let (Ok(start), Ok(n_len)) = (
+                usize::try_from(sample_at(n.t)),
+                usize::try_from(sample_at(end - n.t)),
+            ) else {
                 continue;
             };
             if !n.t.is_finite() || !end.is_finite() || n_len == 0 {
@@ -216,7 +236,13 @@ pub fn render_guitar(strings: &[Vec<StringNote>; 6], seed: u64, len: usize) -> V
 /// Renders free plucked notes (bass pluck layer, harp, harmony guitar) into
 /// a new buffer of `len` samples. Note k draws from
 /// `Rng::event(seed, tag, k)`; its length follows `params.length`.
-pub fn render_plucks(notes: &[PluckNote], params: &PluckParams, seed: u64, tag: Tag, len: usize) -> Vec<f32> {
+pub fn render_plucks(
+    notes: &[PluckNote],
+    params: &PluckParams,
+    seed: u64,
+    tag: Tag,
+    len: usize,
+) -> Vec<f32> {
     let mut out = vec![0.0f32; len];
     pluck_notes(&mut out, notes, params, seed, tag);
     out
@@ -227,7 +253,10 @@ fn pluck_notes(out: &mut [f32], notes: &[PluckNote], params: &PluckParams, seed:
     for (k, n) in notes.iter().enumerate() {
         let f0 = mtof(n.midi as f64);
         let secs = params.length_secs(f0, n.t0, n.t1);
-        let (Ok(start), Ok(n_len)) = (usize::try_from(sample_at(n.t0)), usize::try_from(sample_at(secs))) else {
+        let (Ok(start), Ok(n_len)) = (
+            usize::try_from(sample_at(n.t0)),
+            usize::try_from(sample_at(secs)),
+        ) else {
             continue;
         };
         let mut rng = Rng::event(seed, tag, k as u64);
@@ -251,7 +280,10 @@ pub fn render_bass(notes: &[PluckNote], seed: u64, len: usize) -> Vec<f32> {
     for n in notes {
         let f0 = mtof(n.midi as f64);
         let secs = params.length_secs(f0, n.t0, n.t1);
-        let (Ok(start), Ok(n_len)) = (usize::try_from(sample_at(n.t0)), usize::try_from(sample_at(secs))) else {
+        let (Ok(start), Ok(n_len)) = (
+            usize::try_from(sample_at(n.t0)),
+            usize::try_from(sample_at(secs)),
+        ) else {
             continue;
         };
         if start >= len || !f0.is_finite() || !n.vel.is_finite() {
@@ -283,8 +315,19 @@ fn sub_into(out: &mut [f32], f0: f64, level: f64) {
                 end = b;
             }
         }
-        let (mut e, de) = if n < n_atk { (n as f64 / atk, 1.0 / atk) } else { (1.0, 0.0) };
-        let (mut h, dh) = if n >= rel0 { ((len - n) as f64 / SUB_RELEASE as f64, -1.0 / SUB_RELEASE as f64) } else { (1.0, 0.0) };
+        let (mut e, de) = if n < n_atk {
+            (n as f64 / atk, 1.0 / atk)
+        } else {
+            (1.0, 0.0)
+        };
+        let (mut h, dh) = if n >= rel0 {
+            (
+                (len - n) as f64 / SUB_RELEASE as f64,
+                -1.0 / SUB_RELEASE as f64,
+            )
+        } else {
+            (1.0, 0.0)
+        };
         for o in out[n..end].iter_mut() {
             *o += (s1 * env * e * h) as f32;
             let s2 = c2 * s1 - s0;

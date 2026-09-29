@@ -92,7 +92,9 @@ pub fn write_song_with(
 ) -> Result<Written, WriteSongError> {
     let direction = styles::style_direction(req.style, rng);
     let register = prompt::pick_register(rng);
-    let text = prompt::song_prompt_with(req.mood, req.voice, &direction, register, req.year, &opts.duet);
+    let text = prompt::song_prompt_with(
+        req.mood, req.voice, &direction, register, req.year, &opts.duet,
+    );
 
     let mut creq = Request::new(text);
     if let Some(m) = &req.model {
@@ -105,7 +107,8 @@ pub fn write_song_with(
     let reply = claude.complete(&creq).map_err(WriteSongError::Claude)?;
     let wall_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
-    let json = extract_json_object(&reply.text).ok_or_else(|| WriteSongError::NoJsonFound(reply.text.clone()))?;
+    let json = extract_json_object(&reply.text)
+        .ok_or_else(|| WriteSongError::NoJsonFound(reply.text.clone()))?;
     let raw = serde_json::from_str(json).map_err(|e| WriteSongError::InvalidJson(e.to_string()))?;
     let generation = Generation {
         transport: claude.transport(),
@@ -150,7 +153,11 @@ pub struct Written {
 /// Measures `wall_ms` around `claude.complete` only; a failed call (a
 /// refusal, a cut-off reply, a status error) records no usage on purpose
 /// (`WriteSongError` carries only `ClaudeError`).
-pub fn write_song(claude: &dyn Claude, req: &WriteRequest, rng: &mut Rng) -> Result<Written, WriteSongError> {
+pub fn write_song(
+    claude: &dyn Claude,
+    req: &WriteRequest,
+    rng: &mut Rng,
+) -> Result<Written, WriteSongError> {
     write_song_with(claude, req, &WriteOptions::default(), rng)
 }
 

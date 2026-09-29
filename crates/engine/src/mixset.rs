@@ -59,9 +59,17 @@ impl MixSettings {
     pub fn default_for(_stems: &Stems) -> MixSettings {
         let tracks = std::array::from_fn(|i| {
             let id = TrackId::ALL[i];
-            TrackMix { gain_db: 0.0, pan: id.strip().pan, mute: false, solo: false }
+            TrackMix {
+                gain_db: 0.0,
+                pan: id.strip().pan,
+                mute: false,
+                solo: false,
+            }
         });
-        MixSettings { tracks, duck_db: crate::mix::DUCK_DB as f32 }
+        MixSettings {
+            tracks,
+            duck_db: crate::mix::DUCK_DB as f32,
+        }
     }
 
     /// Whether `id` sounds: not muted, and soloed when any track is soloed.
@@ -175,7 +183,10 @@ mod tests {
     use super::*;
 
     fn stub_stems() -> Stems {
-        Stems { len: 0, tracks: Default::default() }
+        Stems {
+            len: 0,
+            tracks: Default::default(),
+        }
     }
 
     #[test]
@@ -241,7 +252,10 @@ mod tests {
             "unknown_top": true,
         });
         let (out, warn) = MixSettings::from_json(&v, &d);
-        assert_eq!(out.tracks[TrackId::Violin.index()].gain_db, d.tracks[TrackId::Violin.index()].gain_db);
+        assert_eq!(
+            out.tracks[TrackId::Violin.index()].gain_db,
+            d.tracks[TrackId::Violin.index()].gain_db
+        );
         assert_eq!(out.tracks[TrackId::Violin.index()].pan, PAN_MAX);
         assert_eq!(out.duck_db, DUCK_DB_MAX);
         assert!(warn.iter().any(|w| w.contains("violin.gain_db")));

@@ -18,7 +18,12 @@ mod tests {
         let s = song_schema();
         assert_eq!(s["additionalProperties"], false);
         assert_eq!(s["properties"]["band"]["additionalProperties"], false);
-        assert_eq!(s["properties"]["sections"]["items"]["additionalProperties"], false);
-        assert!(s["required"].as_array().is_some_and(|r| r.iter().any(|v| v == "sections")));
+        assert_eq!(
+            s["properties"]["sections"]["items"]["additionalProperties"],
+            false
+        );
+        assert!(s["required"]
+            .as_array()
+            .is_some_and(|r| r.iter().any(|v| v == "sections")));
     }
 }

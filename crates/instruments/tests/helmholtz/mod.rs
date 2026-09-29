@@ -50,24 +50,44 @@ pub fn note_sweep() -> (usize, usize, Vec<(u32, f32)>) {
         }
     }
     let len = (1.6 * SR_F).round() as usize;
-    let (a, b) = ((0.45 * SR_F).round() as usize, (1.0 * SR_F).round() as usize);
+    let (a, b) = (
+        (0.45 * SR_F).round() as usize,
+        (1.0 * SR_F).round() as usize,
+    );
     let res: Vec<bool> = cases
         .par_iter()
         .map(|&(m, v, sd)| {
             let seed = m as u64 * 13 + sd * 101 + (v as f64 * 10.0).round() as u64;
-            let note = BowNote { t0: 0.1, t1: 1.2, midi: m as f32, vel: v, vibrato: true };
+            let note = BowNote {
+                t0: 0.1,
+                t1: 1.2,
+                midi: m as f32,
+                vel: v,
+                vibrato: true,
+            };
             let x = render_violin(&[note], len, seed);
             holds(&x[a..b], mtof(m as f64))
         })
         .collect();
     let ok = res.iter().filter(|&&s| s).count();
-    let bad = cases.iter().zip(&res).filter(|(_, &s)| !s).map(|(&(m, v, _), _)| (m, v)).collect();
+    let bad = cases
+        .iter()
+        .zip(&res)
+        .filter(|(_, &s)| !s)
+        .map(|(&(m, v, _), _)| (m, v))
+        .collect();
     (ok, cases.len(), bad)
 }
 
 /// Interval patterns (semitones from the first note) for the phrase sweep.
-const PHRASE_SHAPES: [[i32; 4]; 6] =
-    [[0, 2, 4, 5], [0, -3, 2, 7], [0, 5, 3, -2], [0, 7, 5, 0], [0, -1, -5, 2], [0, 4, 9, 7]];
+const PHRASE_SHAPES: [[i32; 4]; 6] = [
+    [0, 2, 4, 5],
+    [0, -3, 2, 7],
+    [0, 5, 3, -2],
+    [0, 7, 5, 0],
+    [0, -1, -5, 2],
+    [0, 4, 9, 7],
+];
 /// Note length and legato gap in the phrase sweep, seconds.
 const PHRASE_NOTE: f64 = 0.5;
 const PHRASE_GAP: f64 = 0.02;
@@ -80,7 +100,13 @@ pub fn phrase_notes(p: usize) -> [BowNote; 4] {
     let start = 57 + (p * 26 / 29) as i32;
     let shape = PHRASE_SHAPES[p % PHRASE_SHAPES.len()];
     let vel = [0.4f32, 0.6, 0.85][p % 3];
-    let mut notes = [BowNote { t0: 0.0, t1: 0.0, midi: 0.0, vel, vibrato: true }; 4];
+    let mut notes = [BowNote {
+        t0: 0.0,
+        t1: 0.0,
+        midi: 0.0,
+        vel,
+        vibrato: true,
+    }; 4];
     for (i, n) in notes.iter_mut().enumerate() {
         let t0 = 0.1 + i as f64 * PHRASE_NOTE;
         n.t0 = t0;

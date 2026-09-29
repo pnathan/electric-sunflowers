@@ -62,7 +62,11 @@ fn one_pole_coefficients() {
     assert_eq!(one_pole_coeff_tau(0.0, fs), 1.0);
     // The Hz form is the tau form with tau = 1 / (2 pi fc).
     let fc = 100.0;
-    assert!(close(one_pole_coeff_hz(fc, fs), one_pole_coeff_tau(1.0 / (std::f64::consts::TAU * fc), fs), 1e-15));
+    assert!(close(
+        one_pole_coeff_hz(fc, fs),
+        one_pole_coeff_tau(1.0 / (std::f64::consts::TAU * fc), fs),
+        1e-15
+    ));
 }
 
 #[test]
@@ -95,7 +99,9 @@ fn ftz_flushes_subnormals() {
 #[test]
 fn pool_workers_flush_subnormals() {
     sfcore::fp::init_pool(Some(2));
-    let r: Vec<f64> = (0..8).map(|_| rayon::join(|| black_box(1e-310_f64) * black_box(1.0), || 0.0).0).collect();
+    let r: Vec<f64> = (0..8)
+        .map(|_| rayon::join(|| black_box(1e-310_f64) * black_box(1.0), || 0.0).0)
+        .collect();
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
         // rayon::join from outside the pool runs on a worker.
@@ -208,29 +214,48 @@ fn streams_uncorrelated() {
     let c = seq(Rng::stream(1235, T_A), N);
     let e0 = seq(Rng::event(1234, T_A, 0), N);
     let e1 = seq(Rng::event(1234, T_A, 1), N);
-    let pairs = [("tag", &a, &b), ("seed", &a, &c), ("index", &e0, &e1), ("stream/event", &a, &e0)];
+    let pairs = [
+        ("tag", &a, &b),
+        ("seed", &a, &c),
+        ("index", &e0, &e1),
+        ("stream/event", &a, &e0),
+    ];
     for (name, x, y) in pairs {
         let r = corr(x, y);
         assert!(r.abs() < 0.01, "{name}: r = {r}");
     }
     // Neighbouring event streams also differ at the first draw across many indices.
-    let firsts: Vec<f64> = (0..10_000).map(|i| Rng::event(1234, T_A, i).uniform()).collect();
+    let firsts: Vec<f64> = (0..10_000)
+        .map(|i| Rng::event(1234, T_A, i).uniform())
+        .collect();
     let (m, v) = mean_var(firsts.iter().copied());
-    assert!(close(m, 0.5, 0.01) && close(v, 1.0 / 12.0, 0.004), "{m} {v}");
+    assert!(
+        close(m, 0.5, 0.01) && close(v, 1.0 / 12.0, 0.004),
+        "{m} {v}"
+    );
     let lag1 = corr(&firsts[..9_999], &firsts[1..]);
     assert!(lag1.abs() < 0.03, "lag1 {lag1}");
 }
 
 #[test]
 fn streams_deterministic() {
-    assert_eq!(seq(Rng::stream(5, T_A), 1000), seq(Rng::stream(5, T_A), 1000));
-    assert_eq!(seq(Rng::event(5, T_A, 3), 1000), seq(Rng::event(5, T_A, 3), 1000));
+    assert_eq!(
+        seq(Rng::stream(5, T_A), 1000),
+        seq(Rng::stream(5, T_A), 1000)
+    );
+    assert_eq!(
+        seq(Rng::event(5, T_A, 3), 1000),
+        seq(Rng::event(5, T_A, 3), 1000)
+    );
     let mut g1 = Rng::event(5, T_B, 3);
     let mut g2 = Rng::event(5, T_B, 3);
     for _ in 0..1000 {
         assert_eq!(g1.gauss().to_bits(), g2.gauss().to_bits());
     }
-    assert_ne!(seq(Rng::event(5, T_A, 3), 10), seq(Rng::event(5, T_A, 4), 10));
+    assert_ne!(
+        seq(Rng::event(5, T_A, 3), 10),
+        seq(Rng::event(5, T_A, 4), 10)
+    );
 }
 
 // ---- time

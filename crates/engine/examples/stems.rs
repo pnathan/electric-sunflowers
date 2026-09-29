@@ -56,7 +56,11 @@ fn run() -> Result<(), String> {
                 seed = v.parse().map_err(|_| format!("bad seed {v}"))?;
             }
             "--out" => out = Some(PathBuf::from(args.next().ok_or("--out needs a value")?)),
-            _ => return Err(format!("unknown argument {a}; usage: stems --seed S --out DIR")),
+            _ => {
+                return Err(format!(
+                    "unknown argument {a}; usage: stems --seed S --out DIR"
+                ))
+            }
         }
     }
     let out = out.ok_or("--out DIR is required")?;
@@ -69,11 +73,18 @@ fn run() -> Result<(), String> {
     let (prepared, stems) = render(song, seed, None, &NoProgress);
     let render_s = t.elapsed().as_secs_f64();
 
-    let notes: Vec<serde_json::Value> =
-        prepared.comp.lead.iter().map(|n| serde_json::json!({ "t0": n.t0, "t1": n.t1, "midi": n.midi })).collect();
+    let notes: Vec<serde_json::Value> = prepared
+        .comp
+        .lead
+        .iter()
+        .map(|n| serde_json::json!({ "t0": n.t0, "t1": n.t1, "midi": n.midi }))
+        .collect();
     let p = out.join("notes.json");
-    std::fs::write(&p, serde_json::to_string_pretty(&notes).map_err(|e| e.to_string())? + "\n")
-        .map_err(|e| format!("{}: {e}", p.display()))?;
+    std::fs::write(
+        &p,
+        serde_json::to_string_pretty(&notes).map_err(|e| e.to_string())? + "\n",
+    )
+    .map_err(|e| format!("{}: {e}", p.display()))?;
 
     let t = Instant::now();
     let mut written = Vec::new();
@@ -87,7 +98,14 @@ fn run() -> Result<(), String> {
             .map(|c| c.to_dense().into_iter().map(|v| v * ps.level).collect())
             .collect();
         let refs: Vec<&[f32]> = chs.iter().map(|c| c.as_slice()).collect();
-        debug_assert_eq!(refs.len(), if matches!(ps.audio, Stem::Mono(_)) { 1 } else { 2 });
+        debug_assert_eq!(
+            refs.len(),
+            if matches!(ps.audio, Stem::Mono(_)) {
+                1
+            } else {
+                2
+            }
+        );
         let p = out.join(format!("{}.wav", id.name()));
         write_f32_wav(&p, &refs, sr).map_err(|e| format!("{}: {e}", p.display()))?;
         written.push(id.name());
@@ -114,8 +132,11 @@ fn run() -> Result<(), String> {
         "slapback_blocks": stems.get(TrackId::Lead).and_then(|p| p.slap.as_ref()).map(|s| s.present_blocks()),
     });
     let p = out.join("render.json");
-    std::fs::write(&p, serde_json::to_string_pretty(&info).map_err(|e| e.to_string())? + "\n")
-        .map_err(|e| format!("{}: {e}", p.display()))?;
+    std::fs::write(
+        &p,
+        serde_json::to_string_pretty(&info).map_err(|e| e.to_string())? + "\n",
+    )
+    .map_err(|e| format!("{}: {e}", p.display()))?;
     eprintln!(
         "stems: seed {seed}: render {render_s:.2} s, mix {mix_s:.2} s, {} stems + mix in {}",
         written.len(),

@@ -64,7 +64,11 @@ pub fn counter_line(
         let mut r = Rng::event(seed, tag, si as u64);
         let next = segs.get(si + 1);
         let (st0, st1) = (tl.to_time(sg.b0), tl.to_time(sg.b1));
-        let n = if long { 1 } else { (((st1 - st0) / 1.7).round() as i32).max(1) };
+        let n = if long {
+            1
+        } else {
+            (((st1 - st0) / 1.7).round() as i32).max(1)
+        };
         let span = sec.beats(&form.meter);
         let (sec_t0, sec_t1) = (tl.to_time(span.start), tl.to_time(span.end));
         let chord = form.chord(sg.chord);
@@ -78,7 +82,8 @@ pub fn counter_line(
                 _ => chord.tones,
             };
             let x = (((t0 + t1) / 2.0 - sec_t0) / (sec_t1 - sec_t0).max(1.0)).clamp(0.0, 1.0);
-            let target = lo as f64 + (hi - lo) as f64 * (0.3 + 0.4 * (std::f64::consts::PI * x).sin());
+            let target =
+                lo as f64 + (hi - lo) as f64 * (0.3 + 0.4 * (std::f64::consts::PI * x).sin());
             let before_last = notes.len().checked_sub(2).map(|i| notes[i].midi);
 
             let mut best: Option<i32> = None;
@@ -128,7 +133,12 @@ pub fn counter_line(
                 prev_dir = dir;
             }
             prev = best;
-            notes.push(LineNote { t0, t1, midi: best, vel });
+            notes.push(LineNote {
+                t0,
+                t1,
+                midi: best,
+                vel,
+            });
         }
     }
     notes
@@ -137,7 +147,16 @@ pub fn counter_line(
 /// Fills in `[lo, hi]` after the lyric lines of the sections that pass
 /// `filter`. Line k draws from `Rng::event(seed, tag, k)`.
 #[allow(clippy::too_many_arguments)]
-pub fn fills(form: &Form, tl: &Timeline, lo: i32, hi: i32, filter: impl Fn(&Sec) -> bool, song: &Song, seed: u64, tag: Tag) -> Vec<LineNote> {
+pub fn fills(
+    form: &Form,
+    tl: &Timeline,
+    lo: i32,
+    hi: i32,
+    filter: impl Fn(&Sec) -> bool,
+    song: &Song,
+    seed: u64,
+    tag: Tag,
+) -> Vec<LineNote> {
     let mut notes: Vec<LineNote> = Vec::new();
     let tonic = song.key.transpose(form.transpose);
     let bpb = form.bpb();
@@ -150,7 +169,9 @@ pub fn fills(form: &Form, tl: &Timeline, lo: i32, hi: i32, filter: impl Fn(&Sec)
         }
         // An uncomposed or empty line gets no fill.
         let Some(rh) = line.rh.as_ref() else { continue };
-        let Some(&last_onset) = rh.onsets.get(line.syls.len().wrapping_sub(1)) else { continue };
+        let Some(&last_onset) = rh.onsets.get(line.syls.len().wrapping_sub(1)) else {
+            continue;
+        };
         let last_on = (line.start_bar as i32 * bpb) as f64 + last_onset;
         let line_end = ((line.start_bar + line.n_bars) as i32 * bpb) as f64;
         let w0 = last_on + 1.0;
@@ -175,7 +196,10 @@ pub fn fills(form: &Form, tl: &Timeline, lo: i32, hi: i32, filter: impl Fn(&Sec)
         if run.is_empty() {
             continue;
         }
-        let target = run.iter().position(|&m| ch_end.tones.contains(Pc::new(m)) && m >= lo + 4).unwrap_or(2) as i32;
+        let target = run
+            .iter()
+            .position(|&m| ch_end.tones.contains(Pc::new(m)) && m >= lo + 4)
+            .unwrap_or(2) as i32;
         let bump = i32::from(r.uniform() < 0.4);
         let last_idx = run.len() as i32 - 1;
         let start_idx = (target + cnt - 1 + bump).clamp(0, last_idx);
@@ -183,7 +207,11 @@ pub fn fills(form: &Form, tl: &Timeline, lo: i32, hi: i32, filter: impl Fn(&Sec)
         for j in 0..cnt {
             let b = w0 + j as f64 / sub;
             let idx = (start_idx - j).clamp(0, last_idx) as usize;
-            let d = if j == cnt - 1 { (w1 - b).max(0.5) } else { 1.0 / sub };
+            let d = if j == cnt - 1 {
+                (w1 - b).max(0.5)
+            } else {
+                1.0 / sub
+            };
             notes.push(LineNote {
                 t0: tl.to_time(b) + 0.005 * r.bipolar(),
                 t1: tl.to_time(b + d),

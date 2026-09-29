@@ -67,7 +67,12 @@ pub fn plan(form: &Form, tl: &Timeline, seed: u64) -> Vec<PluckNote> {
         prev = root;
         let next = segs.get(si + 1);
         if next.is_none() || intensity <= 1 || sec.kind == SectionKind::Bridge {
-            notes.push(Note { beat: sg.b0, dur: sg.b1 - sg.b0 - 0.1, midi: root, vel: 0.85 });
+            notes.push(Note {
+                beat: sg.b0,
+                dur: sg.b1 - sg.b0 - 0.1,
+                midi: root,
+                vel: 0.85,
+            });
             continue;
         }
         let step = match bpb {
@@ -89,8 +94,14 @@ pub fn plan(form: &Form, tl: &Timeline, seed: u64) -> Vec<PluckNote> {
             }
             if !first && rem <= 2.0 && intensity >= 2 && bpb == 4 {
                 // Fifth, then an approach note into the next chord's bass.
-                notes.push(Note { beat: b, dur: 0.9, midi: m, vel: 0.75 });
-                let target = next.map_or(root, |nx| nearest(form.chord(nx.chord).bass, root as f64));
+                notes.push(Note {
+                    beat: b,
+                    dur: 0.9,
+                    midi: m,
+                    vel: 0.75,
+                });
+                let target =
+                    next.map_or(root, |nx| nearest(form.chord(nx.chord).bass, root as f64));
                 let mut r = Rng::event(seed, BASS_APPROACH, si as u64);
                 let ap = target
                     + if r.uniform() < 0.5 {
@@ -100,9 +111,19 @@ pub fn plan(form: &Form, tl: &Timeline, seed: u64) -> Vec<PluckNote> {
                     } else {
                         2
                     };
-                notes.push(Note { beat: b + 1.0, dur: 0.9, midi: ap, vel: 0.7 });
+                notes.push(Note {
+                    beat: b + 1.0,
+                    dur: 0.9,
+                    midi: ap,
+                    vel: 0.7,
+                });
             } else {
-                notes.push(Note { beat: b, dur: rem.min(held) - 0.08, midi: m, vel: if first { 0.9 } else { 0.75 } });
+                notes.push(Note {
+                    beat: b,
+                    dur: rem.min(held) - 0.08,
+                    midi: m,
+                    vel: if first { 0.9 } else { 0.75 },
+                });
             }
             b += step;
         }

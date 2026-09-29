@@ -8,7 +8,8 @@ use compose::prepare::{prepare, Prepared};
 use song::{Chord, DrumKit, Pc, SectionKind, Song};
 
 fn demo() -> Song {
-    let v: serde_json::Value = serde_json::from_str(include_str!("../../engine/src/demo.json")).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(include_str!("../../engine/src/demo.json")).unwrap();
     song::normalize_value(&v).unwrap().0
 }
 
@@ -53,26 +54,51 @@ fn plans_are_deterministic_per_seed() {
 
 fn check_shape(ch: &Chord) {
     let v = voicing(ch);
-    let fretted: Vec<u8> = v.frets.iter().flatten().copied().filter(|&f| f > 0).collect();
-    assert!(fretted.len() <= 4, "{}: {} fretted", ch.symbol, fretted.len());
+    let fretted: Vec<u8> = v
+        .frets
+        .iter()
+        .flatten()
+        .copied()
+        .filter(|&f| f > 0)
+        .collect();
+    assert!(
+        fretted.len() <= 4,
+        "{}: {} fretted",
+        ch.symbol,
+        fretted.len()
+    );
     if let (Some(lo), Some(hi)) = (fretted.iter().min(), fretted.iter().max()) {
         assert!(hi - lo <= 3, "{}: span {}", ch.symbol, hi - lo);
     }
     let bass = v.bass_string().expect("a voicing sounds");
     assert!(bass <= 2, "{}: bass on string {bass}", ch.symbol);
-    assert_eq!(Pc::new(v.notes[bass].unwrap() as i32), ch.bass, "{}: bass note", ch.symbol);
+    assert_eq!(
+        Pc::new(v.notes[bass].unwrap() as i32),
+        ch.bass,
+        "{}: bass note",
+        ch.symbol
+    );
     for (s, &open) in OPEN_STRINGS.iter().enumerate() {
         assert_eq!(v.notes[s], v.frets[s].map(|f| open + f));
         if let Some(n) = v.notes[s] {
-            assert!(ch.tones.with(ch.bass).contains(Pc::new(n as i32)), "{}: non-chord tone", ch.symbol);
+            assert!(
+                ch.tones.with(ch.bass).contains(Pc::new(n as i32)),
+                "{}: non-chord tone",
+                ch.symbol
+            );
         }
     }
 }
 
 #[test]
 fn guitar_voicings_are_playable() {
-    let qualities = ["", "m", "7", "m7", "maj7", "sus2", "sus4", "7sus4", "dim", "aug", "6", "m6", "add9", "9", "m7b5", "dim7"];
-    for root in ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"] {
+    let qualities = [
+        "", "m", "7", "m7", "maj7", "sus2", "sus4", "7sus4", "dim", "aug", "6", "m6", "add9", "9",
+        "m7b5", "dim7",
+    ];
+    for root in [
+        "C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B",
+    ] {
         for q in qualities {
             let ch = Chord::parse(&format!("{root}{q}")).unwrap();
             check_shape(&ch);
@@ -94,7 +120,11 @@ fn guitar_notes_sit_on_their_strings() {
             }
             for n in notes {
                 assert_eq!(n.string as usize, s);
-                assert!(n.midi >= OPEN_STRINGS[s] && n.midi <= OPEN_STRINGS[s] + 12, "string {s}: midi {}", n.midi);
+                assert!(
+                    n.midi >= OPEN_STRINGS[s] && n.midi <= OPEN_STRINGS[s] + 12,
+                    "string {s}: midi {}",
+                    n.midi
+                );
                 assert!(n.stop > n.t);
             }
         }
@@ -124,13 +154,25 @@ fn harp_glissando_before_bridges() {
     for song in [demo(), strum_song()] {
         let (p, a) = plan(&song, 5);
         let mut bridges = 0;
-        for sec in p.form.sections.iter().filter(|s| s.kind == SectionKind::Bridge) {
+        for sec in p
+            .form
+            .sections
+            .iter()
+            .filter(|s| s.kind == SectionKind::Bridge)
+        {
             bridges += 1;
             let t = p.timeline.to_time(sec.beats(&p.form.meter).start);
-            let run: Vec<_> = a.harp.iter().filter(|n| n.t0 >= t - 0.66 && n.t0 < t - 0.02).collect();
+            let run: Vec<_> = a
+                .harp
+                .iter()
+                .filter(|n| n.t0 >= t - 0.66 && n.t0 < t - 0.02)
+                .collect();
             assert!(run.len() >= 7, "{} notes before the bridge", run.len());
             for w in run.windows(2) {
-                assert!(w[1].midi > w[0].midi && w[1].t0 > w[0].t0, "glissando rises");
+                assert!(
+                    w[1].midi > w[0].midi && w[1].t0 > w[0].t0,
+                    "glissando rises"
+                );
             }
         }
         assert!(bridges > 0);
@@ -150,10 +192,21 @@ fn bass_plays_roots_at_chord_changes() {
                 checked += 1;
             }
         }
-        assert!(checked > 10, "only {checked} chord changes with a bass note");
-        let first_chorus = p.form.sections.iter().find(|s| s.kind == SectionKind::Chorus).unwrap();
+        assert!(
+            checked > 10,
+            "only {checked} chord changes with a bass note"
+        );
+        let first_chorus = p
+            .form
+            .sections
+            .iter()
+            .find(|s| s.kind == SectionKind::Chorus)
+            .unwrap();
         let t = p.timeline.to_time(first_chorus.beats(&p.form.meter).start);
-        assert!(a.bass.iter().any(|n| (n.t0 - t).abs() < 0.005), "bass on the chorus downbeat");
+        assert!(
+            a.bass.iter().any(|n| (n.t0 - t).abs() < 0.005),
+            "bass on the chorus downbeat"
+        );
     }
 }
 
@@ -161,12 +214,23 @@ fn bass_plays_roots_at_chord_changes() {
 fn plans_are_finite() {
     for song in [demo(), strum_song()] {
         let (_, a) = plan(&song, 99);
-        let ok = |t: f64, m: f32, v: f32| t.is_finite() && t >= 0.0 && m.is_finite() && v.is_finite() && v > 0.0 && v <= 1.5;
+        let ok = |t: f64, m: f32, v: f32| {
+            t.is_finite() && t >= 0.0 && m.is_finite() && v.is_finite() && v > 0.0 && v <= 1.5
+        };
         for n in a.guitar.iter().flatten() {
             assert!(ok(n.t, n.midi as f32, n.vel) && n.stop.is_finite());
         }
-        for n in a.bass.iter().chain(&a.harp).chain(&a.harmony_guitar.lead).chain(&a.harmony_guitar.arp) {
-            assert!(ok(n.t0, n.midi, n.vel) && n.t1.is_finite() && n.t1 >= n.t0, "{n:?}");
+        for n in a
+            .bass
+            .iter()
+            .chain(&a.harp)
+            .chain(&a.harmony_guitar.lead)
+            .chain(&a.harmony_guitar.arp)
+        {
+            assert!(
+                ok(n.t0, n.midi, n.vel) && n.t1.is_finite() && n.t1 >= n.t0,
+                "{n:?}"
+            );
         }
         for n in &a.violin {
             assert!(ok(n.t0, n.midi, n.vel) && n.t1 > n.t0, "{n:?}");
@@ -175,7 +239,10 @@ fn plans_are_finite() {
             assert!(ok(h.t, 0.0, h.vel) && h.pan.abs() <= 1.0, "{h:?}");
         }
         let v = &a.vocals;
-        let singers = std::iter::once(&v.lead).chain([&v.harmony]).chain(&v.doubles).chain(v.choir.iter().flatten());
+        let singers = std::iter::once(&v.lead)
+            .chain([&v.harmony])
+            .chain(&v.doubles)
+            .chain(v.choir.iter().flatten());
         for s in singers {
             assert!(s.pan.abs() <= 1.0 && s.offset.is_finite());
             for n in &s.notes {
@@ -183,7 +250,10 @@ fn plans_are_finite() {
             }
         }
         assert!(!v.lead.notes.is_empty());
-        assert_eq!(v.choir.iter().map(Vec::len).sum::<usize>(), 4 * arrange::vocals::CHOIR_SINGERS);
+        assert_eq!(
+            v.choir.iter().map(Vec::len).sum::<usize>(),
+            4 * arrange::vocals::CHOIR_SINGERS
+        );
     }
 }
 

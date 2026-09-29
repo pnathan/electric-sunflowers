@@ -102,7 +102,11 @@ impl LfParams {
     pub fn from_rd(rd: f64) -> LfParams {
         let lo = RD_INDEX_MIN as f64 / RD_STEPS;
         let hi = RD_INDEX_MAX as f64 / RD_STEPS;
-        let rd = if rd.is_finite() { rd.clamp(lo, hi) } else { 1.0 };
+        let rd = if rd.is_finite() {
+            rd.clamp(lo, hi)
+        } else {
+            1.0
+        };
         let ra = (-1.0 + 4.8 * rd) / 100.0;
         let rk = (22.4 + 11.8 * rd) / 100.0;
         let rg = rk / (4.0 * (0.11 * rd / (0.5 + 1.2 * rk) - ra));
@@ -113,7 +117,18 @@ impl LfParams {
         for _ in 0..40 {
             eps = (1.0 - (-eps * (1.0 - te)).exp()) / ta;
         }
-        let mut p = LfParams { rd, ra, rk, rg, tp, te, ta, eps, alpha: 0.0, e0: 0.0 };
+        let mut p = LfParams {
+            rd,
+            ra,
+            rk,
+            rg,
+            tp,
+            te,
+            ta,
+            eps,
+            alpha: 0.0,
+            e0: 0.0,
+        };
         // Bisection on alpha for zero net flow. area() rises through zero
         // on [-10, 80] for every Rd in range; keep the bracket's sign rule
         // so a missing root degrades to the nearer end, not NaN.
@@ -151,7 +166,8 @@ impl LfParams {
         if t <= self.te {
             self.e0 * (self.alpha * t).exp() * (wg * t).sin()
         } else {
-            -((-self.eps * (t - self.te)).exp() - (-self.eps * (1.0 - self.te)).exp()) / (self.eps * self.ta)
+            -((-self.eps * (t - self.te)).exp() - (-self.eps * (1.0 - self.te)).exp())
+                / (self.eps * self.ta)
         }
     }
 
@@ -160,7 +176,8 @@ impl LfParams {
     /// w cos wt) / (a^2 + w^2); return phase integrated term by term.
     pub fn net_flow(&self) -> f64 {
         let (a, w, te) = (self.alpha, std::f64::consts::PI / self.tp, self.te);
-        let open = self.e0 * ((a * te).exp() * (a * (w * te).sin() - w * (w * te).cos()) + w) / (a * a + w * w);
+        let open = self.e0 * ((a * te).exp() * (a * (w * te).sin() - w * (w * te).cos()) + w)
+            / (a * a + w * w);
         let tr = 1.0 - te;
         let tail = (-self.eps * tr).exp();
         let ret = -((1.0 - tail) / self.eps - tr * tail) / (self.eps * self.ta);
@@ -205,7 +222,9 @@ impl LfTable {
         for (i, v) in full.iter_mut().enumerate() {
             *v = p.eval(i as f64 / TABLE_LEN as f64);
         }
-        let rms = (full.iter().map(|x| x * x).sum::<f64>() / TABLE_LEN as f64).sqrt().max(1e-12);
+        let rms = (full.iter().map(|x| x * x).sum::<f64>() / TABLE_LEN as f64)
+            .sqrt()
+            .max(1e-12);
 
         // Flow: running sum of the full-band derivative, peak 1, floor 0.
         let mut g = vec![0.0f32; ROW];
@@ -245,7 +264,10 @@ impl LfTable {
             let _ = fft.inverse(&mut bins, &mut row[..TABLE_LEN], &mut scratch);
             row[TABLE_LEN] = row[0];
         }
-        LfTable { d: d.into_boxed_slice(), g: g.into_boxed_slice() }
+        LfTable {
+            d: d.into_boxed_slice(),
+            g: g.into_boxed_slice(),
+        }
     }
 }
 
@@ -253,7 +275,11 @@ static LF: [OnceLock<LfTable>; N_RD] = [const { OnceLock::new() }; N_RD];
 
 /// Table index of `rd`: round(Rd * 40), clamped to the table range.
 pub fn rd_index(rd: f64) -> usize {
-    let k = if rd.is_finite() { (rd * RD_STEPS).round() } else { 40.0 };
+    let k = if rd.is_finite() {
+        (rd * RD_STEPS).round()
+    } else {
+        40.0
+    };
     (k.max(RD_INDEX_MIN as f64) as usize).min(RD_INDEX_MAX)
 }
 
@@ -286,7 +312,9 @@ impl SourceTable {
                 *e = [dl[i], dt[i], lax.g[i], tense.g[i]];
             }
         }
-        SourceTable { data: data.into_boxed_slice() }
+        SourceTable {
+            data: data.into_boxed_slice(),
+        }
     }
 }
 
@@ -375,13 +403,21 @@ impl GlottalSource {
     /// (blend clamps to 1).
     #[cold]
     #[inline(never)]
-    fn select_level(edges: &[f64; N_LEVELS], inv_width: &[f64; N_LEVELS], f0: f64) -> (usize, (f64, f64), (f64, f64)) {
+    fn select_level(
+        edges: &[f64; N_LEVELS],
+        inv_width: &[f64; N_LEVELS],
+        f0: f64,
+    ) -> (usize, (f64, f64), (f64, f64)) {
         let mut k = 0;
         while k < N_LEVELS - 2 && f0 >= edges[k + 1] {
             k += 1;
         }
         let lo = if k == 0 { f64::NEG_INFINITY } else { edges[k] };
-        let hi = if k == N_LEVELS - 2 { f64::INFINITY } else { edges[k + 1] };
+        let hi = if k == N_LEVELS - 2 {
+            f64::INFINITY
+        } else {
+            edges[k + 1]
+        };
         (k, (edges[k], inv_width[k]), (lo, hi))
     }
 
@@ -391,9 +427,20 @@ impl GlottalSource {
     /// line: it runs once per period.
     #[cold]
     #[inline(never)]
-    fn new_period(phase: f64, jit: f64, shim: f64, jitter: f64, shimmer: f64, rng: &mut Rng) -> (f64, f64, f64) {
+    fn new_period(
+        phase: f64,
+        jit: f64,
+        shim: f64,
+        jitter: f64,
+        shimmer: f64,
+        rng: &mut Rng,
+    ) -> (f64, f64, f64) {
         if phase < 0.0 || !phase.is_finite() {
-            let p = if phase.is_finite() { phase.rem_euclid(1.0) } else { 0.0 };
+            let p = if phase.is_finite() {
+                phase.rem_euclid(1.0)
+            } else {
+                0.0
+            };
             return (p, jit, shim);
         }
         let p = phase - 1.0;
@@ -406,7 +453,8 @@ impl GlottalSource {
     fn step(&self, st: &mut SourceState, f0: f64, av: f64, rng: &mut Rng) -> (f64, f64) {
         st.phase += f0 * (1.0 / SR_F) * (1.0 + st.jit);
         if !(0.0..1.0).contains(&st.phase) {
-            (st.phase, st.jit, st.shim) = Self::new_period(st.phase, st.jit, st.shim, self.jitter, self.shimmer, rng);
+            (st.phase, st.jit, st.shim) =
+                Self::new_period(st.phase, st.jit, st.shim, self.jitter, self.shimmer, rng);
         }
 
         // Mip blend position: linear in f0 across the current level's
@@ -455,7 +503,14 @@ impl GlottalSource {
     /// f0.0 + j f0.1 and av.0 + j av.1. Calls `f(j, pulse, flow)` for each.
     /// The state stays in locals for the block.
     #[inline(always)]
-    pub fn run(&mut self, n: usize, f0: (f64, f64), av: (f64, f64), rng: &mut Rng, mut f: impl FnMut(usize, f64, f64)) {
+    pub fn run(
+        &mut self,
+        n: usize,
+        f0: (f64, f64),
+        av: (f64, f64),
+        rng: &mut Rng,
+        mut f: impl FnMut(usize, f64, f64),
+    ) {
         let mut st = self.st;
         let (mut fq, mut a) = (f0.0, av.0);
         for j in 0..n {

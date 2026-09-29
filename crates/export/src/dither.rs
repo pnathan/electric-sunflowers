@@ -48,7 +48,11 @@ impl Tpdf {
         for _ in 0..2 * skip {
             rng.next_u32();
         }
-        Tpdf { rng, block, left: DITHER_BLOCK * CHANNELS - skip }
+        Tpdf {
+            rng,
+            block,
+            left: DITHER_BLOCK * CHANNELS - skip,
+        }
     }
 
     /// Next dither value in LSB: triangular on (-1, 1), mean 0, variance 1/6.
@@ -99,7 +103,13 @@ pub fn quantize(x: f32, bits: BitDepth, dither: &mut Tpdf) -> i32 {
 /// Quantises the stereo frames `l[i], r[i]` into `out` as interleaved
 /// L, R pairs. `dither` must be positioned at the first frame
 /// (`Tpdf::at`). `out.len()` must be at least `2 * l.len()`.
-pub fn quantize_interleaved(l: &[f32], r: &[f32], bits: BitDepth, dither: &mut Tpdf, out: &mut [i32]) {
+pub fn quantize_interleaved(
+    l: &[f32],
+    r: &[f32],
+    bits: BitDepth,
+    dither: &mut Tpdf,
+    out: &mut [i32],
+) {
     debug_assert_eq!(l.len(), r.len());
     for ((&a, &b), o) in l.iter().zip(r).zip(out.as_chunks_mut::<2>().0) {
         o[0] = quantize(a, bits, dither);
@@ -118,7 +128,15 @@ mod tests {
         for _ in 0..3 * DITHER_BLOCK * CHANNELS {
             all.push(serial.next());
         }
-        for &start in &[0usize, 1, 100, DITHER_BLOCK - 1, DITHER_BLOCK, DITHER_BLOCK + 7, 2 * DITHER_BLOCK + 3] {
+        for &start in &[
+            0usize,
+            1,
+            100,
+            DITHER_BLOCK - 1,
+            DITHER_BLOCK,
+            DITHER_BLOCK + 7,
+            2 * DITHER_BLOCK + 3,
+        ] {
             let mut t = Tpdf::at(start);
             for k in 0..200.min(all.len() - start * CHANNELS) {
                 assert_eq!(t.next(), all[start * CHANNELS + k], "start {start} k {k}");

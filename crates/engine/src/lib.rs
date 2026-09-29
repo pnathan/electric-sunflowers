@@ -32,7 +32,10 @@ pub use mix::{mix, mix_with, premix, Stereo};
 pub use mixset::{MixSettings, TrackMix};
 pub use print::{mix_gain, print_reverb, print_stem};
 pub use render::{render, NoProgress, Progress, Stems};
-pub use sheet::{sheet_from, song_sheet, SheetBar, SheetChord, SheetLine, SheetSection, SheetSyllable, SheetWord, SongSheet};
+pub use sheet::{
+    sheet_from, song_sheet, SheetBar, SheetChord, SheetLine, SheetSection, SheetSyllable,
+    SheetWord, SongSheet,
+};
 pub use stem::{SparseBuf, Stem};
 pub use strip::ProcessedStem;
 pub use track::{BandPart, TrackId, STRIPS};
@@ -43,10 +46,13 @@ pub const DEMO_JSON: &str = include_str!("demo.json");
 /// The demo song, normalised (it normalises with no repairs). Built once.
 pub fn demo_song() -> &'static song::Song {
     static DEMO: OnceLock<song::Song> = OnceLock::new();
-    DEMO.get_or_init(|| match serde_json::from_str(DEMO_JSON).map_err(|e| e.to_string()).and_then(|v| {
-        song::normalize_value(&v).map_err(|e| e.to_string())
-    }) {
-        Ok((s, _)) => s,
-        Err(e) => panic!("crates/engine/src/demo.json does not normalise: {e}"),
+    DEMO.get_or_init(|| {
+        match serde_json::from_str(DEMO_JSON)
+            .map_err(|e| e.to_string())
+            .and_then(|v| song::normalize_value(&v).map_err(|e| e.to_string()))
+        {
+            Ok((s, _)) => s,
+            Err(e) => panic!("crates/engine/src/demo.json does not normalise: {e}"),
+        }
     })
 }

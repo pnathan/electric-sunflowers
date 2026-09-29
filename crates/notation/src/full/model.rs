@@ -235,7 +235,18 @@ struct RawNote {
 
 impl RawNote {
     fn pitched(t0: f64, t1: f64, midi: f64) -> RawNote {
-        RawNote { t0, t1, ring: false, midi, step_override: None, notehead: Notehead::Normal, lyric: None, hyphen: false, text: None, voice: 0 }
+        RawNote {
+            t0,
+            t1,
+            ring: false,
+            midi,
+            step_override: None,
+            notehead: Notehead::Normal,
+            lyric: None,
+            hyphen: false,
+            text: None,
+            voice: 0,
+        }
     }
 }
 
@@ -292,7 +303,11 @@ fn drum_head(kind: DrumKind) -> (i32, Notehead, Option<&'static str>) {
         DrumKind::Hat => (nat_step(4, 5), Notehead::X, None), // G5, above the staff
         DrumKind::Ride => (nat_step(3, 5), Notehead::X, None), // F5, top line
         DrumKind::Tom { hz } => {
-            let step = if hz >= 150.0 { nat_step(2, 5) } else { nat_step(5, 4) }; // E5 or A4
+            let step = if hz >= 150.0 {
+                nat_step(2, 5)
+            } else {
+                nat_step(5, 4)
+            }; // E5 or A4
             (step, Notehead::Normal, None)
         }
         DrumKind::Shaker => (nat_step(5, 5), Notehead::X, None), // A5, line above the staff
@@ -305,19 +320,41 @@ fn drum_voice(kind: DrumKind) -> usize {
 
 /// Raw notes for one part, or `None` when the part is off or has no
 /// arrangement.
-fn raw_notes_of(part: PartId, song: &Song, prep: &Prepared, arr: &arrange::Arrangement) -> Option<Vec<RawNote>> {
+fn raw_notes_of(
+    part: PartId,
+    song: &Song,
+    prep: &Prepared,
+    arr: &arrange::Arrangement,
+) -> Option<Vec<RawNote>> {
     use song::events::{BowNote, PluckNote, StringNote, VocalNote};
 
-    let vocal = |notes: &[VocalNote]| -> Vec<RawNote> { notes.iter().map(|n| RawNote::pitched(n.t0, n.t1, n.midi as f64)).collect() };
-    let bow = |notes: &[BowNote]| -> Vec<RawNote> { notes.iter().map(|n| RawNote::pitched(n.t0, n.t1, n.midi as f64)).collect() };
+    let vocal = |notes: &[VocalNote]| -> Vec<RawNote> {
+        notes
+            .iter()
+            .map(|n| RawNote::pitched(n.t0, n.t1, n.midi as f64))
+            .collect()
+    };
+    let bow = |notes: &[BowNote]| -> Vec<RawNote> {
+        notes
+            .iter()
+            .map(|n| RawNote::pitched(n.t0, n.t1, n.midi as f64))
+            .collect()
+    };
     let pluck = |notes: &[PluckNote], ring: bool| -> Vec<RawNote> {
         notes
             .iter()
-            .map(|n| RawNote { ring: ring && n.t1 <= n.t0, ..RawNote::pitched(n.t0, n.t1, n.midi as f64) })
+            .map(|n| RawNote {
+                ring: ring && n.t1 <= n.t0,
+                ..RawNote::pitched(n.t0, n.t1, n.midi as f64)
+            })
             .collect()
     };
     let strings = |lists: &[Vec<StringNote>; 6]| -> Vec<RawNote> {
-        lists.iter().flatten().map(|n| RawNote::pitched(n.t, n.stop, n.midi as f64)).collect()
+        lists
+            .iter()
+            .flatten()
+            .map(|n| RawNote::pitched(n.t, n.stop, n.midi as f64))
+            .collect()
     };
 
     Some(match part {
@@ -325,7 +362,11 @@ fn raw_notes_of(part: PartId, song: &Song, prep: &Prepared, arr: &arrange::Arran
             .comp
             .lead
             .iter()
-            .map(|n| RawNote { lyric: Some(n.syl.text.clone()), hyphen: !n.syl.word_end, ..RawNote::pitched(n.t0, n.t1, n.midi as f64) })
+            .map(|n| RawNote {
+                lyric: Some(n.syl.text.clone()),
+                hyphen: !n.syl.word_end,
+                ..RawNote::pitched(n.t0, n.t1, n.midi as f64)
+            })
             .collect(),
         PartId::LeadB => return None,
         PartId::Harmony => {
@@ -352,7 +393,9 @@ fn raw_notes_of(part: PartId, song: &Song, prep: &Prepared, arr: &arrange::Arran
             };
             let form = &prep.form;
             let tl = &prep.timeline;
-            let sings = |s: &compose::form::Sec| s.is_repeat_lift() || matches!(s.kind, SectionKind::Bridge | SectionKind::Outro);
+            let sings = |s: &compose::form::Sec| {
+                s.is_repeat_lift() || matches!(s.kind, SectionKind::Bridge | SectionKind::Outro)
+            };
             arrange::choir::voicings(form, tl, sings)
                 .iter()
                 .map(|v| {
@@ -380,7 +423,10 @@ fn raw_notes_of(part: PartId, song: &Song, prep: &Prepared, arr: &arrange::Arran
             if !song.band.harp {
                 return None;
             }
-            pluck(&arr.harp, true).into_iter().filter(|n| (n.midi >= 60.0) == (part == PartId::HarpUpper)).collect()
+            pluck(&arr.harp, true)
+                .into_iter()
+                .filter(|n| (n.midi >= 60.0) == (part == PartId::HarpUpper))
+                .collect()
         }
         PartId::Bass => {
             if !song.band.bass {
@@ -393,7 +439,11 @@ fn raw_notes_of(part: PartId, song: &Song, prep: &Prepared, arr: &arrange::Arran
             hits.iter()
                 .map(|h| {
                     let (step, notehead, text) = drum_head(h.kind);
-                    let t1 = if let DrumKind::Swish { dur } = h.kind { h.t + dur as f64 } else { h.t };
+                    let t1 = if let DrumKind::Swish { dur } = h.kind {
+                        h.t + dur as f64
+                    } else {
+                        h.t
+                    };
                     RawNote {
                         t0: h.t,
                         t1,
@@ -436,7 +486,15 @@ fn unit_of(tl: &Timeline, grid: &Grid, sec: f64) -> i64 {
 /// One voice's raw notes into per-bar `Ev` lists (rests fill the gaps, a
 /// silent bar is one whole rest), spelling pitched heads in `fifths` with
 /// key alterations `key_alt`, resetting the spelling state each bar.
-fn quantize_voice(notes: &[&RawNote], tl: &Timeline, grid: &Grid, n_bars: usize, fifths: i32, key_alt: &[i32; 7], written: i32) -> Vec<Vec<Ev>> {
+fn quantize_voice(
+    notes: &[&RawNote],
+    tl: &Timeline,
+    grid: &Grid,
+    n_bars: usize,
+    fifths: i32,
+    key_alt: &[i32; 7],
+    written: i32,
+) -> Vec<Vec<Ev>> {
     let bar_u = grid.bar_u;
     let total = n_bars as i64 * bar_u;
     if total <= 0 {
@@ -449,7 +507,11 @@ fn quantize_voice(notes: &[&RawNote], tl: &Timeline, grid: &Grid, n_bars: usize,
     let mut items: Vec<Cluster> = Vec::new();
     for n in sorted {
         let gu0 = unit_of(tl, grid, n.t0).clamp(0, total - 1);
-        let end_gu = if n.ring { None } else { Some(unit_of(tl, grid, n.t1).max(gu0 + 1).min(total)) };
+        let end_gu = if n.ring {
+            None
+        } else {
+            Some(unit_of(tl, grid, n.t1).max(gu0 + 1).min(total))
+        };
         let head = (n.midi, n.step_override, n.notehead);
         match items.last_mut().filter(|c| c.gu0 == gu0) {
             Some(c) => {
@@ -459,7 +521,14 @@ fn quantize_voice(notes: &[&RawNote], tl: &Timeline, grid: &Grid, n_bars: usize,
                 }
                 c.text = c.text.take().or_else(|| n.text.clone());
             }
-            None => items.push(Cluster { gu0, end_gu, heads: vec![head], lyric: n.lyric.clone(), hyphen: n.hyphen, text: n.text.clone() }),
+            None => items.push(Cluster {
+                gu0,
+                end_gu,
+                heads: vec![head],
+                lyric: n.lyric.clone(),
+                hyphen: n.hyphen,
+                text: n.text.clone(),
+            }),
         }
     }
 
@@ -497,7 +566,11 @@ fn quantize_voice(notes: &[&RawNote], tl: &Timeline, grid: &Grid, n_bars: usize,
             let e = end.min(b1);
             if s - b0 > c {
                 for (rs, rd) in grid.split(c, s - b0 - c, true) {
-                    out.push(Ev { s: rs, d: rd, chord: None });
+                    out.push(Ev {
+                        s: rs,
+                        d: rd,
+                        chord: None,
+                    });
                 }
             }
             let starts_here = it.gu0 >= b0;
@@ -510,10 +583,18 @@ fn quantize_voice(notes: &[&RawNote], tl: &Timeline, grid: &Grid, n_bars: usize,
                     .heads
                     .iter()
                     .map(|&(midi, step_override, notehead)| match step_override {
-                        Some(st) => Head { step: st, accidental: None, notehead },
+                        Some(st) => Head {
+                            step: st,
+                            accidental: None,
+                            notehead,
+                        },
                         None => {
-                            let (l, a, step) = spell(midi.round() as i32 + written, fifths, key_alt);
-                            let cur = state.iter().find(|x| x.0 == step).map_or(key_alt[l], |x| x.1);
+                            let (l, a, step) =
+                                spell(midi.round() as i32 + written, fifths, key_alt);
+                            let cur = state
+                                .iter()
+                                .find(|x| x.0 == step)
+                                .map_or(key_alt[l], |x| x.1);
                             let accidental = if a != cur && !tie_in {
                                 state.retain(|x| x.0 != step);
                                 state.push((step, a));
@@ -521,7 +602,11 @@ fn quantize_voice(notes: &[&RawNote], tl: &Timeline, grid: &Grid, n_bars: usize,
                             } else {
                                 None
                             };
-                            Head { step, accidental, notehead }
+                            Head {
+                                step,
+                                accidental,
+                                notehead,
+                            }
                         }
                     })
                     .collect();
@@ -546,7 +631,11 @@ fn quantize_voice(notes: &[&RawNote], tl: &Timeline, grid: &Grid, n_bars: usize,
         }
         if c < bar_u {
             for (rs, rd) in grid.split(c, bar_u - c, true) {
-                out.push(Ev { s: rs, d: rd, chord: None });
+                out.push(Ev {
+                    s: rs,
+                    d: rd,
+                    chord: None,
+                });
             }
         }
         out.sort_by_key(|e| e.s);
@@ -558,7 +647,15 @@ fn quantize_voice(notes: &[&RawNote], tl: &Timeline, grid: &Grid, n_bars: usize,
 /// is added to each pitch before spelling: 12 semitones for a clef whose
 /// staff is written an octave from where it sounds (`Treble8vb`,
 /// `Bass8vb`), 0 otherwise.
-fn build_cells(raw: &[RawNote], tl: &Timeline, grid: &Grid, n_bars: usize, fifths: i32, key_alt: &[i32; 7], written: i32) -> Vec<Cell> {
+fn build_cells(
+    raw: &[RawNote],
+    tl: &Timeline,
+    grid: &Grid,
+    n_bars: usize,
+    fifths: i32,
+    key_alt: &[i32; 7],
+    written: i32,
+) -> Vec<Cell> {
     let max_voice = raw.iter().map(|r| r.voice).max().unwrap_or(0);
     let per_voice: Vec<Vec<Vec<Ev>>> = (0..=max_voice)
         .map(|v| {
@@ -567,7 +664,9 @@ fn build_cells(raw: &[RawNote], tl: &Timeline, grid: &Grid, n_bars: usize, fifth
         })
         .collect();
     (0..n_bars)
-        .map(|bar| Cell { voices: per_voice.iter().map(|pv| pv[bar].clone()).collect() })
+        .map(|bar| Cell {
+            voices: per_voice.iter().map(|pv| pv[bar].clone()).collect(),
+        })
         .collect()
 }
 
@@ -609,7 +708,11 @@ impl FullScore {
         let fifths = key_fifths(prep.tonic, song.mode);
         let key_alt = key_alterations(fifths);
 
-        let verses = form.sections.iter().filter(|x| x.kind == SectionKind::Verse).count();
+        let verses = form
+            .sections
+            .iter()
+            .filter(|x| x.kind == SectionKind::Verse)
+            .count();
         let mut chunk = 0usize;
         let mut prev_key: Option<(usize, Option<usize>)> = None;
         let mut chords: Vec<Vec<(i64, String)>> = vec![Vec::new(); n_bars];
@@ -629,16 +732,30 @@ impl FullScore {
             }
             prev_key = Some(key);
             let sec = bi.sec;
-            let label = form.sections.get(sec).filter(|s| bar == s.start_bar).map(|s| section_label(s.kind, s.role, s.occ, verses));
+            let label = form
+                .sections
+                .get(sec)
+                .filter(|s| bar == s.start_bar)
+                .map(|s| section_label(s.kind, s.role, s.occ, verses));
             let b0 = (bar as i64 * grid.bar_u) as f64 * u;
             let b1 = ((bar + 1) as i64 * grid.bar_u) as f64 * u;
-            bar_meta.push((bar, sec, chunk, label, std::mem::take(&mut chords[bar]), tl.to_time(b0), tl.to_time(b1)));
+            bar_meta.push((
+                bar,
+                sec,
+                chunk,
+                label,
+                std::mem::take(&mut chords[bar]),
+                tl.to_time(b0),
+                tl.to_time(b1),
+            ));
         }
 
         let mut staves = Vec::new();
         let mut all_cells: Vec<Vec<Cell>> = Vec::new();
         for &part in &ALL_PARTS {
-            let Some(raw) = raw_notes_of(part, song, prep, arr) else { continue };
+            let Some(raw) = raw_notes_of(part, song, prep, arr) else {
+                continue;
+            };
             if raw.is_empty() {
                 continue;
             }
@@ -662,10 +779,28 @@ impl FullScore {
             };
             let (name, abbrev) = name_of(part);
             let pitched = part != PartId::Drums;
-            let written = if matches!(clef, Clef::Treble8vb | Clef::Bass8vb) { 12 } else { 0 };
-            let cells = build_cells(&raw, tl, &grid, n_bars, if pitched { fifths } else { 0 }, &key_alt, written);
+            let written = if matches!(clef, Clef::Treble8vb | Clef::Bass8vb) {
+                12
+            } else {
+                0
+            };
+            let cells = build_cells(
+                &raw,
+                tl,
+                &grid,
+                n_bars,
+                if pitched { fifths } else { 0 },
+                &key_alt,
+                written,
+            );
             all_cells.push(cells);
-            staves.push(StaffDef { part, name, abbrev, clef, group: group_of(part) });
+            staves.push(StaffDef {
+                part,
+                name,
+                abbrev,
+                clef,
+                group: group_of(part),
+            });
         }
 
         let bars = bar_meta
@@ -673,7 +808,16 @@ impl FullScore {
             .enumerate()
             .map(|(bar, (b, sec, chunk, label, chs, t0, t1))| {
                 debug_assert_eq!(bar, b);
-                BarCol { bar, sec, chunk, label, chords: chs, t0, t1, cells: all_cells.iter().map(|c| c[bar].clone()).collect() }
+                BarCol {
+                    bar,
+                    sec,
+                    chunk,
+                    label,
+                    chords: chs,
+                    t0,
+                    t1,
+                    cells: all_cells.iter().map(|c| c[bar].clone()).collect(),
+                }
             })
             .collect();
 
@@ -684,13 +828,31 @@ impl FullScore {
             Mode::Dorian => "Dorian",
             Mode::Mixolydian => "Mixolydian",
         };
-        let caption = format!("{}, {} {}", prep.voice.label(), Pc::new(prep.tonic).name(flats), mode);
-        FullScore { title: song.title.clone(), caption, width: crate::score::DEFAULT_WIDTH, meter: song.meter, tempo: song.tempo_bpm, fifths, staves, bars }
+        let caption = format!(
+            "{}, {} {}",
+            prep.voice.label(),
+            Pc::new(prep.tonic).name(flats),
+            mode
+        );
+        FullScore {
+            title: song.title.clone(),
+            caption,
+            width: crate::score::DEFAULT_WIDTH,
+            meter: song.meter,
+            tempo: song.tempo_bpm,
+            fifths,
+            staves,
+            bars,
+        }
     }
 
     /// The same score laid out for a page `width` px wide (at least 300).
     pub fn with_width(mut self, width: f64) -> FullScore {
-        self.width = if width.is_finite() { width.max(300.0) } else { crate::score::DEFAULT_WIDTH };
+        self.width = if width.is_finite() {
+            width.max(300.0)
+        } else {
+            crate::score::DEFAULT_WIDTH
+        };
         self
     }
 
@@ -708,7 +870,10 @@ impl FullScore {
             let cell = &b.cells[idx];
             if is_silent(cell) {
                 let mut j = i + 1;
-                while j < self.bars.len() && self.bars[j].sec == b.sec && is_silent(&self.bars[j].cells[idx]) {
+                while j < self.bars.len()
+                    && self.bars[j].sec == b.sec
+                    && is_silent(&self.bars[j].cells[idx])
+                {
                     j += 1;
                 }
                 let run = j - i;

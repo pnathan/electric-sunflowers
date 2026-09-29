@@ -40,7 +40,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
     let mut it = args.peekable();
     while let Some(a) = it.next() {
         let mut val = |name: &str| it.next().ok_or_else(|| format!("{name} needs a value"));
-        let num = |name: &str, s: String| s.parse::<f64>().ok().filter(|x| x.is_finite() && *x >= 0.0).ok_or_else(|| format!("{name}: {s:?} is not a number >= 0"));
+        let num = |name: &str, s: String| {
+            s.parse::<f64>()
+                .ok()
+                .filter(|x| x.is_finite() && *x >= 0.0)
+                .ok_or_else(|| format!("{name}: {s:?} is not a number >= 0"))
+        };
         match a.as_str() {
             "-h" | "--help" => return Err(USAGE.into()),
             "--dir" => o.dir = PathBuf::from(val("--dir")?),
@@ -48,7 +53,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
             "--open" => o.open = Some(val("--open")?),
             "--view" => {
                 let v = val("--view")?;
-                o.view = View::parse(&v).ok_or_else(|| format!("--view: {v:?} is not lyrics, sheet or both"))?;
+                o.view = View::parse(&v)
+                    .ok_or_else(|| format!("--view: {v:?} is not lyrics, sheet or both"))?;
             }
             "--screenshot" => o.screenshot = Some(PathBuf::from(val("--screenshot")?)),
             "--seek" => o.seek = Some(num("--seek", val("--seek")?)?),
@@ -81,10 +87,17 @@ fn main() -> ExitCode {
     };
     sfcore::fp::init_pool(None);
     let native = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default().with_inner_size([1440.0, 900.0]).with_min_inner_size([640.0, 400.0]).with_title("Sunflower Studio"),
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_inner_size([1440.0, 900.0])
+            .with_min_inner_size([640.0, 400.0])
+            .with_title("Sunflower Studio"),
         ..Default::default()
     };
-    match eframe::run_native("Sunflower Studio", native, Box::new(move |cc| Ok(Box::new(app::StudioApp::new(cc, opt))))) {
+    match eframe::run_native(
+        "Sunflower Studio",
+        native,
+        Box::new(move |cc| Ok(Box::new(app::StudioApp::new(cc, opt)))),
+    ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("studio: {e}");
@@ -103,7 +116,8 @@ mod tests {
 
     #[test]
     fn options_parse() {
-        let o = args("song.json --dir /x --view sheet --play 3 --seek 40.5 --screenshot a.png").unwrap();
+        let o = args("song.json --dir /x --view sheet --play 3 --seek 40.5 --screenshot a.png")
+            .unwrap();
         assert_eq!(o.song, Some(PathBuf::from("song.json")));
         assert_eq!(o.dir, PathBuf::from("/x"));
         assert_eq!(o.view, View::Sheet);

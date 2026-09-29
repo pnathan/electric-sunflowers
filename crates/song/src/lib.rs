@@ -79,9 +79,9 @@ pub mod wire;
 
 pub use chord::{Chord, ChordError, ChordId, ChordTable};
 pub use model::{
-    Band, BarChords, Blend, BreakLead, Delivery, DrumKit, Duet, Endings, GuitarPattern, Line, Meter, MeterGrid,
-    Mode, Part, Phrasing, Section, SectionBody, SectionKind, SectionRole, SingerId, Song, Syllable, VocalRange,
-    Voice,
+    Band, BarChords, Blend, BreakLead, Delivery, DrumKit, Duet, Endings, GuitarPattern, Line,
+    Meter, MeterGrid, Mode, Part, Phrasing, Section, SectionBody, SectionKind, SectionRole,
+    SingerId, Song, Syllable, VocalRange, Voice,
 };
 pub use phoneme::Phoneme;
 pub use pitch::{Pc, PcSet};

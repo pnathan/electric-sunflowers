@@ -30,8 +30,9 @@ pub const SILENT_DBFS: f64 = -200.0;
 
 /// Nominal IEC 61260 centre frequencies, 25 Hz to 16 kHz.
 pub const NOMINAL_HZ: [f64; 29] = [
-    25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0, 160.0, 200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0,
-    1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0, 8000.0, 10000.0, 12500.0, 16000.0,
+    25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0, 160.0, 200.0, 250.0, 315.0, 400.0, 500.0,
+    630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0, 8000.0,
+    10000.0, 12500.0, 16000.0,
 ];
 
 /// Exact base-10 centre of band `i` (index into `NOMINAL_HZ`).
@@ -96,20 +97,37 @@ pub fn analyse(chs: &[Vec<f64>], sample_rate: u32) -> Ltas {
 
     let bp = block_powers(chs);
     let loudest = bp.iter().fold(0.0f64, |m, &p| m.max(p.sqrt()));
-    let active: Vec<bool> = bp.iter().map(|&p| loudest > 0.0 && p.sqrt() > 0.05 * loudest).collect();
+    let active: Vec<bool> = bp
+        .iter()
+        .map(|&p| loudest > 0.0 && p.sqrt() > 0.05 * loudest)
+        .collect();
     let n_active = active.iter().filter(|&&a| a).count();
-    let active_fraction = if bp.is_empty() { 0.0 } else { n_active as f64 / bp.len() as f64 };
+    let active_fraction = if bp.is_empty() {
+        0.0
+    } else {
+        n_active as f64 / bp.len() as f64
+    };
     let gated_ms = if n_active == 0 {
         0.0
     } else {
-        bp.iter().zip(&active).filter(|(_, &a)| a).map(|(&p, _)| p).sum::<f64>() / n_active as f64
+        bp.iter()
+            .zip(&active)
+            .filter(|(_, &a)| a)
+            .map(|(&p, _)| p)
+            .sum::<f64>()
+            / n_active as f64
     };
-    let gated_rms_dbfs = if gated_ms > 0.0 { 10.0 * gated_ms.log10() } else { SILENT_DBFS };
+    let gated_rms_dbfs = if gated_ms > 0.0 {
+        10.0 * gated_ms.log10()
+    } else {
+        SILENT_DBFS
+    };
 
     // Welch average over admitted frames.
     let fft = Fft::new(FRAME).expect("FRAME is a power of two");
-    let win: Vec<f64> =
-        (0..FRAME).map(|i| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / FRAME as f64).cos()).collect();
+    let win: Vec<f64> = (0..FRAME)
+        .map(|i| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / FRAME as f64).cos())
+        .collect();
     let nb = FRAME / 2 + 1;
     let mut acc = vec![0.0f64; nb];
     let mut re = vec![0.0f64; FRAME];
@@ -155,10 +173,25 @@ pub fn analyse(chs: &[Vec<f64>], sample_rate: u32) -> Ltas {
     }
     let bands_db = band_pow
         .iter()
-        .map(|&p| if used > 0 && total > 0.0 && p > 0.0 { (10.0 * (p / total).log10()).max(FLOOR_DB) } else { FLOOR_DB })
+        .map(|&p| {
+            if used > 0 && total > 0.0 && p > 0.0 {
+                (10.0 * (p / total).log10()).max(FLOOR_DB)
+            } else {
+                FLOOR_DB
+            }
+        })
         .collect();
 
-    Ltas { bands_db, gated_rms_dbfs, active_fraction, peak, nonfinite, channels: chs.len(), frames: n, sample_rate }
+    Ltas {
+        bands_db,
+        gated_rms_dbfs,
+        active_fraction,
+        peak,
+        nonfinite,
+        channels: chs.len(),
+        frames: n,
+        sample_rate,
+    }
 }
 
 #[cfg(test)]
@@ -169,7 +202,9 @@ mod tests {
     fn sine_1k_lands_in_1k_band() {
         let sr = 44100u32;
         let n = sr as usize * 3;
-        let x: Vec<f64> = (0..n).map(|i| 0.5 * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / sr as f64).sin()).collect();
+        let x: Vec<f64> = (0..n)
+            .map(|i| 0.5 * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / sr as f64).sin())
+            .collect();
         let l = analyse(&[x], sr);
         let i1k = NOMINAL_HZ.iter().position(|&f| f == 1000.0).unwrap();
         let frac = 10f64.powf(l.bands_db[i1k] / 10.0);

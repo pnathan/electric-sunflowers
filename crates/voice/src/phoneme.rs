@@ -87,19 +87,59 @@ const BLANK: Consonant = Consonant {
 };
 
 const fn son(class: ConsClass, formants: [f64; 3], av: f64, dur: f64) -> Consonant {
-    Consonant { class, formants, av, dur, ..BLANK }
+    Consonant {
+        class,
+        formants,
+        av,
+        dur,
+        ..BLANK
+    }
 }
 
 const fn fric(ff: f64, bw: f64, af: f64, voiced: bool, dur: f64) -> Consonant {
-    Consonant { class: ConsClass::Fricative, ff, bw, af, voiced, dur, ..BLANK }
+    Consonant {
+        class: ConsClass::Fricative,
+        ff,
+        bw,
+        af,
+        voiced,
+        dur,
+        ..BLANK
+    }
 }
 
 const fn stop(voiced: bool, ff: f64, bw: f64, locus: Locus, closure: f64) -> Consonant {
-    Consonant { class: ConsClass::Stop, voiced, ff, bw, locus, closure, ..BLANK }
+    Consonant {
+        class: ConsClass::Stop,
+        voiced,
+        ff,
+        bw,
+        locus,
+        closure,
+        ..BLANK
+    }
 }
 
-const fn aff(voiced: bool, ff: f64, bw: f64, locus: Locus, closure: f64, fric_dur: f64, af: f64) -> Consonant {
-    Consonant { class: ConsClass::Affricate, voiced, ff, bw, locus, closure, fric_dur, af, ..BLANK }
+const fn aff(
+    voiced: bool,
+    ff: f64,
+    bw: f64,
+    locus: Locus,
+    closure: f64,
+    fric_dur: f64,
+    af: f64,
+) -> Consonant {
+    Consonant {
+        class: ConsClass::Affricate,
+        voiced,
+        ff,
+        bw,
+        locus,
+        closure,
+        fric_dur,
+        af,
+        ..BLANK
+    }
 }
 
 /// F1-F3 of each monophthong vowel; `None` for diphthongs and consonants.
@@ -146,14 +186,30 @@ pub const CONSONANTS: [Option<Consonant>; Phoneme::COUNT] = {
     t[P::V as usize] = Some(fric(5000.0, 6000.0, 0.16, true, 0.06));
     t[P::Th as usize] = Some(fric(5500.0, 6000.0, 0.18, false, 0.075));
     // Voiced "th" is mostly voicing.
-    t[P::Dh as usize] = Some(Consonant { vv: 0.6, ..fric(4500.0, 5000.0, 0.05, true, 0.045) });
-    t[P::Hh as usize] = Some(Consonant { class: ConsClass::Aspirate, voiced: false, dur: 0.06, ..BLANK });
+    t[P::Dh as usize] = Some(Consonant {
+        vv: 0.6,
+        ..fric(4500.0, 5000.0, 0.05, true, 0.045)
+    });
+    t[P::Hh as usize] = Some(Consonant {
+        class: ConsClass::Aspirate,
+        voiced: false,
+        dur: 0.06,
+        ..BLANK
+    });
     t[P::P as usize] = Some(stop(false, 1100.0, 2500.0, bilabial, 0.05));
     t[P::B as usize] = Some(stop(true, 1100.0, 2500.0, bilabial, 0.04));
     t[P::T as usize] = Some(stop(false, 5200.0, 2600.0, alveolar, 0.045));
     t[P::D as usize] = Some(stop(true, 4200.0, 3000.0, alveolar, 0.05));
-    t[P::Dx as usize] =
-        Some(Consonant { flap: true, ..stop(true, 3800.0, 3000.0, Locus::At([280.0, 1700.0, 2650.0]), 0.02) });
+    t[P::Dx as usize] = Some(Consonant {
+        flap: true,
+        ..stop(
+            true,
+            3800.0,
+            3000.0,
+            Locus::At([280.0, 1700.0, 2650.0]),
+            0.02,
+        )
+    });
     t[P::K as usize] = Some(stop(false, 2300.0, 1500.0, Locus::Velar, 0.05));
     t[P::G as usize] = Some(stop(true, 2300.0, 1500.0, Locus::Velar, 0.04));
     t[P::Ch as usize] = Some(aff(false, 3200.0, 2000.0, postalveolar, 0.04, 0.07, 0.55));
@@ -198,6 +254,9 @@ mod tests {
     fn ey_targets_are_hillenbrand() {
         assert_eq!(vowel_formants(Phoneme::Ey0), Some([450.0, 2020.0, 2600.0]));
         assert_eq!(vowel_formants(Phoneme::Ey1), Some([340.0, 2210.0, 2780.0]));
-        assert_eq!(consonant(Phoneme::Dh).map(|c| (c.af, c.vv)), Some((0.05, 0.6)));
+        assert_eq!(
+            consonant(Phoneme::Dh).map(|c| (c.af, c.vv)),
+            Some((0.05, 0.6))
+        );
     }
 }

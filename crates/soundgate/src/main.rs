@@ -16,7 +16,9 @@
 use clap::{Parser, Subcommand};
 use soundgate::compare::{compare_ltas, compare_pitch, table, LtasFile, Tolerances};
 use soundgate::ltas::{analyse, NOMINAL_HZ};
-use soundgate::mean::{band_table, compare_means, compare_pitch_pool, mean_table, summarise, BandTol, MeanFile};
+use soundgate::mean::{
+    band_table, compare_means, compare_pitch_pool, mean_table, summarise, BandTol, MeanFile,
+};
 use soundgate::pitch::{check, Note, PitchReport};
 use soundgate::wav;
 use std::collections::BTreeMap;
@@ -24,7 +26,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "soundgate", about = "Sound gate probes: LTAS, level, YIN pitch")]
+#[command(
+    name = "soundgate",
+    about = "Sound gate probes: LTAS, level, YIN pitch"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -105,7 +110,10 @@ fn cmd_ltas(dir: &Path) -> Result<bool, String> {
     for p in &paths {
         let a = wav::read(p)?;
         let l = analyse(&a.channels, a.sample_rate);
-        let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let stem = p
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
         println!(
             "{:<16} active {:5.1}%  gated {:7.2} dBFS  peak {:.4}  nonfinite {}",
             stem,
@@ -116,9 +124,19 @@ fn cmd_ltas(dir: &Path) -> Result<bool, String> {
         );
         files.insert(stem, l);
     }
-    let bad: Vec<String> = files.iter().filter(|(_, l)| l.nonfinite > 0).map(|(k, l)| format!("{k} ({})", l.nonfinite)).collect();
+    let bad: Vec<String> = files
+        .iter()
+        .filter(|(_, l)| l.nonfinite > 0)
+        .map(|(k, l)| format!("{k} ({})", l.nonfinite))
+        .collect();
     let out = dir.join("ltas.json");
-    write_json(&out, &LtasFile { centres_hz: NOMINAL_HZ.to_vec(), files })?;
+    write_json(
+        &out,
+        &LtasFile {
+            centres_hz: NOMINAL_HZ.to_vec(),
+            files,
+        },
+    )?;
     println!("wrote {}", out.display());
     if !bad.is_empty() {
         println!("NaN/inf samples: {}", bad.join(", "));
@@ -143,9 +161,14 @@ fn cmd_pitch(wav_path: &Path, notes_path: &Path) -> Result<bool, String> {
     // mono: mean of channels
     let n = a.frames();
     let k = a.channels.len() as f64;
-    let x: Vec<f64> = (0..n).map(|i| a.channels.iter().map(|c| c[i]).sum::<f64>() / k).collect();
+    let x: Vec<f64> = (0..n)
+        .map(|i| a.channels.iter().map(|c| c[i]).sum::<f64>() / k)
+        .collect();
     let r = check(&x, a.sample_rate, &notes);
-    let stem = wav_path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = wav_path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let out = wav_path.with_file_name(format!("{stem}.pitch.json"));
     write_json(&out, &r)?;
     println!(
@@ -171,7 +194,11 @@ fn cmd_pitch_compare(base: &Path, new: &Path) -> Result<bool, String> {
         b.fraction_within_50c,
         n.octave_errors,
         b.octave_errors,
-        if f.is_empty() { "PASS".to_string() } else { format!("FAIL {}", f.join(", ")) }
+        if f.is_empty() {
+            "PASS".to_string()
+        } else {
+            format!("FAIL {}", f.join(", "))
+        }
     );
     Ok(f.is_empty())
 }
@@ -181,11 +208,18 @@ fn cmd_mean(out: &Path, dirs: &[PathBuf]) -> Result<bool, String> {
     let mut labels = Vec::new();
     for d in dirs {
         runs.push(read_json::<LtasFile>(&d.join("ltas.json"))?);
-        labels.push(d.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
+        labels.push(
+            d.file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        );
     }
     let pp: Vec<PathBuf> = dirs.iter().map(|d| d.join("lead.pitch.json")).collect();
-    let pitch: Vec<PitchReport> =
-        if pp.iter().all(|p| p.is_file()) { pp.iter().map(|p| read_json(p)).collect::<Result<_, _>>()? } else { vec![] };
+    let pitch: Vec<PitchReport> = if pp.iter().all(|p| p.is_file()) {
+        pp.iter().map(|p| read_json(p)).collect::<Result<_, _>>()?
+    } else {
+        vec![]
+    };
     let m = summarise(labels, &runs, &pitch)?;
     for (k, f) in &m.files {
         let (mut wi, mut ws) = (0, 0.0f64);
@@ -217,7 +251,12 @@ fn cmd_mean(out: &Path, dirs: &[PathBuf]) -> Result<bool, String> {
 }
 
 fn cmd_compare_mean(base: &Path, new: &Path, tol: BandTol, bands: bool) -> Result<bool, String> {
-    if !(tol.mid_db >= 0.0 && tol.edge_db >= 0.0 && tol.k >= 0.0 && tol.cap_mid_db >= 0.0 && tol.cap_edge_db >= 0.0) {
+    if !(tol.mid_db >= 0.0
+        && tol.edge_db >= 0.0
+        && tol.k >= 0.0
+        && tol.cap_mid_db >= 0.0
+        && tol.cap_edge_db >= 0.0)
+    {
         return Err("tolerances must be non-negative".into());
     }
     let b: MeanFile = read_json(base)?;
@@ -268,16 +307,41 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let r = match cli.cmd {
         Cmd::Ltas { dir } => cmd_ltas(&dir),
-        Cmd::Compare { base, new, tol_mid, tol_edge } => {
-            cmd_compare(&base, &new, Tolerances { mid_db: tol_mid, edge_db: tol_edge })
-        }
+        Cmd::Compare {
+            base,
+            new,
+            tol_mid,
+            tol_edge,
+        } => cmd_compare(
+            &base,
+            &new,
+            Tolerances {
+                mid_db: tol_mid,
+                edge_db: tol_edge,
+            },
+        ),
         Cmd::Pitch { wav, notes } => cmd_pitch(&wav, &notes),
         Cmd::PitchCompare { base, new } => cmd_pitch_compare(&base, &new),
         Cmd::Mean { out, dirs } => cmd_mean(&out, &dirs),
-        Cmd::CompareMean { base, new, tol_mid, tol_edge, k, cap_mid, cap_edge, bands } => cmd_compare_mean(
+        Cmd::CompareMean {
+            base,
+            new,
+            tol_mid,
+            tol_edge,
+            k,
+            cap_mid,
+            cap_edge,
+            bands,
+        } => cmd_compare_mean(
             &base,
             &new,
-            BandTol { mid_db: tol_mid, edge_db: tol_edge, k, cap_mid_db: cap_mid, cap_edge_db: cap_edge },
+            BandTol {
+                mid_db: tol_mid,
+                edge_db: tol_edge,
+                k,
+                cap_mid_db: cap_mid,
+                cap_edge_db: cap_edge,
+            },
             bands,
         ),
     };

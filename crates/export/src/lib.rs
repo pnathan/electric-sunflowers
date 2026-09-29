@@ -47,7 +47,11 @@ impl Meta {
             t.push(("TITLE", self.title.as_str()));
         }
         t.push(("ARTIST", self.artist_or_default()));
-        for (k, v) in [("COMMENT", &self.comment), ("DATE", &self.date), ("GENRE", &self.style)] {
+        for (k, v) in [
+            ("COMMENT", &self.comment),
+            ("DATE", &self.date),
+            ("GENRE", &self.style),
+        ] {
             if !v.is_empty() {
                 t.push((k, v.as_str()));
             }
@@ -89,12 +93,33 @@ impl Format {
     /// Picks the format from `path`'s extension (case-insensitive): `.ogg`
     /// with `quality`; `.flac` at 16 bits if `flac16`, else 24; `.wav` as
     /// 32-bit float if `float`, else 16-bit PCM.
-    pub fn from_path(path: &Path, quality: f32, flac16: bool, float: bool) -> Result<Format, ExportError> {
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    pub fn from_path(
+        path: &Path,
+        quality: f32,
+        flac16: bool,
+        float: bool,
+    ) -> Result<Format, ExportError> {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
         match ext.as_str() {
             "ogg" => Ok(Format::Ogg { quality }),
-            "flac" => Ok(Format::Flac { bits: if flac16 { BitDepth::Bits16 } else { BitDepth::Bits24 } }),
-            "wav" => Ok(Format::Wav { sample: if float { WavSample::Float32 } else { WavSample::Pcm16 } }),
+            "flac" => Ok(Format::Flac {
+                bits: if flac16 {
+                    BitDepth::Bits16
+                } else {
+                    BitDepth::Bits24
+                },
+            }),
+            "wav" => Ok(Format::Wav {
+                sample: if float {
+                    WavSample::Float32
+                } else {
+                    WavSample::Pcm16
+                },
+            }),
             _ => Err(ExportError::UnknownExtension(ext)),
         }
     }
@@ -106,11 +131,16 @@ pub enum ExportError {
     /// The output path has no extension, or one that is not ogg/flac/wav.
     UnknownExtension(String),
     /// Left/right channel lengths differ.
-    ChannelLengthMismatch { left: usize, right: usize },
+    ChannelLengthMismatch {
+        left: usize,
+        right: usize,
+    },
     /// Zero, or above the format's limit (FLAC: 2^20 - 1 Hz).
     InvalidSampleRate(u32),
     /// The WAV file would exceed the 4 GiB RIFF limit.
-    TooLarge { bytes: u64 },
+    TooLarge {
+        bytes: u64,
+    },
     Io(std::io::Error),
     Vorbis(vorbis_rs::VorbisError),
     Flac(String),
@@ -120,13 +150,18 @@ impl std::fmt::Display for ExportError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownExtension(ext) => {
-                write!(f, "unknown output extension {ext:?} (want .ogg, .flac or .wav)")
+                write!(
+                    f,
+                    "unknown output extension {ext:?} (want .ogg, .flac or .wav)"
+                )
             }
             Self::ChannelLengthMismatch { left, right } => {
                 write!(f, "left/right channel length mismatch: {left} vs {right}")
             }
             Self::InvalidSampleRate(sr) => write!(f, "invalid sample rate {sr} Hz"),
-            Self::TooLarge { bytes } => write!(f, "WAV file of {bytes} bytes exceeds the 4 GiB RIFF limit"),
+            Self::TooLarge { bytes } => {
+                write!(f, "WAV file of {bytes} bytes exceeds the 4 GiB RIFF limit")
+            }
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Vorbis(e) => write!(f, "Ogg Vorbis encoding error: {e}"),
             Self::Flac(e) => write!(f, "FLAC encoding error: {e}"),
@@ -158,7 +193,10 @@ pub fn write(
     fmt: Format,
 ) -> Result<(), ExportError> {
     if left.len() != right.len() {
-        return Err(ExportError::ChannelLengthMismatch { left: left.len(), right: right.len() });
+        return Err(ExportError::ChannelLengthMismatch {
+            left: left.len(),
+            right: right.len(),
+        });
     }
     if sample_rate == 0 {
         return Err(ExportError::InvalidSampleRate(0));

@@ -13,7 +13,8 @@ pub struct Output {
 
 impl Output {
     pub fn open() -> Result<Output, String> {
-        let mut sink = DeviceSinkBuilder::open_default_sink().map_err(|e| format!("could not open the audio output: {e}"))?;
+        let mut sink = DeviceSinkBuilder::open_default_sink()
+            .map_err(|e| format!("could not open the audio output: {e}"))?;
         sink.log_on_drop(false);
         Ok(Output { sink })
     }
@@ -37,12 +38,20 @@ impl Track {
     /// decoder does not know it.
     pub fn open(out: &Output, path: &Path, fallback: f64, volume: f32) -> Result<Track, String> {
         let dec = decoder(path)?;
-        let duration = dec.total_duration().map(|d| d.as_secs_f64()).filter(|d| *d > 0.0).unwrap_or(fallback);
+        let duration = dec
+            .total_duration()
+            .map(|d| d.as_secs_f64())
+            .filter(|d| *d > 0.0)
+            .unwrap_or(fallback);
         let player = Player::connect_new(out.sink.mixer());
         player.pause();
         player.set_volume(volume);
         player.append(dec);
-        Ok(Track { player, path: path.to_path_buf(), duration })
+        Ok(Track {
+            player,
+            path: path.to_path_buf(),
+            duration,
+        })
     }
 
     /// True while sound is advancing.
@@ -86,7 +95,9 @@ impl Track {
             self.player.append(decoder(&self.path)?);
         }
         let t = t.clamp(0.0, (self.duration - 0.05).max(0.0));
-        self.player.try_seek(Duration::from_secs_f64(t)).map_err(|e| format!("seek failed: {e}"))
+        self.player
+            .try_seek(Duration::from_secs_f64(t))
+            .map_err(|e| format!("seek failed: {e}"))
     }
 
     pub fn set_volume(&self, v: f32) {

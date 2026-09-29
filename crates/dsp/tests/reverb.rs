@@ -1,9 +1,9 @@
 //! Fdn8: decay time against the absorption design, stability, decorrelation.
 
 use dsp::biquad::{Biquad, BiquadCoeffs};
-use std::f64::consts::FRAC_1_SQRT_2;
 use dsp::reverb::{absorption, Fdn8, T60_DC, T60_NYQ};
 use sfcore::random::{tag, Rng};
+use std::f64::consts::FRAC_1_SQRT_2;
 
 const FS: f64 = 44_100.0;
 
@@ -71,11 +71,18 @@ fn octave_250_500_t60_matches_design() {
     };
     band(&mut l);
     band(&mut r);
-    let e: Vec<f64> = l.iter().zip(&r).map(|(a, b)| (*a as f64).powi(2) + (*b as f64).powi(2)).collect();
+    let e: Vec<f64> = l
+        .iter()
+        .zip(&r)
+        .map(|(a, b)| (*a as f64).powi(2) + (*b as f64).powi(2))
+        .collect();
     let got = schroeder_t60(&e);
     let want = design_t60(&fdn, (250.0f64 * 500.0).sqrt());
     println!("octave 250-500 Hz: T60 measured {got:.3} s, design {want:.3} s");
-    assert!((got / want - 1.0).abs() < 0.10, "T60 {got:.3} s vs design {want:.3} s");
+    assert!(
+        (got / want - 1.0).abs() < 0.10,
+        "T60 {got:.3} s vs design {want:.3} s"
+    );
 }
 
 #[test]

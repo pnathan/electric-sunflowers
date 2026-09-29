@@ -114,7 +114,10 @@ pub fn active_rms(sums: &[f64], len: usize) -> f64 {
 
 /// Gated RMS of a dense buffer (for tests and tools).
 pub fn active_rms_dense(x: &[f32]) -> f64 {
-    let sums: Vec<f64> = x.chunks(RMS_BLOCK).map(|c| c.iter().map(|&v| (v as f64) * (v as f64)).sum()).collect();
+    let sums: Vec<f64> = x
+        .chunks(RMS_BLOCK)
+        .map(|c| c.iter().map(|&v| (v as f64) * (v as f64)).sum())
+        .collect();
     active_rms(&sums, x.len())
 }
 
@@ -123,7 +126,11 @@ pub fn compressor(spec: &CompSpec, level: f64) -> Compressor {
     let thr_db = gain_to_db(TARGET_RMS) + spec.above_target_db - gain_to_db(level);
     Compressor::new(
         PeakDetector::new(spec.attack, spec.release, SR_F),
-        GainComputer { thr_db, ratio: spec.ratio, knee_db: spec.knee_db },
+        GainComputer {
+            thr_db,
+            ratio: spec.ratio,
+            knee_db: spec.knee_db,
+        },
         Link::Mono,
     )
 }
@@ -215,7 +222,11 @@ pub fn run_strip(strip: &Strip, mut audio: Stem) -> Option<ProcessedStem> {
         (Some(s), Stem::Mono(x)) => Some(slapback(x, s, s.level * level as f32)),
         _ => None,
     };
-    Some(ProcessedStem { audio, level: level as f32, slap })
+    Some(ProcessedStem {
+        audio,
+        level: level as f32,
+        slap,
+    })
 }
 
 #[cfg(test)]
@@ -236,11 +247,17 @@ mod tests {
     #[test]
     fn compressor_threshold_shift_equals_scaling_first() {
         let level = 3.7f64;
-        let mut x: Vec<f32> = (0..20_000).map(|i| (0.2 * (i as f32 * 0.03).sin()) * if i > 8000 { 1.0 } else { 0.1 }).collect();
+        let mut x: Vec<f32> = (0..20_000)
+            .map(|i| (0.2 * (i as f32 * 0.03).sin()) * if i > 8000 { 1.0 } else { 0.1 })
+            .collect();
         let mut y: Vec<f32> = x.iter().map(|&v| (v as f64 * level) as f32).collect();
         compressor(&VOCAL_COMP, level).process_mono(&mut x);
         compressor(&VOCAL_COMP, 1.0).process_mono(&mut y);
-        let err = x.iter().zip(&y).map(|(a, b)| ((*a as f64 * level) - *b as f64).abs()).fold(0.0, f64::max);
+        let err = x
+            .iter()
+            .zip(&y)
+            .map(|(a, b)| ((*a as f64 * level) - *b as f64).abs())
+            .fold(0.0, f64::max);
         assert!(err < 1e-5, "{err}");
     }
 
@@ -253,9 +270,20 @@ mod tests {
     #[test]
     fn lead_strip_levels_and_slaps() {
         let n = 60_000;
-        let x: Vec<f32> = (0..n).map(|i| if (5000..30_000).contains(&i) { 0.3 * (i as f32 * 0.05).sin() } else { 0.0 }).collect();
-        let p = run_strip(TrackId::Lead.strip(), Stem::Mono(SparseBuf::from_dense(&x))).expect("not silent");
-        let Stem::Mono(y) = &p.audio else { panic!("lead is mono") };
+        let x: Vec<f32> = (0..n)
+            .map(|i| {
+                if (5000..30_000).contains(&i) {
+                    0.3 * (i as f32 * 0.05).sin()
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let p = run_strip(TrackId::Lead.strip(), Stem::Mono(SparseBuf::from_dense(&x)))
+            .expect("not silent");
+        let Stem::Mono(y) = &p.audio else {
+            panic!("lead is mono")
+        };
         let scaled: Vec<f32> = y.to_dense().iter().map(|v| v * p.level).collect();
         let r = active_rms_dense(&scaled);
         assert!(r > 0.05 && r < 0.12, "{r}");

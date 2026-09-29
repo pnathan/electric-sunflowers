@@ -49,7 +49,11 @@ pub fn f_clef(out: &mut String, x: f64, y: f64, scale: f64) {
     let mut d = format!("M{:.2} {:.2}", pts[0].0, pts[0].1);
     for chunk in pts[1..].chunks(3) {
         if chunk.len() == 3 {
-            let _ = write!(d, "C{:.2} {:.2} {:.2} {:.2} {:.2} {:.2}", chunk[0].0, chunk[0].1, chunk[1].0, chunk[1].1, chunk[2].0, chunk[2].1);
+            let _ = write!(
+                d,
+                "C{:.2} {:.2} {:.2} {:.2} {:.2} {:.2}",
+                chunk[0].0, chunk[0].1, chunk[1].0, chunk[1].1, chunk[2].0, chunk[2].1
+            );
         }
     }
     let _ = write!(
@@ -65,15 +69,26 @@ pub fn f_clef(out: &mut String, x: f64, y: f64, scale: f64) {
     fill_path(out, &d);
     let r = 0.16 * s;
     let cx = x + 1.55 * s;
-    let _ = write!(out, r##"<circle cx="{cx:.2}" cy="{:.2}" r="{r:.2}" fill="#111"/>"##, y - 0.45 * s);
-    let _ = write!(out, r##"<circle cx="{cx:.2}" cy="{:.2}" r="{r:.2}" fill="#111"/>"##, y + 0.45 * s);
+    let _ = write!(
+        out,
+        r##"<circle cx="{cx:.2}" cy="{:.2}" r="{r:.2}" fill="#111"/>"##,
+        y - 0.45 * s
+    );
+    let _ = write!(
+        out,
+        r##"<circle cx="{cx:.2}" cy="{:.2}" r="{r:.2}" fill="#111"/>"##,
+        y + 0.45 * s
+    );
 }
 
 /// The small "8" under (or, reused, over) a clef, for an octave-transposed
 /// staff (`Bass8vb`; `Treble8vb` already has Bravura's own `gClef8vb`,
 /// which needs no help from this module).
 pub fn clef_8(out: &mut String, x: f64, y: f64, px: f64) {
-    let _ = write!(out, r#"<text x="{x:.1}" y="{y:.1}" font-size="{px:.1}" text-anchor="middle" font-style="italic">8</text>"#);
+    let _ = write!(
+        out,
+        r#"<text x="{x:.1}" y="{y:.1}" font-size="{px:.1}" text-anchor="middle" font-style="italic">8</text>"#
+    );
 }
 
 /// Percussion clef: two thick bars, 1 staff space tall and 0.25 space
@@ -86,7 +101,11 @@ pub fn percussion_clef(out: &mut String, x: f64, y: f64, scale: f64) {
     let gap = 0.5 * s;
     for i in 0..2 {
         let bx = x + i as f64 * (w + gap);
-        let _ = write!(out, r##"<rect x="{bx:.2}" y="{:.2}" width="{w:.2}" height="{h:.2}" fill="#111"/>"##, y - h * 0.5);
+        let _ = write!(
+            out,
+            r##"<rect x="{bx:.2}" y="{:.2}" width="{w:.2}" height="{h:.2}" fill="#111"/>"##,
+            y - h * 0.5
+        );
     }
 }
 
@@ -130,7 +149,12 @@ pub fn slash_notehead(out: &mut String, x: f64, y: f64, scale: f64) {
 pub fn bracket(out: &mut String, x: f64, y_top: f64, y_bot: f64, scale: f64) {
     let w = 0.5 * SP * scale;
     let hook = 0.7 * SP * scale;
-    let _ = write!(out, r##"<rect x="{:.2}" y="{y_top:.2}" width="{w:.2}" height="{:.2}" fill="#111"/>"##, x - w, y_bot - y_top);
+    let _ = write!(
+        out,
+        r##"<rect x="{:.2}" y="{y_top:.2}" width="{w:.2}" height="{:.2}" fill="#111"/>"##,
+        x - w,
+        y_bot - y_top
+    );
     for (y, dir) in [(y_top, -1.0), (y_bot, 1.0)] {
         let d = format!(
             "M{x0:.2} {y:.2}C{x1:.2} {y:.2} {x0:.2} {y1:.2} {x0:.2} {y1:.2}L{x0:.2} {y:.2}Z",

@@ -23,7 +23,11 @@ fn song_with(syl: &str, ph: Option<&str>, tempo: Value) -> Value {
 fn dropped(r: &[Repair]) -> Vec<String> {
     r.iter()
         .filter_map(|x| match x {
-            Repair::DroppedSyllable { section: 0, line: 1, text } => Some(text.clone()),
+            Repair::DroppedSyllable {
+                section: 0,
+                line: 1,
+                text,
+            } => Some(text.clone()),
             _ => None,
         })
         .collect()
@@ -31,10 +35,18 @@ fn dropped(r: &[Repair]) -> Vec<String> {
 
 #[test]
 fn part_without_letter_or_digit_is_repaired() {
-    let (s, r) = normalize_value(&song_with("*hold ... on-", Some("hh ow l d|aa n"), json!(90))).unwrap();
+    let (s, r) = normalize_value(&song_with(
+        "*hold ... on-",
+        Some("hh ow l d|aa n"),
+        json!(90),
+    ))
+    .unwrap();
     assert_eq!(dropped(&r), vec!["...".to_string()], "{r:?}");
     let syls = &s.sections[0].lines()[1].syllables;
-    assert_eq!(syls.iter().map(|x| x.text.as_str()).collect::<Vec<_>>(), ["hold", "on"]);
+    assert_eq!(
+        syls.iter().map(|x| x.text.as_str()).collect::<Vec<_>>(),
+        ["hold", "on"]
+    );
 }
 
 #[test]
@@ -54,16 +66,31 @@ fn hyphen_splits_record_nothing() {
 fn line_of_only_punctuation_records_both_repairs() {
     let (s, r) = normalize_value(&song_with("... !", None, json!(90))).unwrap();
     assert_eq!(dropped(&r), ["...", "!"], "{r:?}");
-    assert!(r.contains(&Repair::DroppedLine { section: 0, line: 1 }), "{r:?}");
+    assert!(
+        r.contains(&Repair::DroppedLine {
+            section: 0,
+            line: 1
+        }),
+        "{r:?}"
+    );
     assert_eq!(s.sections[0].lines().len(), 1);
 }
 
 #[test]
 fn tempo_rounds_half_away_from_zero() {
-    for (t, want) in [(96.5, 97.0), (99.5, 100.0), (100.49, 100.0), (120.0, 120.0), (52.5, 53.0)] {
+    for (t, want) in [
+        (96.5, 97.0),
+        (99.5, 100.0),
+        (100.49, 100.0),
+        (120.0, 120.0),
+        (52.5, 53.0),
+    ] {
         let (s, r) = normalize_value(&song_with("one", None, json!(t))).unwrap();
         assert_eq!(s.tempo_bpm, want, "{t}");
-        assert!(r.iter().all(|x| !matches!(x, Repair::ClampedTempo { .. })), "{t}: {r:?}");
+        assert!(
+            r.iter().all(|x| !matches!(x, Repair::ClampedTempo { .. })),
+            "{t}: {r:?}"
+        );
     }
     // Just below one half: floor(x + 0.5) gives 1 (x + 0.5 rounds up to 1.0), f64::round gives 0;
     // both are clamped to the range floor and reported.
@@ -71,5 +98,8 @@ fn tempo_rounds_half_away_from_zero() {
     assert_eq!(x.round(), 0.0);
     let (s, r) = normalize_value(&song_with("one", None, json!(x))).unwrap();
     assert_eq!(s.tempo_bpm, 52.0);
-    assert!(r.contains(&Repair::ClampedTempo { from: x, to: 52.0 }), "{r:?}");
+    assert!(
+        r.contains(&Repair::ClampedTempo { from: x, to: 52.0 }),
+        "{r:?}"
+    );
 }

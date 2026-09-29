@@ -38,7 +38,8 @@ impl RenderInfo {
     /// Reads a `<stem>.render.json`. Unknown or malformed fields are left out.
     pub fn read(path: &Path) -> Result<RenderInfo, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        let v: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(str::to_string);
         Ok(RenderInfo {
             seed: v.get("seed").and_then(|x| x.as_u64()),
@@ -48,7 +49,9 @@ impl RenderInfo {
             song_json: s("song_json").map(PathBuf::from),
             audio: s("audio").map(PathBuf::from),
             created: s("created"),
-            generation: v.get("generation").and_then(|g| serde_json::from_value(g.clone()).ok()),
+            generation: v
+                .get("generation")
+                .and_then(|g| serde_json::from_value(g.clone()).ok()),
         })
     }
 }
@@ -73,8 +76,18 @@ impl Entry {
     /// The entry for the song JSON at `path` (outside or inside a library).
     pub fn for_song(path: &Path) -> Entry {
         let stem = path.with_extension("");
-        let name = stem.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "song".into());
-        let mut e = Entry { name, source: Source::File(path.to_path_buf()), stem, audio: None, render: None, render_error: None };
+        let name = stem
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "song".into());
+        let mut e = Entry {
+            name,
+            source: Source::File(path.to_path_buf()),
+            stem,
+            audio: None,
+            render: None,
+            render_error: None,
+        };
         e.refresh();
         e
     }
@@ -118,14 +131,22 @@ impl Entry {
         self.audio = if ogg.is_file() {
             Some(ogg)
         } else {
-            self.render.as_ref().and_then(|r| r.audio.clone()).filter(|a| a.is_file())
+            self.render
+                .as_ref()
+                .and_then(|r| r.audio.clone())
+                .filter(|a| a.is_file())
         };
         // A sidecar's song_json names a take's own song when the stem has
         // none of its own (the stem's own JSON always wins).
         if self.source != Source::Demo {
             let own = matches!(&self.source, Source::File(p) if p.is_file());
             if !own {
-                if let Some(p) = self.render.as_ref().and_then(|r| r.song_json.clone()).filter(|p| p.is_file()) {
+                if let Some(p) = self
+                    .render
+                    .as_ref()
+                    .and_then(|r| r.song_json.clone())
+                    .filter(|p| p.is_file())
+                {
                     self.source = Source::File(p);
                 }
             }
@@ -135,7 +156,9 @@ impl Entry {
 
 /// The default library directory, `~/Music/sunflower`.
 pub fn default_dir() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
     home.join("Music").join("sunflower")
 }
 
@@ -181,9 +204,16 @@ pub fn scan(dir: &Path) -> Result<Vec<Entry>, String> {
 pub fn fresh_stem(dir: &Path, title: &str) -> PathBuf {
     let base = slugify(title);
     for k in 1..10_000 {
-        let name = if k == 1 { base.clone() } else { format!("{base}-{k}") };
+        let name = if k == 1 {
+            base.clone()
+        } else {
+            format!("{base}-{k}")
+        };
         let stem = dir.join(&name);
-        if !stem.with_extension("json").exists() && !stem.with_extension("ogg").exists() && !dir.join(format!("{name}.render.json")).exists() {
+        if !stem.with_extension("json").exists()
+            && !stem.with_extension("ogg").exists()
+            && !dir.join(format!("{name}.render.json")).exists()
+        {
             return stem;
         }
     }
@@ -207,7 +237,11 @@ pub fn slugify(s: &str) -> String {
     if t.is_empty() {
         "song".into()
     } else {
-        t.chars().take(60).collect::<String>().trim_end_matches('-').to_string()
+        t.chars()
+            .take(60)
+            .collect::<String>()
+            .trim_end_matches('-')
+            .to_string()
     }
 }
 
@@ -224,12 +258,23 @@ mod tests {
         std::fs::write(dir.join("a.ogg"), "x").unwrap();
         std::fs::write(dir.join("a.sheet.json"), "{}").unwrap();
         std::fs::write(dir.join("b.json"), "{}").unwrap();
-        std::fs::write(dir.join("b.render.json"), r#"{"seed": 7, "voice": "alto", "style": "shanty"}"#).unwrap();
+        std::fs::write(
+            dir.join("b.render.json"),
+            r#"{"seed": 7, "voice": "alto", "style": "shanty"}"#,
+        )
+        .unwrap();
         // A take of a.json.
-        let side = format!(r#"{{"seed": 3, "song_json": "{}"}}"#, dir.join("a.json").display());
+        let side = format!(
+            r#"{{"seed": 3, "song_json": "{}"}}"#,
+            dir.join("a.json").display()
+        );
         std::fs::write(dir.join("c.render.json"), side).unwrap();
         // A take whose song is gone.
-        std::fs::write(dir.join("d.render.json"), r#"{"seed": 3, "song_json": "/nonexistent/x.json"}"#).unwrap();
+        std::fs::write(
+            dir.join("d.render.json"),
+            r#"{"seed": 3, "song_json": "/nonexistent/x.json"}"#,
+        )
+        .unwrap();
         std::fs::write(dir.join("e.render.json"), "not json").unwrap();
         std::fs::write(dir.join("e.json"), "{}").unwrap();
 
@@ -239,7 +284,10 @@ mod tests {
         assert_eq!(v[1].audio.as_deref(), Some(dir.join("a.ogg").as_path()));
         assert!(v[1].render.is_none());
         let b = v[2].render.as_ref().unwrap();
-        assert_eq!((b.seed, b.voice, b.style.as_deref()), (Some(7), Some(Voice::Alto), Some("shanty")));
+        assert_eq!(
+            (b.seed, b.voice, b.style.as_deref()),
+            (Some(7), Some(Voice::Alto), Some("shanty"))
+        );
         assert_eq!(v[3].source, Source::File(dir.join("a.json")));
         assert!(v[4].render.is_none() && v[4].render_error.is_some());
         std::fs::remove_dir_all(&dir).unwrap();

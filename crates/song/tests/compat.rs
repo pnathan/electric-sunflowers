@@ -24,13 +24,22 @@ fn demo_normalises_with_no_repairs() {
                     n_lines += 1;
                     n_syl += l.syllables.len();
                     n_chords += l.bars.iter().map(|x| x.len()).sum::<usize>();
-                    assert!(l.syllables.iter().all(|x| !x.phones.is_empty()), "{}", l.text());
+                    assert!(
+                        l.syllables.iter().all(|x| !x.phones.is_empty()),
+                        "{}",
+                        l.text()
+                    );
                 }
             }
-            SectionBody::Instrumental(bars) => n_chords += bars.iter().map(|x| x.len()).sum::<usize>(),
+            SectionBody::Instrumental(bars) => {
+                n_chords += bars.iter().map(|x| x.len()).sum::<usize>()
+            }
         }
     }
-    assert!(n_lines >= 20 && n_syl >= 150 && n_chords >= 40, "{n_lines} lines, {n_syl} syllables, {n_chords} chords");
+    assert!(
+        n_lines >= 20 && n_syl >= 150 && n_chords >= 40,
+        "{n_lines} lines, {n_syl} syllables, {n_chords} chords"
+    );
     assert!(s.sections.iter().any(|x| x.kind == SectionKind::Bridge));
 }
 
@@ -55,8 +64,15 @@ fn validate(schema: &Value, v: &Value, path: &str) -> Result<(), String> {
         }
     }
     if let Some(o) = v.as_object() {
-        let props = schema["properties"].as_object().ok_or(format!("{path}: no properties"))?;
-        for r in schema["required"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+        let props = schema["properties"]
+            .as_object()
+            .ok_or(format!("{path}: no properties"))?;
+        for r in schema["required"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
             if !o.contains_key(r) {
                 return Err(format!("{path}: missing {r}"));
             }
@@ -64,7 +80,9 @@ fn validate(schema: &Value, v: &Value, path: &str) -> Result<(), String> {
         for (k, x) in o {
             match props.get(k) {
                 Some(ps) => validate(ps, x, &format!("{path}.{k}"))?,
-                None if schema["additionalProperties"] == false => return Err(format!("{path}: extra {k}")),
+                None if schema["additionalProperties"] == false => {
+                    return Err(format!("{path}: extra {k}"))
+                }
                 None => {}
             }
         }
@@ -108,12 +126,20 @@ fn schema_round_trip() {
             assert!(r.is_empty(), "{field}={name}: {r:?}");
         }
     }
-    for name in sch["properties"]["band"]["properties"]["drums"]["enum"].as_array().into_iter().flatten() {
+    for name in sch["properties"]["band"]["properties"]["drums"]["enum"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
         let mut x = v.clone();
         x["band"]["drums"] = name.clone();
         assert!(normalize_value(&x).unwrap().1.is_empty());
     }
-    for name in sch["properties"]["sections"]["items"]["properties"]["type"]["enum"].as_array().into_iter().flatten() {
+    for name in sch["properties"]["sections"]["items"]["properties"]["type"]["enum"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
         let mut x = v.clone();
         x["sections"][1]["type"] = name.clone();
         let (s, r) = normalize_value(&x).unwrap();

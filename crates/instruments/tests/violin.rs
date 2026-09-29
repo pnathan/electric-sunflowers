@@ -12,7 +12,13 @@ use sfcore::SR_F;
 use song::events::BowNote;
 
 fn note(t0: f64, t1: f64, midi: f32, vel: f32, vibrato: bool) -> BowNote {
-    BowNote { t0, t1, midi, vel, vibrato }
+    BowNote {
+        t0,
+        t1,
+        midi,
+        vel,
+        vibrato,
+    }
 }
 
 #[test]
@@ -25,7 +31,10 @@ fn helmholtz_single_notes() {
 #[test]
 fn helmholtz_phrases() {
     let (ok, total, bad) = phrase_sweep();
-    assert!(ok * 100 >= total * 95, "phrase notes {ok}/{total}, failing {bad:?}");
+    assert!(
+        ok * 100 >= total * 95,
+        "phrase notes {ok}/{total}, failing {bad:?}"
+    );
 }
 
 /// Mean f0 over `x` by autocorrelation at about `periods` periods of the
@@ -38,10 +47,16 @@ fn f0_autocorr(x: &[f32], f_expect: f64, periods: usize) -> f64 {
     let n = x.len() - hi - 1;
     let r = |lag: usize| -> f64 { (0..n).map(|i| x[i] as f64 * x[i + lag] as f64).sum() };
     let vals: Vec<f64> = (lo - 1..=hi + 1).map(r).collect();
-    let bi = (1..vals.len() - 1).max_by(|&i, &j| vals[i].total_cmp(&vals[j])).unwrap_or(1);
+    let bi = (1..vals.len() - 1)
+        .max_by(|&i, &j| vals[i].total_cmp(&vals[j]))
+        .unwrap_or(1);
     let (a, b, c) = (vals[bi - 1], vals[bi], vals[bi + 1]);
     let den = a - 2.0 * b + c;
-    let off = if den.abs() > 1e-30 { 0.5 * (a - c) / den } else { 0.0 };
+    let off = if den.abs() > 1e-30 {
+        0.5 * (a - c) / den
+    } else {
+        0.0
+    };
     let lag = (lo - 1 + bi) as f64 + off;
     SR_F / lag * periods as f64
 }
@@ -49,7 +64,10 @@ fn f0_autocorr(x: &[f32], f_expect: f64, periods: usize) -> f64 {
 #[test]
 fn sustained_f0_within_10_cents() {
     let len = (2.0 * SR_F) as usize;
-    for (i, m) in [55.0f32, 62.0, 69.0, 76.0, 81.0, 88.0].into_iter().enumerate() {
+    for (i, m) in [55.0f32, 62.0, 69.0, 76.0, 81.0, 88.0]
+        .into_iter()
+        .enumerate()
+    {
         let x = render_violin(&[note(0.1, 1.8, m, 0.6, false)], len, 40 + i as u64);
         let seg = &x[(0.6 * SR_F) as usize..(1.6 * SR_F) as usize];
         let f = f0_autocorr(seg, mtof(m as f64), 8);
@@ -65,12 +83,12 @@ fn output_finite_and_bounded() {
         note(0.0, 0.4, 60.0, 0.5, true),
         note(0.42, 3.9, 72.0, 1.0, true),
         note(3.92, 4.2, 90.0, 0.85, false),
-        note(5.0, 5.3, 40.0, 0.7, true),   // below MIN_F0: raised
-        note(6.0, 6.2, 120.0, 0.7, true),  // above MAX_F0: lowered
-        note(7.0, 6.0, 64.0, 0.7, true),   // empty: dropped
+        note(5.0, 5.3, 40.0, 0.7, true),  // below MIN_F0: raised
+        note(6.0, 6.2, 120.0, 0.7, true), // above MAX_F0: lowered
+        note(7.0, 6.0, 64.0, 0.7, true),  // empty: dropped
         note(f64::NAN, 1.0, 64.0, 0.7, true),
-        note(-0.5, 0.3, 67.0, 0.9, true),  // starts before the buffer
-        note(7.9, 9.0, 67.0, 0.9, true),   // runs past the end
+        note(-0.5, 0.3, 67.0, 0.9, true), // starts before the buffer
+        note(7.9, 9.0, 67.0, 0.9, true),  // runs past the end
     ];
     let x = render_violin(&notes, (8.0 * SR_F) as usize, 3);
     assert!(x.iter().all(|v| v.is_finite()));
@@ -82,14 +100,20 @@ fn output_finite_and_bounded() {
 
 #[test]
 fn deterministic() {
-    let notes = [note(0.1, 0.8, 64.0, 0.6, true), note(0.82, 1.5, 71.0, 0.6, true)];
-    assert_eq!(render_violin(&notes, 80_000, 9), render_violin(&notes, 80_000, 9));
+    let notes = [
+        note(0.1, 0.8, 64.0, 0.6, true),
+        note(0.82, 1.5, 71.0, 0.6, true),
+    ];
+    assert_eq!(
+        render_violin(&notes, 80_000, 9),
+        render_violin(&notes, 80_000, 9)
+    );
 }
 
 #[test]
 fn planner_splits_groups_and_alternates() {
     let notes = [
-        note(0.0, 5.0, 60.0, 0.6, true),  // split into 3 strokes (1.6-2.2 s each)
+        note(0.0, 5.0, 60.0, 0.6, true), // split into 3 strokes (1.6-2.2 s each)
         note(5.02, 5.3, 67.0, 0.6, true), // same phrase (gap 0.02)
         note(6.0, 6.5, 62.0, 0.6, false), // new phrase (gap 0.7)
     ];
@@ -120,7 +144,9 @@ fn third_octave_db(x: &[f32]) -> Vec<f64> {
     let mut buf = vec![0.0f32; N];
     let mut spec = vec![C32::default(); fft.spectrum_len()];
     let mut pow = vec![0.0f64; fft.spectrum_len()];
-    let win: Vec<f32> = (0..N).map(|i| (0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / N as f64).cos()) as f32).collect();
+    let win: Vec<f32> = (0..N)
+        .map(|i| (0.5 - 0.5 * (std::f64::consts::TAU * i as f64 / N as f64).cos()) as f32)
+        .collect();
     let mut start = 0;
     while start + N <= x.len() {
         for i in 0..N {
@@ -149,8 +175,8 @@ fn third_octave_db(x: &[f32]) -> Vec<f64> {
 /// for `spectrum_matches_earlier_model`. Measured at commit 50ade40, the
 /// last tree that held that model.
 const EARLIER_MODEL_DB: [f64; 17] = [
-    -35.42, -35.57, -34.95, -2.72, -9.74, -37.55, -8.33, -13.62, -11.48, -15.02, -14.39, -16.90, -19.10, -20.16, -22.78,
-    -24.45, -27.52,
+    -35.42, -35.57, -34.95, -2.72, -9.74, -37.55, -8.33, -13.62, -11.48, -15.02, -14.39, -16.90,
+    -19.10, -20.16, -22.78, -24.45, -27.52,
 ];
 
 /// A sustained A4, mf (velocity 0.6), vibrato on, 2.2 s: the 1/3-octave
@@ -173,9 +199,15 @@ fn spectrum_matches_earlier_model() {
     let mut report = String::new();
     for (k, (n, o)) in new_db.iter().zip(&EARLIER_MODEL_DB).enumerate() {
         let fc = 1000.0 * 10f64.powf((k as f64 - 7.0) / 10.0);
-        report += &format!("{fc:7.0} Hz  new {n:7.2}  old {o:7.2}  diff {:+6.2}\n", n - o);
+        report += &format!(
+            "{fc:7.0} Hz  new {n:7.2}  old {o:7.2}  diff {:+6.2}\n",
+            n - o
+        );
         worst = worst.max((n - o).abs());
     }
     println!("{report}");
-    assert!(worst <= 3.0, "worst band difference {worst:.2} dB\n{report}");
+    assert!(
+        worst <= 3.0,
+        "worst band difference {worst:.2} dB\n{report}"
+    );
 }

@@ -23,10 +23,16 @@ impl Fft {
             return None;
         }
         let bits = n.trailing_zeros();
-        let rev = (0..n).map(|i| i.reverse_bits() >> (usize::BITS - bits)).collect();
+        let rev = (0..n)
+            .map(|i| i.reverse_bits() >> (usize::BITS - bits))
+            .collect();
         let half = n / 2;
-        let cos = (0..half).map(|k| (-2.0 * PI * k as f64 / n as f64).cos()).collect();
-        let sin = (0..half).map(|k| (-2.0 * PI * k as f64 / n as f64).sin()).collect();
+        let cos = (0..half)
+            .map(|k| (-2.0 * PI * k as f64 / n as f64).cos())
+            .collect();
+        let sin = (0..half)
+            .map(|k| (-2.0 * PI * k as f64 / n as f64).sin())
+            .collect();
         Some(Fft { n, rev, cos, sin })
     }
 
@@ -100,7 +106,9 @@ mod tests {
                     sr += v * ph.cos();
                     si += v * ph.sin();
                 }
-                assert!((sr - re[k]).abs() < 1e-8 * n as f64 && (si - im[k]).abs() < 1e-8 * n as f64);
+                assert!(
+                    (sr - re[k]).abs() < 1e-8 * n as f64 && (si - im[k]).abs() < 1e-8 * n as f64
+                );
             }
             fft.run(&mut re, &mut im, true);
             for i in 0..n {

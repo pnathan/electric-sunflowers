@@ -49,7 +49,6 @@ use crate::phrasing::PhrasingParams;
 use crate::tract::{Formants, Tract, MAX_HIGH};
 use crate::tuning::{ASPIRATION_GAIN, BREATH_LP_HZ, TILT_SCALE};
 
-
 const SOURCE: Tag = tag("voice.source");
 const NOISE: Tag = tag("voice.noise");
 const FORMANT: Tag = tag("voice.formant");
@@ -190,7 +189,10 @@ impl VoiceSynth {
             noise: Rng::stream(seed, NOISE),
             source_rng: Rng::stream(seed, SOURCE),
             formant_rng: Rng::stream(seed, FORMANT),
-            wobble: [RandomWalk::bounded(0.02, 0.97, 0.01, 0.02), RandomWalk::bounded(0.02, 0.97, 0.01, 0.025)],
+            wobble: [
+                RandomWalk::bounded(0.02, 0.97, 0.01, 0.02),
+                RandomWalk::bounded(0.02, 0.97, 0.01, 0.025),
+            ],
             breath_lp: OnePole::from_hz(BREATH_LP_HZ, SR_F),
             breath: p.breath,
             asp: [0.0; HOP],
@@ -271,7 +273,8 @@ impl VoiceSynth {
 
             let fric_on = af.0 > 1e-6 || af.1 > 1e-6 || self.tract.frication_ringing();
             if fric_on {
-                self.tract.set_frication(ctl.ff[m] as f64, ctl.fbw[m] as f64);
+                self.tract
+                    .set_frication(ctl.ff[m] as f64, ctl.fbw[m] as f64);
             } else {
                 self.tract.reset_frication();
             }
@@ -316,19 +319,29 @@ impl VoiceSynth {
         let mut exc = [0.0f64; HOP];
         let mut fin = [0.0f64; HOP];
         let (asp, fric) = (&self.asp, &self.fric);
-        self.source.run(n, ramp(fr.f0), (av, dav), &mut self.source_rng, |j, pulse, flow| {
-            let t = j as f64;
-            let a = av + dav * t;
-            let nz = asp[j] as f64;
-            let n1 = lp.tick(nz) * 1.9;
-            exc[j] = pulse * a + (nz * (ah + dah * t) * 0.9 * ASPIRATION_GAIN + n1 * breath * a * (0.18 + 0.9 * flow)) * 0.55;
-            if FRIC {
-                fin[j] = fric[j] as f64 * (af + daf * t);
-            }
-        });
+        self.source.run(
+            n,
+            ramp(fr.f0),
+            (av, dav),
+            &mut self.source_rng,
+            |j, pulse, flow| {
+                let t = j as f64;
+                let a = av + dav * t;
+                let nz = asp[j] as f64;
+                let n1 = lp.tick(nz) * 1.9;
+                exc[j] = pulse * a
+                    + (nz * (ah + dah * t) * 0.9 * ASPIRATION_GAIN
+                        + n1 * breath * a * (0.18 + 0.9 * flow))
+                        * 0.55;
+                if FRIC {
+                    fin[j] = fric[j] as f64 * (af + daf * t);
+                }
+            },
+        );
         self.breath_lp = lp;
         self.tract.cascade_block(&mut exc[..n]);
-        self.tract.finish_block::<FRIC>(&exc[..n], &fin[..n], &mut out[..n]);
+        self.tract
+            .finish_block::<FRIC>(&exc[..n], &fin[..n], &mut out[..n]);
         self.tract.flush_denormals();
     }
 }
@@ -360,12 +373,20 @@ pub fn phrases(notes: &[VocalNote]) -> Vec<Range<usize>> {
 /// next phrase's first onset: both windows plan that pause alike (silence,
 /// or a breath), so the smoothers restart where the tracks are flat, not
 /// inside a note.
-pub(crate) fn phrase_spans(notes: &[VocalNote], art: &Articulation, n_f: usize) -> Vec<(Range<usize>, Range<usize>)> {
+pub(crate) fn phrase_spans(
+    notes: &[VocalNote],
+    art: &Articulation,
+    n_f: usize,
+) -> Vec<(Range<usize>, Range<usize>)> {
     let fr = SR_F / HOP as f64;
     let frame_at = |t: f64, up: bool| -> usize {
         let x = t * fr;
         let x = if up { x.ceil() } else { x.floor() };
-        if x.is_finite() && x > 0.0 { (x as usize).min(n_f) } else { 0 }
+        if x.is_finite() && x > 0.0 {
+            (x as usize).min(n_f)
+        } else {
+            0
+        }
     };
     let groups = phrases(notes);
     let mut spans = Vec::with_capacity(groups.len());
@@ -426,7 +447,15 @@ pub(crate) fn render_phrases_with(
         return;
     }
     let notes: Cow<[VocalNote]> = if settings.lateness != 0.0 {
-        Cow::Owned(notes.iter().map(|n| VocalNote { t0: n.t0 + settings.lateness, ..n.clone() }).collect())
+        Cow::Owned(
+            notes
+                .iter()
+                .map(|n| VocalNote {
+                    t0: n.t0 + settings.lateness,
+                    ..n.clone()
+                })
+                .collect(),
+        )
     } else {
         Cow::Borrowed(notes)
     };
@@ -454,7 +483,14 @@ pub(crate) fn render_phrases_with(
         if s0 >= len {
             break;
         }
-        art.phrase(g, Window { start: s.start, len: s.len() + 1 }, &mut ctl);
+        art.phrase(
+            g,
+            Window {
+                start: s.start,
+                len: s.len() + 1,
+            },
+            &mut ctl,
+        );
         let n = (s.len() * HOP).min(len - s0);
         let buf = &mut scratch[..n];
         synth.render_frames(&ctl, 0..s.len(), buf);

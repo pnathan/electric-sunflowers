@@ -14,7 +14,12 @@ pub struct Ramp {
 impl Ramp {
     /// A ramp at rest on `value`.
     pub fn new(value: f64) -> Self {
-        Ramp { value, step: 0.0, left: 0, target: value }
+        Ramp {
+            value,
+            step: 0.0,
+            left: 0,
+            target: value,
+        }
     }
 
     /// Move to `target` over `n` samples; n = 0 jumps.
@@ -36,7 +41,11 @@ impl Ramp {
     pub fn next(&mut self) -> f64 {
         if self.left > 0 {
             self.left -= 1;
-            self.value = if self.left == 0 { self.target } else { self.value + self.step };
+            self.value = if self.left == 0 {
+                self.target
+            } else {
+                self.value + self.step
+            };
         }
         self.value
     }

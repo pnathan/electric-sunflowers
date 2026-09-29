@@ -3,7 +3,9 @@
 
 use dsp::biquad::{Biquad, BiquadCoeffs};
 use dsp::fft::{RealFft, C32};
-use instruments::drums::{blep_square, hit_len, render_drums, render_hit, DrumScratch, DRUM_HIT, RIDE_BASE_HZ, RIDE_SCALE};
+use instruments::drums::{
+    blep_square, hit_len, render_drums, render_hit, DrumScratch, DRUM_HIT, RIDE_BASE_HZ, RIDE_SCALE,
+};
 use sfcore::random::Rng;
 use sfcore::SR_F;
 use song::events::{DrumHit, DrumKind};
@@ -22,7 +24,12 @@ const ALL: [DrumKind; 10] = [
 ];
 
 fn hit(kind: DrumKind) -> DrumHit {
-    DrumHit { t: 0.0, kind, vel: 1.0, pan: -1.0 }
+    DrumHit {
+        t: 0.0,
+        kind,
+        vel: 1.0,
+        pan: -1.0,
+    }
 }
 
 /// Mono voice at unit velocity: hard left, so the left gain is 1.
@@ -96,7 +103,8 @@ fn energy_in(x: &[f32], f_lo: f64, f_hi: f64) -> f64 {
     let fft = RealFft::new(n);
     let mut spec = vec![C32::new(0.0, 0.0); fft.spectrum_len()];
     let mut scratch = fft.make_scratch();
-    fft.forward(&mut buf, &mut spec, &mut scratch).expect("fft sizes");
+    fft.forward(&mut buf, &mut spec, &mut scratch)
+        .expect("fft sizes");
     let k0 = (f_lo / SR_F * n as f64).ceil() as usize;
     let k1 = ((f_hi / SR_F * n as f64).ceil() as usize).min(spec.len());
     spec[k0..k1].iter().map(|c| c.norm_sqr() as f64).sum()
@@ -124,7 +132,8 @@ fn cluster_aliasing(phase0: [f64; 6]) -> (Vec<f32>, Vec<f32>) {
             let mut ideal = 0.0;
             for j in 0..n_harm {
                 let h = (2 * j + 1) as f64;
-                ideal += (4.0 / (std::f64::consts::PI * h)) * (2.0 * std::f64::consts::PI * h * pn).sin();
+                ideal += (4.0 / (std::f64::consts::PI * h))
+                    * (2.0 * std::f64::consts::PI * h * pn).sin();
             }
             naive_err[i] += ((naive - ideal) / 6.0) as f32;
             blep_err[i] += ((blep - ideal) / 6.0) as f32;
@@ -136,7 +145,8 @@ fn cluster_aliasing(phase0: [f64; 6]) -> (Vec<f32>, Vec<f32>) {
 #[test]
 fn ride_polyblep_cuts_aliasing() {
     let (naive, blep) = cluster_aliasing([0.1, 0.3, 0.5, 0.7, 0.9, 0.2]);
-    let db = |lo: f64, hi: f64| 10.0 * (energy_in(&naive, lo, hi) / energy_in(&blep, lo, hi)).log10();
+    let db =
+        |lo: f64, hi: f64| 10.0 * (energy_in(&naive, lo, hi) / energy_in(&blep, lo, hi)).log10();
     let low = db(0.0, 3500.0);
     let mid = db(3500.0, 10_000.0);
     println!("ride cluster aliasing, naive / PolyBLEP: below 3.5 kHz {low:.1} dB, 3.5-10 kHz {mid:.1} dB");
@@ -149,7 +159,8 @@ fn ride_hit_energy_above_15k_below_naive() {
     for seed in [1u64, 2, 3] {
         let blep = mono(DrumKind::Ride, seed);
         let naive = naive_ride(seed);
-        let db = 10.0 * (energy_in(&naive, 15_000.0, SR_F) / energy_in(&blep, 15_000.0, SR_F)).log10();
+        let db =
+            10.0 * (energy_in(&naive, 15_000.0, SR_F) / energy_in(&blep, 15_000.0, SR_F)).log10();
         println!("seed {seed}: ride energy above 15 kHz, naive / PolyBLEP = {db:.1} dB");
         assert!(db >= 5.0, "only {db:.1} dB below the naive squares");
     }
@@ -164,11 +175,25 @@ fn every_kind_is_finite_and_bounded() {
             let mut l = vec![0.0f32; n];
             let mut r = vec![0.0f32; n];
             let mut rng = Rng::event(seed, DRUM_HIT, j as u64);
-            render_hit(&DrumHit { t: 0.0, kind, vel: 1.0, pan: 0.0 }, &mut rng, &mut l, &mut r, &mut scratch);
+            render_hit(
+                &DrumHit {
+                    t: 0.0,
+                    kind,
+                    vel: 1.0,
+                    pan: 0.0,
+                },
+                &mut rng,
+                &mut l,
+                &mut r,
+                &mut scratch,
+            );
             // Undo the centre pan gain to get the unit-velocity voice.
             let g = std::f32::consts::FRAC_1_SQRT_2;
             let peak = l.iter().map(|v| (v / g).abs()).fold(0.0f32, f32::max);
-            assert!(l.iter().chain(&r).all(|v| v.is_finite()), "{kind:?} not finite");
+            assert!(
+                l.iter().chain(&r).all(|v| v.is_finite()),
+                "{kind:?} not finite"
+            );
             assert!(peak <= 1.5, "{kind:?} seed {seed} peak {peak}");
             assert!(peak > 0.01, "{kind:?} seed {seed} silent");
         }
@@ -182,13 +207,48 @@ fn bad_input_does_not_panic() {
     let mut scratch = DrumScratch::new();
     let mut rng = Rng::from_seed(1);
     let odd = [
-        DrumHit { t: -0.3, kind: DrumKind::Ride, vel: 1.0, pan: 5.0 },
-        DrumHit { t: 1e12, kind: DrumKind::Kick, vel: 1.0, pan: 0.0 },
-        DrumHit { t: f64::NAN, kind: DrumKind::Kick, vel: 1.0, pan: 0.0 },
-        DrumHit { t: 0.0, kind: DrumKind::Swish { dur: f32::INFINITY }, vel: 1.0, pan: f32::NAN },
-        DrumHit { t: 0.0, kind: DrumKind::Swish { dur: -1.0 }, vel: f32::NAN, pan: 0.0 },
-        DrumHit { t: 0.0, kind: DrumKind::Tom { hz: f32::NAN }, vel: 1.0, pan: 0.0 },
-        DrumHit { t: 0.0, kind: DrumKind::Tom { hz: 1e9 }, vel: 1.0, pan: 0.0 },
+        DrumHit {
+            t: -0.3,
+            kind: DrumKind::Ride,
+            vel: 1.0,
+            pan: 5.0,
+        },
+        DrumHit {
+            t: 1e12,
+            kind: DrumKind::Kick,
+            vel: 1.0,
+            pan: 0.0,
+        },
+        DrumHit {
+            t: f64::NAN,
+            kind: DrumKind::Kick,
+            vel: 1.0,
+            pan: 0.0,
+        },
+        DrumHit {
+            t: 0.0,
+            kind: DrumKind::Swish { dur: f32::INFINITY },
+            vel: 1.0,
+            pan: f32::NAN,
+        },
+        DrumHit {
+            t: 0.0,
+            kind: DrumKind::Swish { dur: -1.0 },
+            vel: f32::NAN,
+            pan: 0.0,
+        },
+        DrumHit {
+            t: 0.0,
+            kind: DrumKind::Tom { hz: f32::NAN },
+            vel: 1.0,
+            pan: 0.0,
+        },
+        DrumHit {
+            t: 0.0,
+            kind: DrumKind::Tom { hz: 1e9 },
+            vel: 1.0,
+            pan: 0.0,
+        },
     ];
     for h in &odd {
         render_hit(h, &mut rng, &mut l, &mut r, &mut scratch);
@@ -199,7 +259,12 @@ fn bad_input_does_not_panic() {
 #[test]
 fn render_drums_places_hits_and_pans() {
     let len = SR_F as usize;
-    let hits = [DrumHit { t: 0.5, kind: DrumKind::Hat, vel: 0.5, pan: 1.0 }];
+    let hits = [DrumHit {
+        t: 0.5,
+        kind: DrumKind::Hat,
+        vel: 0.5,
+        pan: 1.0,
+    }];
     let [l, r] = render_drums(&hits, 9, len);
     let at = (0.5 * SR_F) as usize;
     assert!(r[..at].iter().all(|v| *v == 0.0));

@@ -303,7 +303,6 @@ impl Tract {
         let c = self.shelf.coeffs();
         g * (c.b0 + c.b1 + c.b2) / (1.0 + c.a1 + c.a2)
     }
-
 }
 
 /// Three fixed sections (coefficients constant over the block) over `buf`

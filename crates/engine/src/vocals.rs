@@ -40,8 +40,15 @@ fn render_singer(singer: &Singer, seed: u64, len: usize, emit: impl FnMut(usize,
     if singer.offset == 0.0 {
         render_phrases(&singer.notes, singer.voice, &settings, seed, len, emit);
     } else {
-        let shifted: Vec<VocalNote> =
-            singer.notes.iter().map(|n| VocalNote { t0: n.t0 + singer.offset, t1: n.t1 + singer.offset, ..n.clone() }).collect();
+        let shifted: Vec<VocalNote> = singer
+            .notes
+            .iter()
+            .map(|n| VocalNote {
+                t0: n.t0 + singer.offset,
+                t1: n.t1 + singer.offset,
+                ..n.clone()
+            })
+            .collect();
         render_phrases(&shifted, singer.voice, &settings, seed, len, emit);
     }
 }
@@ -49,7 +56,9 @@ fn render_singer(singer: &Singer, seed: u64, len: usize, emit: impl FnMut(usize,
 /// `singer` into a mono stem channel at unit gain.
 pub fn mono_into(singer: &Singer, seed: u64, out: &mut SparseBuf) {
     let len = out.len();
-    render_singer(singer, seed, len, |start, x| out.add_at(start as isize, x, 1.0));
+    render_singer(singer, seed, len, |start, x| {
+        out.add_at(start as isize, x, 1.0)
+    });
 }
 
 /// `singer` panned (equal power at `singer.pan`) into a stereo stem.

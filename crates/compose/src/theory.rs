@@ -60,7 +60,10 @@ pub fn local_scale(tonic: Pc, mode: Mode, chord: &Chord) -> PcSet {
     // Root letter: step index of the first in-scale tone minus its degree.
     let root_letter = iv.iter().find_map(|&x| {
         let p = chord.root.transpose(x as i32).get();
-        s[..n].iter().position(|&q| q == p).map(|i| (i + 7 - generic(x, iv)) % 7)
+        s[..n]
+            .iter()
+            .position(|&q| q == p)
+            .map(|i| (i + 7 - generic(x, iv)) % 7)
     });
     let semi = |a: u8, b: u8| (a + 1) % 12 == b || (b + 1) % 12 == a;
     for &x in iv {
@@ -129,7 +132,9 @@ mod tests {
     fn scale(sym: &str, mode: Mode) -> Vec<u8> {
         let c = Chord::parse(sym).unwrap();
         let s = local_scale(Pc::C, mode, &c);
-        (0..12u8).filter(|&p| s.contains(Pc::new(p as i32))).collect()
+        (0..12u8)
+            .filter(|&p| s.contains(Pc::new(p as i32)))
+            .collect()
     }
 
     #[test]
@@ -152,14 +157,22 @@ mod tests {
     fn scale_on(tonic: Pc, sym: &str, mode: Mode) -> Vec<u8> {
         let c = Chord::parse(sym).unwrap();
         let s = local_scale(tonic, mode, &c);
-        (0..12u8).filter(|&p| s.contains(Pc::new(p as i32))).collect()
+        (0..12u8)
+            .filter(|&p| s.contains(Pc::new(p as i32)))
+            .collect()
     }
 
     #[test]
     fn local_scale_alters_the_lettered_step_in_other_keys() {
         // D major in F major: F# replaces F (not G), Bb stays.
-        assert_eq!(scale_on(Pc::new(5), "D", Mode::Major), vec![0, 2, 4, 6, 7, 9, 10]);
+        assert_eq!(
+            scale_on(Pc::new(5), "D", Mode::Major),
+            vec![0, 2, 4, 6, 7, 9, 10]
+        );
         // E major in A minor: G# replaces G (not A).
-        assert_eq!(scale_on(Pc::new(9), "E", Mode::Minor), vec![0, 2, 4, 5, 8, 9, 11]);
+        assert_eq!(
+            scale_on(Pc::new(9), "E", Mode::Minor),
+            vec![0, 2, 4, 5, 8, 9, 11]
+        );
     }
 }
