@@ -29,6 +29,9 @@ pub struct RenderInfo {
     pub song_json: Option<PathBuf>,
     pub audio: Option<PathBuf>,
     pub created: Option<String>,
+    /// How the song was written (`songwriter::sidecar::RenderSidecar`),
+    /// when the sidecar records one.
+    pub generation: Option<songwriter::usage::Generation>,
 }
 
 impl RenderInfo {
@@ -45,6 +48,7 @@ impl RenderInfo {
             song_json: s("song_json").map(PathBuf::from),
             audio: s("audio").map(PathBuf::from),
             created: s("created"),
+            generation: v.get("generation").and_then(|g| serde_json::from_value(g.clone()).ok()),
         })
     }
 }

@@ -15,6 +15,7 @@ mod audio;
 mod jobs;
 mod library;
 mod lyrics;
+mod settings_panel;
 mod sheetview;
 
 use std::path::PathBuf;

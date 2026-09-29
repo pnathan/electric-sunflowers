@@ -11,6 +11,7 @@ STUDIO_LOCAL_DEPS = [
     "//crates/export",
     "//crates/songwriter",
     "//crates/notation",
+    "//crates/settings",
 ]
 
 rust_binary(

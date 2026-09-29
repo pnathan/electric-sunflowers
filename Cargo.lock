@@ -3913,6 +3913,7 @@ dependencies = [
  "resvg",
  "rodio",
  "serde_json",
+ "settings",
  "sfcore",
  "song",
  "songwriter",
