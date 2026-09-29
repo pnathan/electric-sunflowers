@@ -39,7 +39,10 @@ pub struct SparseBuf {
 impl SparseBuf {
     /// An all-zero buffer of `len` samples (no block allocated).
     pub fn new(len: usize) -> Self {
-        SparseBuf { len, blocks: (0..len.div_ceil(STEM_BLOCK)).map(|_| None).collect() }
+        SparseBuf {
+            len,
+            blocks: (0..len.div_ceil(STEM_BLOCK)).map(|_| None).collect(),
+        }
     }
 
     /// A buffer holding `x`; all-zero blocks stay absent.
@@ -98,7 +101,10 @@ impl SparseBuf {
     /// Block `b` if present, mutable.
     pub fn block_mut_if_present(&mut self, b: usize) -> Option<&mut [f32]> {
         let n = self.block_len(b);
-        self.blocks.get_mut(b)?.as_deref_mut().map(|blk| &mut blk[..n])
+        self.blocks
+            .get_mut(b)?
+            .as_deref_mut()
+            .map(|blk| &mut blk[..n])
     }
 
     /// Frames `start .. start + n` if they are inside one present block.
@@ -204,7 +210,11 @@ pub trait Process {
 /// while the output rings above `RING_FLOOR` (mean square); then `p` is
 /// reset and absent blocks are skipped. `each` sees every processed block
 /// (index, output) after `p`, for statistics in the same pass.
-pub fn process_sparse<P: Process>(buf: &mut SparseBuf, p: &mut P, mut each: impl FnMut(usize, &[f32])) {
+pub fn process_sparse<P: Process>(
+    buf: &mut SparseBuf,
+    p: &mut P,
+    mut each: impl FnMut(usize, &[f32]),
+) {
     let mut ringing = false;
     for b in 0..buf.block_count() {
         let present = buf.blocks[b].is_some();
@@ -216,7 +226,8 @@ pub fn process_sparse<P: Process>(buf: &mut SparseBuf, p: &mut P, mut each: impl
         if present {
             ringing = true;
         } else {
-            let ms = x.iter().map(|&v| (v as f64) * (v as f64)).sum::<f64>() / x.len().max(1) as f64;
+            let ms =
+                x.iter().map(|&v| (v as f64) * (v as f64)).sum::<f64>() / x.len().max(1) as f64;
             if ms < RING_FLOOR {
                 p.reset();
                 ringing = false;
@@ -329,8 +340,17 @@ mod tests {
         Biquad::new(c).process(&mut dense);
         let mut s = SparseBuf::from_dense(&x);
         process_sparse(&mut s, &mut Lp(Biquad::new(c)), |_, _| {});
-        let err = s.to_dense().iter().zip(&dense).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
+        let err = s
+            .to_dense()
+            .iter()
+            .zip(&dense)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
         assert!(err < 1e-5, "max error {err}");
-        assert!(s.present_blocks() < 20, "ring kept {} blocks", s.present_blocks());
+        assert!(
+            s.present_blocks() < 20,
+            "ring kept {} blocks",
+            s.present_blocks()
+        );
     }
 }

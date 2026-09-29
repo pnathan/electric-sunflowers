@@ -106,7 +106,9 @@ impl fmt::Display for ChordError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ChordError::Empty => f.write_str("empty chord symbol"),
-            ChordError::NoRoot(s) => write!(f, "chord symbol {s:?} does not start with a note name"),
+            ChordError::NoRoot(s) => {
+                write!(f, "chord symbol {s:?} does not start with a note name")
+            }
         }
     }
 }
@@ -153,7 +155,9 @@ impl Chord {
             sym.push('m');
         }
         // A note name plus an optional "m" always parses.
-        parse_detail(&sym).map(|(c, _)| c).unwrap_or_else(|_| build(sym, root, root, "", &[0, 4, 7]))
+        parse_detail(&sym)
+            .map(|(c, _)| c)
+            .unwrap_or_else(|_| build(sym, root, root, "", &[0, 4, 7]))
     }
 }
 
@@ -161,7 +165,9 @@ impl Chord {
     /// The chord's pitch classes in quality-table order (see `intervals`):
     /// root first, an added tone last.
     pub fn tones_in_order(&self) -> impl Iterator<Item = Pc> + '_ {
-        self.intervals.iter().map(move |&iv| self.root.transpose(iv as i32))
+        self.intervals
+            .iter()
+            .map(move |&iv| self.root.transpose(iv as i32))
     }
 }
 
@@ -227,7 +233,18 @@ fn build(symbol: String, root: Pc, bass: Pc, quality: &'static str, iv: &'static
     if has(8) {
         essential.insert(at(8));
     }
-    Chord { symbol, quality, intervals: iv, root, bass, tones, third, fifth, seventh, essential }
+    Chord {
+        symbol,
+        quality,
+        intervals: iv,
+        root,
+        bass,
+        tones,
+        third,
+        fifth,
+        seventh,
+        essential,
+    }
 }
 
 /// Parses a chord symbol and returns the text of the quality that was not
@@ -237,7 +254,8 @@ pub fn parse_detail(s: &str) -> Result<(Chord, Option<String>), ChordError> {
     if symbol.is_empty() {
         return Err(ChordError::Empty);
     }
-    let (root, rlen) = Pc::parse_prefix(&symbol).ok_or_else(|| ChordError::NoRoot(symbol.clone()))?;
+    let (root, rlen) =
+        Pc::parse_prefix(&symbol).ok_or_else(|| ChordError::NoRoot(symbol.clone()))?;
     let body = &symbol[rlen..];
     // Bass: the last '/' followed by a note name and nothing else.
     let (qual, bass) = match body.rfind('/') {
@@ -248,7 +266,10 @@ pub fn parse_detail(s: &str) -> Result<(Chord, Option<String>), ChordError> {
         None => (body, root),
     };
     let (qname, iv, used) = match_quality(qual);
-    let rest: String = qual[used..].chars().filter(|c| !(c.is_whitespace() || *c == '(' || *c == ')')).collect();
+    let rest: String = qual[used..]
+        .chars()
+        .filter(|c| !(c.is_whitespace() || *c == '(' || *c == ')'))
+        .collect();
     let ignored = (!rest.is_empty()).then_some(rest);
     Ok((build(symbol, root, bass, qname, iv), ignored))
 }
@@ -328,7 +349,10 @@ impl ChordTable {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (ChordId, &Chord)> {
-        self.chords.iter().enumerate().map(|(i, c)| (ChordId(i as u16), c))
+        self.chords
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (ChordId(i as u16), c))
     }
 }
 
@@ -367,7 +391,11 @@ mod tests {
     fn intervals_keep_table_order() {
         assert_eq!(Chord::parse("C9").unwrap().intervals, &[0, 4, 7, 10, 2]);
         assert_eq!(Chord::parse("Cadd2").unwrap().intervals, &[0, 2, 4, 7]);
-        let d: Vec<u8> = Chord::parse("Dm7").unwrap().tones_in_order().map(Pc::get).collect();
+        let d: Vec<u8> = Chord::parse("Dm7")
+            .unwrap()
+            .tones_in_order()
+            .map(Pc::get)
+            .collect();
         assert_eq!(d, vec![2, 5, 9, 0]);
     }
 
@@ -375,7 +403,10 @@ mod tests {
     fn essential_tones() {
         let c = Chord::parse("Gsus4").unwrap();
         assert_eq!(c.third, None);
-        assert_eq!(c.essential.iter().map(Pc::get).collect::<Vec<_>>(), vec![0, 7]);
+        assert_eq!(
+            c.essential.iter().map(Pc::get).collect::<Vec<_>>(),
+            vec![0, 7]
+        );
         let c = Chord::parse("Caug").unwrap();
         assert!(c.essential.contains(Pc::new(8)));
         assert_eq!(c.fifth, None);

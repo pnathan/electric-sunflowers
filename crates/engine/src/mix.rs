@@ -151,7 +151,10 @@ pub fn duck_gains(stems: &Stems, band: &Band, settings: &MixSettings) -> Option<
         .sum::<f64>()
         .sqrt();
     let depth = 1.0 - db_to_gain(-settings.duck_db as f64);
-    let (up, down) = (sfcore::math::one_pole_coeff_tau(DUCK_ATTACK, SR_F), sfcore::math::one_pole_coeff_tau(DUCK_RELEASE, SR_F));
+    let (up, down) = (
+        sfcore::math::one_pole_coeff_tau(DUCK_ATTACK, SR_F),
+        sfcore::math::one_pole_coeff_tau(DUCK_RELEASE, SR_F),
+    );
     let mut ms = 0.0f64;
     let mut out = vec![1.0f32; stems.len];
     let mut spans: Vec<Option<&[f32]>> = Vec::with_capacity(leads.len());
@@ -195,7 +198,12 @@ pub(crate) fn routes<'a>(stems: &'a Stems, band: &Band, settings: &MixSettings) 
         let ducked = !LEAD_TRACKS.contains(&id);
         let mut push = |src, gl: f32, gr: f32| {
             let (gl, gr) = (gl * k, gr * k);
-            out.push(Route { id, src, g: [gl, gr, gl * send, gr * send], ducked });
+            out.push(Route {
+                id,
+                src,
+                g: [gl, gr, gl * send, gr * send],
+                ducked,
+            });
         };
         match &p.audio {
             Stem::Mono(x) => {
@@ -213,7 +221,11 @@ pub(crate) fn routes<'a>(stems: &'a Stems, band: &Band, settings: &MixSettings) 
 }
 
 /// Every audible track's slapback, in `TrackId` order.
-pub(crate) fn slap_sources<'a>(stems: &'a Stems, band: &Band, settings: &MixSettings) -> Vec<SlapSrc<'a>> {
+pub(crate) fn slap_sources<'a>(
+    stems: &'a Stems,
+    band: &Band,
+    settings: &MixSettings,
+) -> Vec<SlapSrc<'a>> {
     let mut out = Vec::new();
     for id in TrackId::ALL {
         if !(id.plays(band) && settings.audible(id)) {
@@ -221,7 +233,11 @@ pub(crate) fn slap_sources<'a>(stems: &'a Stems, band: &Band, settings: &MixSett
         }
         let Some(p) = stems.get(id) else { continue };
         let Some(slap) = &p.slap else { continue };
-        out.push(SlapSrc { id, src: slap, gain: fader_gain(settings, id) });
+        out.push(SlapSrc {
+            id,
+            src: slap,
+            gain: fader_gain(settings, id),
+        });
     }
     out
 }
@@ -296,13 +312,21 @@ pub fn premix(stems: &Stems, band: &Band, seed: u64, settings: &MixSettings) -> 
     premix_rms(stems, band, seed, settings).0
 }
 
-pub(crate) fn premix_rms(stems: &Stems, band: &Band, seed: u64, settings: &MixSettings) -> (Stereo, f64) {
+pub(crate) fn premix_rms(
+    stems: &Stems,
+    band: &Band,
+    seed: u64,
+    settings: &MixSettings,
+) -> (Stereo, f64) {
     let len = stems.len;
     let routes = routes(stems, band, settings);
     let duck = duck_gains(stems, band, settings);
     let slaps = slap_sources(stems, band, settings);
     let mut fdn = Fdn8::new(SR_F, seed, T60_DC, T60_NYQ);
-    let mut out = Stereo { l: vec![0.0; len], r: vec![0.0; len] };
+    let mut out = Stereo {
+        l: vec![0.0; len],
+        r: vec![0.0; len],
+    };
     let (mut ml, mut mr) = ([0.0f32; MIX_BLOCK], [0.0f32; MIX_BLOCK]);
     let (mut sl, mut sr) = ([0.0f32; MIX_BLOCK], [0.0f32; MIX_BLOCK]);
     let (mut energy, mut count) = (0.0f64, 0usize);
@@ -356,7 +380,11 @@ pub(crate) fn premix_rms(stems: &Stems, band: &Band, seed: u64, settings: &MixSe
 fn compress_and_gain(bus_rms: f64, out: &mut Stereo) -> f64 {
     let mut comp = Compressor::new(
         PeakDetector::new(BUS_ATTACK, BUS_RELEASE, SR_F),
-        GainComputer { thr_db: gain_to_db(bus_rms) + BUS_OVER_RMS_DB, ratio: BUS_RATIO, knee_db: BUS_KNEE_DB },
+        GainComputer {
+            thr_db: gain_to_db(bus_rms) + BUS_OVER_RMS_DB,
+            ratio: BUS_RATIO,
+            knee_db: BUS_KNEE_DB,
+        },
         Link::StereoMax,
     );
     let mut pk = 1e-9f64;
@@ -371,7 +399,12 @@ fn compress_and_gain(bus_rms: f64, out: &mut Stereo) -> f64 {
 
 /// The pre-normalisation (post bus compressor) mix and the final peak
 /// normalisation gain; shared by `mix_with` and `engine::print::mix_gain`.
-pub(crate) fn compressed(stems: &Stems, band: &Band, seed: u64, settings: &MixSettings) -> (Stereo, f64) {
+pub(crate) fn compressed(
+    stems: &Stems,
+    band: &Band,
+    seed: u64,
+    settings: &MixSettings,
+) -> (Stereo, f64) {
     let (mut out, bus_rms) = premix_rms(stems, band, seed, settings);
     let g = compress_and_gain(bus_rms, &mut out);
     (out, g)
@@ -403,12 +436,19 @@ mod tests {
     fn one_track_stems() -> Stems {
         let tracks: [Option<ProcessedStem>; N_TRACKS] = std::array::from_fn(|i| {
             if i == TrackId::Bass.index() {
-                Some(ProcessedStem { audio: Stem::Mono(SparseBuf::from_dense(&[0.1f32; STEM_BLOCK])), level: 1.0, slap: None })
+                Some(ProcessedStem {
+                    audio: Stem::Mono(SparseBuf::from_dense(&[0.1f32; STEM_BLOCK])),
+                    level: 1.0,
+                    slap: None,
+                })
             } else {
                 None
             }
         });
-        Stems { len: STEM_BLOCK, tracks }
+        Stems {
+            len: STEM_BLOCK,
+            tracks,
+        }
     }
 
     #[test]

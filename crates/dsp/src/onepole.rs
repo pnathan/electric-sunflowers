@@ -34,13 +34,19 @@ impl OnePole {
     /// Low-pass with its -3 dB point near fc (exact for fc << fs).
     pub fn from_hz(fc: f64, fs: f64) -> Self {
         let tau = if fc > 0.0 { 1.0 / (2.0 * PI * fc) } else { 0.0 };
-        OnePole { a: coef(tau, fs), z: 0.0 }
+        OnePole {
+            a: coef(tau, fs),
+            z: 0.0,
+        }
     }
 
     /// Low-pass with time constant `tau` seconds; `tau` <= 0 or non-finite
     /// gives a = 1 (output follows input).
     pub fn from_tau(tau: f64, fs: f64) -> Self {
-        OnePole { a: coef(tau, fs), z: 0.0 }
+        OnePole {
+            a: coef(tau, fs),
+            z: 0.0,
+        }
     }
 
     /// Low-pass output.
@@ -78,7 +84,11 @@ pub struct DcBlocker {
 impl DcBlocker {
     /// Pole at `r` (0 <= r < 1; 0.995 at 44.1 kHz puts the corner near 35 Hz).
     pub fn new(r: f64) -> Self {
-        DcBlocker { r, x1: 0.0, y1: 0.0 }
+        DcBlocker {
+            r,
+            x1: 0.0,
+            y1: 0.0,
+        }
     }
 
     /// Pole at exp(-2 pi fc / fs).
@@ -122,7 +132,10 @@ pub struct UnequalLengths;
 /// are interleaved in one loop so they overlap in the pipeline. Unequal
 /// lengths return `Err(UnequalLengths)` and leave every track unchanged.
 #[allow(clippy::needless_range_loop)] // lane l of sample i across N tracks
-pub fn zero_phase_smooth_lanes<const N: usize>(tracks: [&mut [f32]; N], a: [f64; N]) -> Result<(), UnequalLengths> {
+pub fn zero_phase_smooth_lanes<const N: usize>(
+    tracks: [&mut [f32]; N],
+    a: [f64; N],
+) -> Result<(), UnequalLengths> {
     let n = tracks.first().map_or(0, |t| t.len());
     if tracks.iter().any(|t| t.len() != n) {
         return Err(UnequalLengths);

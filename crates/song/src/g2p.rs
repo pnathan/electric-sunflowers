@@ -99,7 +99,11 @@ pub fn g2p(syl: &str) -> Vec<Phoneme> {
         .map(|c| c as u8)
         .collect();
     let n = s.len();
-    if n > 2 && s[n - 1] == b'e' && !vowel_letter(s[n - 2]) && s[..n - 1].iter().any(|&b| vowel_letter(b)) {
+    if n > 2
+        && s[n - 1] == b'e'
+        && !vowel_letter(s[n - 2])
+        && s[..n - 1].iter().any(|&b| vowel_letter(b))
+    {
         s.pop();
     }
     let s = &s[..];

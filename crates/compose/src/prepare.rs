@@ -55,20 +55,40 @@ const MIN_NOTE: f64 = 0.05;
 /// b: None }`, kept so existing callers (one voice, no duet override) do
 /// not need to change.
 pub fn prepare(song: &Song, seed: u64, voice_key: Option<Voice>) -> Prepared {
-    prepare_voices(song, seed, VoiceChoice { a: voice_key, b: None })
+    prepare_voices(
+        song,
+        seed,
+        VoiceChoice {
+            a: voice_key,
+            b: None,
+        },
+    )
 }
 
 /// `prepare`, with voice overrides for both singers of a duet (design 4.5).
 /// `voice.b` is ignored outside a duet.
 pub fn prepare_voices(song: &Song, seed: u64, voice: VoiceChoice) -> Prepared {
     let vk = voice.a.unwrap_or(song.voice);
-    let vb = song.is_duet().then(|| voice.b.or_else(|| song.voice_of(SingerId::B)).expect("duet has a B voice"));
+    let vb = song.is_duet().then(|| {
+        voice
+            .b
+            .or_else(|| song.voice_of(SingerId::B))
+            .expect("duet has a B voice")
+    });
     let (form, timeline, mut comp, key_shift) = compose_for_voice(song, seed, vk, vb);
     time_notes(&mut comp.lead, &timeline);
     comp.second = compose_second(&comp, &form, &timeline, song, vk, vb);
     time_notes(&mut comp.second, &timeline);
     let tonic = (song.key.get() as i32 + key_shift).rem_euclid(12);
-    Prepared { form, timeline, comp, voice: vk, voice_b: vb, key_shift, tonic }
+    Prepared {
+        form,
+        timeline,
+        comp,
+        voice: vk,
+        voice_b: vb,
+        key_shift,
+        tonic,
+    }
 }
 
 /// The key change (-5..=6) for a transposition `tr`.
@@ -86,7 +106,12 @@ fn key_shift_of(tr: i32) -> i32 {
 /// Duet: `choose_transpose_duet` over both singers' melody notes, weighted
 /// by their share (design 4.5); the register fit itself (`d`, `o`) was
 /// already applied inside `compose_melody`.
-fn compose_for_voice(song: &Song, seed: u64, voice: Voice, voice_b: Option<Voice>) -> (Form, Timeline, Comp, i32) {
+fn compose_for_voice(
+    song: &Song,
+    seed: u64,
+    voice: Voice,
+    voice_b: Option<Voice>,
+) -> (Form, Timeline, Comp, i32) {
     let mut form = build_form(song, 0);
     let tl = Timeline::new(&form, song.tempo_bpm);
     let mut comp = compose_melody(song, &mut form, &tl, seed, voice, voice_b);
@@ -142,7 +167,8 @@ fn time_notes(lead: &mut [LeadNote], tl: &Timeline) {
         let next_t0 = lead[i].t0;
         let n = &mut lead[i - 1];
         if n.t1 > next_t0 - 0.01 {
-            n.t1 = (n.t0 + MIN_NOTE).max(next_t0 - if n.phrase_end { BREATH_GAP } else { LEGATO_GAP });
+            n.t1 =
+                (n.t0 + MIN_NOTE).max(next_t0 - if n.phrase_end { BREATH_GAP } else { LEGATO_GAP });
         }
     }
 }
@@ -181,7 +207,14 @@ pub fn vocal_notes(lead: &[LeadNote], amp: f64) -> Vec<VocalNote> {
 
 /// A harmony a third to a sixth above (`up`) or below the lead: the chord
 /// tone preferred by interval (3rd and 4th best), else two scale steps.
-pub fn harmony_line(lead: &[LeadNote], form: &Form, tl: &Timeline, song: &Song, tonic: i32, up: bool) -> Vec<LeadNote> {
+pub fn harmony_line(
+    lead: &[LeadNote],
+    form: &Form,
+    tl: &Timeline,
+    song: &Song,
+    tonic: i32,
+    up: bool,
+) -> Vec<LeadNote> {
     // Preference by interval in semitones, 3..=9: thirds best, the
     // tritone worst, sixths next.
     const SCORES: [f64; 10] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.2, -1.0, 0.4, 0.6, 0.6];
@@ -234,7 +267,14 @@ pub fn harmony_line(lead: &[LeadNote], form: &Form, tl: &Timeline, song: &Song, 
 /// singer's range (`range_penalty` at zero shift, since the shift is
 /// already folded into the candidate pitches) wins. Called after the
 /// transposition, over the already-transposed `comp.lead`.
-pub fn compose_second(comp: &Comp, form: &Form, tl: &Timeline, song: &Song, voice_a: Voice, voice_b: Option<Voice>) -> Vec<LeadNote> {
+pub fn compose_second(
+    comp: &Comp,
+    form: &Form,
+    tl: &Timeline,
+    song: &Song,
+    voice_a: Voice,
+    voice_b: Option<Voice>,
+) -> Vec<LeadNote> {
     let Some(voice_b) = voice_b else {
         return Vec::new();
     };
@@ -254,8 +294,15 @@ pub fn compose_second(comp: &Comp, form: &Form, tl: &Timeline, song: &Song, voic
 
     let mut second = Vec::new();
     for (li_idx, l) in form.lines.iter().enumerate() {
-        let Some((other, blend)) = l.part.other() else { continue };
-        let mnotes: Vec<LeadNote> = comp.lead.iter().filter(|n| n.line_idx == li_idx).cloned().collect();
+        let Some((other, blend)) = l.part.other() else {
+            continue;
+        };
+        let mnotes: Vec<LeadNote> = comp
+            .lead
+            .iter()
+            .filter(|n| n.line_idx == li_idx)
+            .cloned()
+            .collect();
         if mnotes.is_empty() {
             continue;
         }
@@ -280,7 +327,8 @@ pub fn compose_second(comp: &Comp, form: &Form, tl: &Timeline, song: &Song, voic
             }
             Blend::Harmony => {
                 let melody_singer = l.part.melody();
-                let up = voice_of(other).range().centre() >= voice_of(melody_singer).range().centre();
+                let up =
+                    voice_of(other).range().centre() >= voice_of(melody_singer).range().centre();
                 let base = harmony_line(&mnotes, form, tl, song, comp.tonic, up);
                 let ks: [i32; 2] = if up { [0, 1] } else { [0, -1] };
                 let cands = ks
@@ -325,7 +373,8 @@ mod tests {
     /// The demo song moved to `key` (chords transposed from G) in `mode`.
     fn demo_in(key: i32, mode: song::Mode) -> Song {
         let mut raw: serde_json::Value =
-            serde_json::from_str(include_str!("../../engine/src/demo.json")).expect("demo.json is JSON");
+            serde_json::from_str(include_str!("../../engine/src/demo.json"))
+                .expect("demo.json is JSON");
         let shift = key - 7;
         let tr = |s: &str| {
             s.split_whitespace()
@@ -362,7 +411,12 @@ mod tests {
     /// in the chosen key, then shift octaves so the median lands where
     /// `choose_transpose` (or, in a duet, `choose_transpose_duet`) wants it
     /// (rounding half up).
-    fn two_passes(song: &Song, seed: u64, voice: Voice, voice_b: Option<Voice>) -> (Form, Comp, i32) {
+    fn two_passes(
+        song: &Song,
+        seed: u64,
+        voice: Voice,
+        voice_b: Option<Voice>,
+    ) -> (Form, Comp, i32) {
         let mut form = build_form(song, 0);
         let tl = Timeline::new(&form, song.tempo_bpm);
         let comp = compose_melody(song, &mut form, &tl, seed, voice, voice_b);
@@ -411,7 +465,11 @@ mod tests {
                     assert_eq!((c1.t, c1.tonic), (c2.t, c2.tonic), "{at}");
                     assert_eq!(c1.lead.len(), c2.lead.len(), "{at}");
                     for (a, b) in c1.lead.iter().zip(&c2.lead) {
-                        assert_eq!((a.midi, a.grace, a.beat, a.dur), (b.midi, b.grace, b.beat, b.dur), "{at}");
+                        assert_eq!(
+                            (a.midi, a.grace, a.beat, a.dur),
+                            (b.midi, b.grace, b.beat, b.dur),
+                            "{at}"
+                        );
                     }
                     assert_eq!(c1.inst.len(), c2.inst.len(), "{at}");
                     for (a, b) in c1.inst.iter().zip(&c2.inst) {
@@ -420,7 +478,12 @@ mod tests {
                     for (a, b) in f1.lines.iter().zip(&f2.lines) {
                         assert_eq!(a.pitches, b.pitches, "{at}");
                     }
-                    let syms = |f: &Form| f.chords.iter().map(|c| c.symbol.clone()).collect::<Vec<_>>();
+                    let syms = |f: &Form| {
+                        f.chords
+                            .iter()
+                            .map(|c| c.symbol.clone())
+                            .collect::<Vec<_>>()
+                    };
                     assert_eq!(syms(&f1), syms(&f2), "{at}");
                     cases += 1;
                     shifted += usize::from(ks1 != 0);
@@ -432,8 +495,8 @@ mod tests {
     }
 
     fn duet_song() -> Song {
-        let raw: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/songs/duet.json")).expect("duet.json is JSON");
+        let raw: serde_json::Value = serde_json::from_str(include_str!("../tests/songs/duet.json"))
+            .expect("duet.json is JSON");
         let (s, repairs) = song::normalize_value(&raw).expect("duet fixture normalises");
         assert!(repairs.is_empty(), "{repairs:?}");
         assert!(s.is_duet());
@@ -444,7 +507,8 @@ mod tests {
     /// written key), mode unchanged.
     fn duet_in(key: i32) -> Song {
         let mut raw: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/songs/duet.json")).expect("duet.json is JSON");
+            serde_json::from_str(include_str!("../tests/songs/duet.json"))
+                .expect("duet.json is JSON");
         let tr = |s: &str| {
             s.split_whitespace()
                 .map(|c| song::chord::transpose_symbol(c, key, false))
@@ -466,7 +530,9 @@ mod tests {
                 }
             }
         }
-        song::normalize_value(&raw).expect("duet fixture normalises").0
+        song::normalize_value(&raw)
+            .expect("duet fixture normalises")
+            .0
     }
 
     /// The duet path of `compose_once_equals_two_passes`: composing once
@@ -479,13 +545,18 @@ mod tests {
             let s = duet_in(key);
             for seed in 0..20u64 {
                 let (f2, c2, ks2) = two_passes(&s, seed, Voice::Baritone, Some(Voice::Alto));
-                let (f1, _, c1, ks1) = compose_for_voice(&s, seed, Voice::Baritone, Some(Voice::Alto));
+                let (f1, _, c1, ks1) =
+                    compose_for_voice(&s, seed, Voice::Baritone, Some(Voice::Alto));
                 let at = format!("key {key} seed {seed}");
                 assert_eq!(ks1, ks2, "{at}");
                 assert_eq!((c1.t, c1.tonic), (c2.t, c2.tonic), "{at}");
                 assert_eq!(c1.lead.len(), c2.lead.len(), "{at}");
                 for (a, b) in c1.lead.iter().zip(&c2.lead) {
-                    assert_eq!((a.midi, a.grace, a.beat, a.dur, a.singer), (b.midi, b.grace, b.beat, b.dur, b.singer), "{at}");
+                    assert_eq!(
+                        (a.midi, a.grace, a.beat, a.dur, a.singer),
+                        (b.midi, b.grace, b.beat, b.dur, b.singer),
+                        "{at}"
+                    );
                 }
                 for (a, b) in f1.lines.iter().zip(&f2.lines) {
                     assert_eq!(a.pitches, b.pitches, "{at}");
@@ -499,7 +570,14 @@ mod tests {
     #[test]
     fn prepare_voices_solo_song_ignores_voice_b() {
         let s = song();
-        let p = prepare_voices(&s, 5, VoiceChoice { a: None, b: Some(Voice::Soprano) });
+        let p = prepare_voices(
+            &s,
+            5,
+            VoiceChoice {
+                a: None,
+                b: Some(Voice::Soprano),
+            },
+        );
         assert_eq!(p.voice_b, None);
         assert!(p.comp.second.is_empty());
     }
@@ -534,7 +612,13 @@ mod tests {
                     }
                 }
             }
-            let b_melody: Vec<i32> = p.comp.lead.iter().filter(|n| n.singer == SingerId::B).map(|n| n.midi).collect();
+            let b_melody: Vec<i32> = p
+                .comp
+                .lead
+                .iter()
+                .filter(|n| n.singer == SingerId::B)
+                .map(|n| n.midi)
+                .collect();
             if !b_melody.is_empty() {
                 let mut m = b_melody.clone();
                 m.sort_unstable();
@@ -548,19 +632,25 @@ mod tests {
         eprintln!("A in range {rate_a:.3}, B in range {rate_b:.3}");
         assert!(rate_a >= 0.9, "{rate_a}");
         assert!(rate_b >= 0.9, "{rate_b}");
-        assert_eq!(b_med_ok, b_med_all, "B melody median not within 4 semitones of centre({}) in every seed", b_med_all);
+        assert_eq!(
+            b_med_ok, b_med_all,
+            "B melody median not within 4 semitones of centre({}) in every seed",
+            b_med_all
+        );
     }
 
     #[test]
     fn second_matches_the_melodys_rhythm_and_syllables_on_shared_lines() {
         let s = duet_song();
         let p = prepare_voices(&s, 3, VoiceChoice::default());
-        let shared: Vec<usize> =
-            (0..p.form.lines.len()).filter(|&i| p.form.lines[i].part.other().is_some()).collect();
+        let shared: Vec<usize> = (0..p.form.lines.len())
+            .filter(|&i| p.form.lines[i].part.other().is_some())
+            .collect();
         assert!(!shared.is_empty());
         for li in shared {
             let melody: Vec<&LeadNote> = p.comp.lead.iter().filter(|n| n.line_idx == li).collect();
-            let second: Vec<&LeadNote> = p.comp.second.iter().filter(|n| n.line_idx == li).collect();
+            let second: Vec<&LeadNote> =
+                p.comp.second.iter().filter(|n| n.line_idx == li).collect();
             assert_eq!(melody.len(), second.len(), "line {li}");
             for (m, s) in melody.iter().zip(&second) {
                 assert_eq!(m.beat, s.beat, "line {li}");
@@ -580,12 +670,21 @@ mod tests {
         let s = duet_song();
         let p = prepare_voices(&s, 3, VoiceChoice::default());
         let octave_lines: Vec<usize> = (0..p.form.lines.len())
-            .filter(|&i| matches!(p.form.lines[i].part, song::Part::Both { blend: Blend::Octave, .. }))
+            .filter(|&i| {
+                matches!(
+                    p.form.lines[i].part,
+                    song::Part::Both {
+                        blend: Blend::Octave,
+                        ..
+                    }
+                )
+            })
             .collect();
         assert!(!octave_lines.is_empty());
         for li in octave_lines {
             let melody: Vec<&LeadNote> = p.comp.lead.iter().filter(|n| n.line_idx == li).collect();
-            let second: Vec<&LeadNote> = p.comp.second.iter().filter(|n| n.line_idx == li).collect();
+            let second: Vec<&LeadNote> =
+                p.comp.second.iter().filter(|n| n.line_idx == li).collect();
             assert_eq!(melody.len(), second.len());
             let k = (second[0].midi - melody[0].midi) as f64 / 12.0;
             assert!((k.round() - k).abs() < 1e-9, "not a whole octave: {k}");
@@ -602,7 +701,8 @@ mod tests {
     #[test]
     fn duet_prepare_survives_odd_input() {
         let mut raw: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/songs/duet.json")).expect("duet.json is JSON");
+            serde_json::from_str(include_str!("../tests/songs/duet.json"))
+                .expect("duet.json is JSON");
         raw["duet"] = json!({"voice": "baritone"});
         for sec in raw["sections"].as_array_mut().unwrap() {
             if sec.get("lines").is_some() {
@@ -614,13 +714,32 @@ mod tests {
         secs.push(json!({"type": "chorus", "sing": "B", "lines": [{"syl": "", "ph": "", "chords": ["C"]}]}));
         if let Ok((s, _)) = song::normalize_value(&raw) {
             for seed in 0..3u64 {
-                let p = prepare_voices(&s, seed, VoiceChoice { a: Some(Voice::Soprano), b: Some(Voice::Baritone) });
+                let p = prepare_voices(
+                    &s,
+                    seed,
+                    VoiceChoice {
+                        a: Some(Voice::Soprano),
+                        b: Some(Voice::Baritone),
+                    },
+                );
                 assert_eq!(p.voice_b.is_some(), s.is_duet());
-                assert!(p.comp.lead.iter().chain(&p.comp.second).all(|n| n.t1 >= n.t0));
+                assert!(p
+                    .comp
+                    .lead
+                    .iter()
+                    .chain(&p.comp.second)
+                    .all(|n| n.t1 >= n.t0));
             }
         }
         let same = duet_song();
-        let p = prepare_voices(&same, 1, VoiceChoice { a: Some(Voice::Tenor), b: Some(Voice::Tenor) });
+        let p = prepare_voices(
+            &same,
+            1,
+            VoiceChoice {
+                a: Some(Voice::Tenor),
+                b: Some(Voice::Tenor),
+            },
+        );
         assert_eq!(p.voice_b, Some(Voice::Tenor));
     }
 

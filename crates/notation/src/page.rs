@@ -41,7 +41,13 @@ fn empty_page(width: f64, title: &str, msg: &str) -> Page {
         crate::layout::esc(title),
         crate::layout::esc(msg)
     );
-    Page { svg, width, height, notes: Vec::new(), systems: Vec::new() }
+    Page {
+        svg,
+        width,
+        height,
+        notes: Vec::new(),
+        systems: Vec::new(),
+    }
 }
 
 impl Sheet {
@@ -50,18 +56,46 @@ impl Sheet {
         match self {
             Sheet::Lead(score) => {
                 let p = crate::layout::layout(&score.clone().with_width(width));
-                Page { svg: p.svg, width: p.width, height: p.height, notes: p.notes, systems: p.systems }
+                Page {
+                    svg: p.svg,
+                    width: p.width,
+                    height: p.height,
+                    notes: p.notes,
+                    systems: p.systems,
+                }
             }
             Sheet::Full(full) => {
                 let p = crate::full::layout::layout_full(&full.clone().with_width(width));
-                Page { svg: p.svg, width: p.width, height: p.height, notes: p.notes, systems: p.systems }
+                Page {
+                    svg: p.svg,
+                    width: p.width,
+                    height: p.height,
+                    notes: p.notes,
+                    systems: p.systems,
+                }
             }
             Sheet::Part(full, part) => match full.part(*part) {
                 Some(ps) => {
-                    let p = crate::full::layout::layout_part(&ps, full.meter, full.fifths, &full.title, width.max(300.0));
-                    Page { svg: p.svg, width: p.width, height: p.height, notes: p.notes, systems: p.systems }
+                    let p = crate::full::layout::layout_part(
+                        &ps,
+                        full.meter,
+                        full.fifths,
+                        &full.title,
+                        width.max(300.0),
+                    );
+                    Page {
+                        svg: p.svg,
+                        width: p.width,
+                        height: p.height,
+                        notes: p.notes,
+                        systems: p.systems,
+                    }
                 }
-                None => empty_page(width.max(300.0), &full.title, "this part does not play in this song"),
+                None => empty_page(
+                    width.max(300.0),
+                    &full.title,
+                    "this part does not play in this song",
+                ),
             },
         }
     }

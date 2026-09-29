@@ -63,15 +63,29 @@ pub fn voicings(form: &Form, tl: &Timeline, filter: impl Fn(&Sec) -> bool) -> Ve
             continue;
         }
         let chord = form.chord(sg.chord);
-        let bass = Cands::new(CHOIR_RANGE[0].0, CHOIR_RANGE[0].1, PcSet::EMPTY.with(chord.bass));
-        let up: [Cands; 3] = std::array::from_fn(|p| Cands::new(CHOIR_RANGE[p + 1].0, CHOIR_RANGE[p + 1].1, chord.tones));
+        let bass = Cands::new(
+            CHOIR_RANGE[0].0,
+            CHOIR_RANGE[0].1,
+            PcSet::EMPTY.with(chord.bass),
+        );
+        let up: [Cands; 3] = std::array::from_fn(|p| {
+            Cands::new(CHOIR_RANGE[p + 1].0, CHOIR_RANGE[p + 1].1, chord.tones)
+        });
 
         let mut best: Option<[i32; 4]> = None;
         let mut best_cost = f64::INFINITY;
         for &b in bass.as_slice() {
             for &t in up[0].as_slice().iter().filter(|&&t| t > b) {
-                for &a in up[1].as_slice().iter().filter(|&&a| a > t && a - t <= MAX_GAP) {
-                    for &s in up[2].as_slice().iter().filter(|&&s| s > a && s - a <= MAX_GAP) {
+                for &a in up[1]
+                    .as_slice()
+                    .iter()
+                    .filter(|&&a| a > t && a - t <= MAX_GAP)
+                {
+                    for &s in up[2]
+                        .as_slice()
+                        .iter()
+                        .filter(|&&s| s > a && s - a <= MAX_GAP)
+                    {
                         let v = [b, t, a, s];
                         let set: PcSet = v.iter().map(|&m| Pc::new(m)).collect();
                         let mut c = (b - prev[0]).abs() as f64 * 0.6

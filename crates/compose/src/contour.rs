@@ -91,16 +91,31 @@ impl Contour {
     /// arch when there is none. A tonic cadence damps the shape and falls
     /// `TONIC_FALL a` over the phrase; otherwise odd phrases rise
     /// `ANSWER_RISE` semitones.
-    pub fn for_phrase(li: usize, tonic_cadence: bool, amp: f64, shape: Option<ContourKind>) -> Contour {
+    pub fn for_phrase(
+        li: usize,
+        tonic_cadence: bool,
+        amp: f64,
+        shape: Option<ContourKind>,
+    ) -> Contour {
         if tonic_cadence {
             let (kind, gain) = match shape {
                 Some(k) => (k, TONIC_GAIN),
                 None => (ContourKind::OpenArch, TONIC_DEFAULT_GAIN),
             };
-            return Contour { kind, amp, gain, slope: -TONIC_FALL * amp };
+            return Contour {
+                kind,
+                amp,
+                gain,
+                slope: -TONIC_FALL * amp,
+            };
         }
         let slope = if li % 2 == 1 { ANSWER_RISE } else { 0.0 };
-        Contour { kind: shape.unwrap_or(ContourKind::Arch), amp, gain: 1.0, slope }
+        Contour {
+            kind: shape.unwrap_or(ContourKind::Arch),
+            amp,
+            gain: 1.0,
+            slope,
+        }
     }
 
     /// Offset in semitones at phrase position `x` in [0, 1].

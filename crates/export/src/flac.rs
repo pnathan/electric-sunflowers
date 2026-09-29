@@ -55,7 +55,9 @@ fn block_size(n: usize) -> Result<usize, ExportError> {
         return Ok(BLOCK);
     }
     if n < MIN_BLOCK {
-        return Err(ExportError::Flac(format!("FLAC export needs at least {MIN_BLOCK} samples, got {n}")));
+        return Err(ExportError::Flac(format!(
+            "FLAC export needs at least {MIN_BLOCK} samples, got {n}"
+        )));
     }
     if n <= BLOCK {
         return Ok(n);
@@ -70,7 +72,14 @@ fn block_size(n: usize) -> Result<usize, ExportError> {
 
 /// STREAMINFO body (RFC 9639 section 8.2), 34 bytes; MD5 left zero ("not
 /// computed").
-fn streaminfo(block: usize, min_frame: usize, max_frame: usize, sr: u32, bits: u32, total: u64) -> [u8; 34] {
+fn streaminfo(
+    block: usize,
+    min_frame: usize,
+    max_frame: usize,
+    sr: u32,
+    bits: u32,
+    total: u64,
+) -> [u8; 34] {
     let mut b = [0u8; 34];
     b[0..2].copy_from_slice(&(block as u16).to_be_bytes());
     b[2..4].copy_from_slice(&(block as u16).to_be_bytes());
@@ -147,7 +156,9 @@ fn encode_frame(
     let start = k * block;
     let end = (start + block).min(l.len());
     let len = end - start;
-    let fb = s.fb.as_mut().ok_or_else(|| ExportError::Flac("frame buffer".into()))?;
+    let fb =
+        s.fb.as_mut()
+            .ok_or_else(|| ExportError::Flac("frame buffer".into()))?;
     if fb.size() != len {
         fb.resize(len);
     }
@@ -160,12 +171,21 @@ fn encode_frame(
         frame = flacenc::encode_fixed_size_frame(&config.1, fb, k, info).map_err(flac_err)?;
     }
     let mut sink = flacenc::bitsink::ByteSink::with_capacity(frame.count_bits());
-    frame.write(&mut sink).map_err(|e| ExportError::Flac(format!("{e}")))?;
+    frame
+        .write(&mut sink)
+        .map_err(|e| ExportError::Flac(format!("{e}")))?;
     Ok(sink.into_inner())
 }
 
 /// Writes `l`, `r` (equal lengths, checked by the caller) to `path`.
-pub(crate) fn write(path: &Path, l: &[f32], r: &[f32], sr: u32, meta: &Meta, bits: BitDepth) -> Result<(), ExportError> {
+pub(crate) fn write(
+    path: &Path,
+    l: &[f32],
+    r: &[f32],
+    sr: u32,
+    meta: &Meta,
+    bits: BitDepth,
+) -> Result<(), ExportError> {
     if sr > MAX_RATE {
         return Err(ExportError::InvalidSampleRate(sr));
     }
@@ -192,7 +212,10 @@ pub(crate) fn write(path: &Path, l: &[f32], r: &[f32], sr: u32, meta: &Meta, bit
         let encoded: Vec<Result<Vec<u8>, ExportError>> = (k0..k1)
             .into_par_iter()
             .map_init(
-                || Scratch { fb: FrameBuf::with_size(CHANNELS, block).ok(), ints: vec![0; block * CHANNELS] },
+                || Scratch {
+                    fb: FrameBuf::with_size(CHANNELS, block).ok(),
+                    ints: vec![0; block * CHANNELS],
+                },
                 |s, k| encode_frame(k, s, [l, r], block, bits, &config, &info),
             )
             .collect();
@@ -208,7 +231,9 @@ pub(crate) fn write(path: &Path, l: &[f32], r: &[f32], sr: u32, meta: &Meta, bit
         min_frame = 0;
     }
 
-    let mut file = out.into_inner().map_err(|e| ExportError::Io(e.into_error()))?;
+    let mut file = out
+        .into_inner()
+        .map_err(|e| ExportError::Io(e.into_error()))?;
     file.seek(SeekFrom::Start(info_at))?;
     file.write_all(&streaminfo(block, min_frame, max_frame, sr, bps, n as u64))?;
     file.flush()?;
@@ -221,7 +246,16 @@ mod tests {
 
     #[test]
     fn block_sizes_leave_valid_tails() {
-        for n in [64, 100, 4096, 4097, 4096 * 3 + 10, 4096 * 50 + 63, 8_202_600, 8_202_601] {
+        for n in [
+            64,
+            100,
+            4096,
+            4097,
+            4096 * 3 + 10,
+            4096 * 50 + 63,
+            8_202_600,
+            8_202_601,
+        ] {
             let b = block_size(n).unwrap();
             assert!((MIN_BLOCK..=BLOCK).contains(&b), "n {n} b {b}");
             let t = n % b;

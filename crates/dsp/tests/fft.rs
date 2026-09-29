@@ -42,10 +42,18 @@ fn complex_fft_matches_dft() {
         let im = noise(n, n as u32 + 7);
         let (rr, ri) = dft(&re, &im);
         let fft = Fft::new(n);
-        let mut data: Vec<C32> = re.iter().zip(&im).map(|(&a, &b)| C32::new(a as f32, b as f32)).collect();
+        let mut data: Vec<C32> = re
+            .iter()
+            .zip(&im)
+            .map(|(&a, &b)| C32::new(a as f32, b as f32))
+            .collect();
         let mut scratch = fft.make_scratch();
         fft.forward(&mut data, &mut scratch).unwrap();
-        let peak = rr.iter().zip(&ri).map(|(a, b)| a.hypot(*b)).fold(0.0, f64::max);
+        let peak = rr
+            .iter()
+            .zip(&ri)
+            .map(|(a, b)| a.hypot(*b))
+            .fold(0.0, f64::max);
         let err = data
             .iter()
             .zip(rr.iter().zip(&ri))
@@ -63,12 +71,20 @@ fn complex_round_trip_65536() {
     let re = noise(n, 11);
     let im = noise(n, 12);
     let fft = Fft::new(n);
-    let orig: Vec<C32> = re.iter().zip(&im).map(|(&a, &b)| C32::new(a as f32, b as f32)).collect();
+    let orig: Vec<C32> = re
+        .iter()
+        .zip(&im)
+        .map(|(&a, &b)| C32::new(a as f32, b as f32))
+        .collect();
     let mut data = orig.clone();
     let mut scratch = fft.make_scratch();
     fft.forward(&mut data, &mut scratch).unwrap();
     fft.inverse(&mut data, &mut scratch).unwrap();
-    let err = data.iter().zip(&orig).map(|(a, b)| (a - b).norm()).fold(0.0f32, f32::max);
+    let err = data
+        .iter()
+        .zip(&orig)
+        .map(|(a, b)| (a - b).norm())
+        .fold(0.0f32, f32::max);
     let peak = orig.iter().map(|c| c.norm()).fold(0.0f32, f32::max);
     println!("round trip n=65536: {:.2e}", err / peak);
     assert!(err / peak < 1e-6, "round trip {:.2e}", err / peak);
@@ -88,12 +104,24 @@ fn real_fft_matches_complex_and_round_trips() {
         let mut rs = rf.make_scratch();
         rf.forward(&mut xin, &mut spec, &mut rs).unwrap();
         let peak = c.iter().map(|v| v.norm()).fold(0.0f32, f32::max);
-        let err = spec.iter().zip(&c).map(|(a, b)| (a - b).norm()).fold(0.0f32, f32::max);
-        assert!(err / peak < 1e-5, "n={n}: real vs complex {:.2e}", err / peak);
+        let err = spec
+            .iter()
+            .zip(&c)
+            .map(|(a, b)| (a - b).norm())
+            .fold(0.0f32, f32::max);
+        assert!(
+            err / peak < 1e-5,
+            "n={n}: real vs complex {:.2e}",
+            err / peak
+        );
 
         let mut back = vec![0.0f32; n];
         rf.inverse(&mut spec, &mut back, &mut rs).unwrap();
-        let rt = back.iter().zip(&x).map(|(a, b)| (*a as f64 - b).abs()).fold(0.0, f64::max);
+        let rt = back
+            .iter()
+            .zip(&x)
+            .map(|(a, b)| (*a as f64 - b).abs())
+            .fold(0.0, f64::max);
         assert!(rt < 1e-6, "n={n}: real round trip {rt:.2e}");
     }
 }
@@ -128,7 +156,11 @@ fn direct(x: &[f32], h: &[f64], out_len: usize) -> Vec<f64> {
 
 fn rel_err(y: &[f32], r: &[f64]) -> f64 {
     let peak = r.iter().fold(0.0f64, |a, v| a.max(v.abs()));
-    y.iter().zip(r).map(|(a, b)| (*a as f64 - b).abs()).fold(0.0, f64::max) / peak
+    y.iter()
+        .zip(r)
+        .map(|(a, b)| (*a as f64 - b).abs())
+        .fold(0.0, f64::max)
+        / peak
 }
 
 /// Input with silent stretches, so zero-block skipping is exercised.
@@ -156,7 +188,10 @@ fn convolution_matches_direct() {
         let el = rel_err(&yl, &direct(&x, &hl, out_len));
         let er = rel_err(&yr, &direct(&x, &hr, out_len));
         println!("conv out_len={out_len}: L {el:.2e} R {er:.2e}");
-        assert!(el < 1e-5 && er < 1e-5, "out_len={out_len}: L {el:.2e} R {er:.2e}");
+        assert!(
+            el < 1e-5 && er < 1e-5,
+            "out_len={out_len}: L {el:.2e} R {er:.2e}"
+        );
     }
     // Past x.len() + ir.len() - 1 the output is exactly zero.
     let [yl, _] = convolve_mono_to_stereo(&x, &ir, 30000);
@@ -172,7 +207,11 @@ fn convolution_is_linear() {
     let [ya, _] = convolve_mono_to_stereo(&a, &ir, 23000);
     let [yb, _] = convolve_mono_to_stereo(&b, &ir, 23000);
     let [ys, _] = convolve_mono_to_stereo(&sum, &ir, 23000);
-    let want: Vec<f64> = ya.iter().zip(&yb).map(|(p, q)| 0.5 * *p as f64 + 2.0 * *q as f64).collect();
+    let want: Vec<f64> = ya
+        .iter()
+        .zip(&yb)
+        .map(|(p, q)| 0.5 * *p as f64 + 2.0 * *q as f64)
+        .collect();
     let e = rel_err(&ys, &want);
     assert!(e < 1e-5, "linearity {e:.2e}");
 }
@@ -197,12 +236,25 @@ fn convolution_is_thread_count_invariant() {
     let x = test_input(200000);
     let ir = StereoIr::new(&noise(3000, 5), &noise(3000, 6));
     let run = |t: usize| {
-        rayon::ThreadPoolBuilder::new().num_threads(t).build().unwrap().install(|| convolve_mono_to_stereo(&x, &ir, 203000))
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(t)
+            .build()
+            .unwrap()
+            .install(|| convolve_mono_to_stereo(&x, &ir, 203000))
     };
     let one = run(1);
     let eight = run(8);
     let three = run(3);
-    assert!(one[0] == eight[0] && one[1] == eight[1], "1 vs 8 threads differ");
-    assert!(one[0] == three[0] && one[1] == three[1], "1 vs 3 threads differ");
-    assert!(one[0].iter().zip(&eight[0]).all(|(a, b)| a.to_bits() == b.to_bits()));
+    assert!(
+        one[0] == eight[0] && one[1] == eight[1],
+        "1 vs 8 threads differ"
+    );
+    assert!(
+        one[0] == three[0] && one[1] == three[1],
+        "1 vs 3 threads differ"
+    );
+    assert!(one[0]
+        .iter()
+        .zip(&eight[0])
+        .all(|(a, b)| a.to_bits() == b.to_bits()));
 }

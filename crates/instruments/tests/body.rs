@@ -54,7 +54,10 @@ fn body_spectrum_follows_curve() {
     let mut spec = vec![C32::default(); fft.spectrum_len()];
     let mut time = vec![0.0f32; n];
     let df = SR_F / n as f64;
-    let centres: Vec<f64> = (-1..).map(|k| 100.0 * 2f64.powf(k as f64 / 3.0)).take_while(|&f| f <= 8100.0).collect();
+    let centres: Vec<f64> = (-1..)
+        .map(|k| 100.0 * 2f64.powf(k as f64 / 3.0))
+        .take_while(|&f| f <= 8100.0)
+        .collect();
     for body in BODIES {
         let (lo, hi, tol) = match body {
             Body::Guitar | Body::Harp => (79.0, 8100.0, 1.5),
@@ -72,7 +75,11 @@ fn body_spectrum_follows_curve() {
                 for (b, &fc) in centres.iter().enumerate() {
                     let (f0, f1) = (fc * 2f64.powf(-1.0 / 6.0), fc * 2f64.powf(1.0 / 6.0));
                     let (k0, k1) = ((f0 / df).ceil() as usize, (f1 / df).floor() as usize);
-                    let p: f64 = spec[k0..=k1].iter().map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2)).sum::<f64>() / (k1 - k0 + 1) as f64;
+                    let p: f64 = spec[k0..=k1]
+                        .iter()
+                        .map(|c| (c.re as f64).powi(2) + (c.im as f64).powi(2))
+                        .sum::<f64>()
+                        / (k1 - k0 + 1) as f64;
                     pow[b] += p;
                 }
             }
@@ -84,18 +91,31 @@ fn body_spectrum_follows_curve() {
             }
             let (f0, f1) = (fc * 2f64.powf(-1.0 / 6.0), fc * 2f64.powf(1.0 / 6.0));
             let (k0, k1) = ((f0 / df).ceil() as usize, (f1 / df).floor() as usize);
-            let curve: f64 = (k0..=k1).map(|k| 10f64.powf(body.level_db(k as f64 * df) / 10.0)).sum::<f64>() / (k1 - k0 + 1) as f64;
+            let curve: f64 = (k0..=k1)
+                .map(|k| 10f64.powf(body.level_db(k as f64 * df) / 10.0))
+                .sum::<f64>()
+                / (k1 - k0 + 1) as f64;
             dev.push((fc, 10.0 * pow[b].log10() - 10.0 * curve.log10()));
         }
         let mean = dev.iter().map(|d| d.1).sum::<f64>() / dev.len() as f64;
         let worst = dev.iter().map(|d| (d.1 - mean).abs()).fold(0.0, f64::max);
         println!("{body:?}: worst 1/3-octave deviation {worst:.2} dB");
-        println!("  {}", dev.iter().map(|&(fc, d)| format!("{fc:.0}:{:+.2}", d - mean)).collect::<Vec<_>>().join(" "));
+        println!(
+            "  {}",
+            dev.iter()
+                .map(|&(fc, d)| format!("{fc:.0}:{:+.2}", d - mean))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
         for &(fc, d) in &dev {
             // Below the crossover: one fixed draw of 1-3 modes per 1/12
             // octave, so a wider tolerance.
             let tol = if fc < 300.0 { tol + 1.0 } else { tol };
-            assert!((d - mean).abs() < tol, "{body:?} {fc:.0} Hz: {:+.2} dB", d - mean);
+            assert!(
+                (d - mean).abs() < tol,
+                "{body:?} {fc:.0} Hz: {:+.2} dB",
+                d - mean
+            );
         }
     }
 }
@@ -106,7 +126,6 @@ fn body_impulse_response_is_trimmed() {
     let ir = Body::Guitar.impulse_response(&mut a);
     assert_eq!(ir.len(), (0.36 * SR_F).round() as usize);
 }
-
 
 /// 1/3-octave band power of each channel of `taps` in dB, bands centred
 /// at 80 Hz * 2^(k/3), k = 0..23.
@@ -128,7 +147,11 @@ fn band_db(taps: &[Vec<f64>; 2]) -> [Vec<f64>; 2] {
             let fc = 80.0 * 2f64.powf(k as f64 / 3.0);
             let (f0, f1) = (fc * 2f64.powf(-1.0 / 6.0), fc * 2f64.powf(1.0 / 6.0));
             let (k0, k1) = ((f0 / df).ceil() as usize, (f1 / df).floor() as usize);
-            let p: f64 = spec[k0..=k1].iter().map(|z| (z.re as f64).powi(2) + (z.im as f64).powi(2)).sum::<f64>() / (k1 - k0 + 1) as f64;
+            let p: f64 = spec[k0..=k1]
+                .iter()
+                .map(|z| (z.re as f64).powi(2) + (z.im as f64).powi(2))
+                .sum::<f64>()
+                / (k1 - k0 + 1) as f64;
             out[c].push(10.0 * p.log10());
         }
     }
@@ -147,8 +170,9 @@ fn band_db(taps: &[Vec<f64>; 2]) -> [Vec<f64>; 2] {
 #[test]
 fn body_bands_are_stable_across_seeds() {
     for body in BODIES {
-        let runs: Vec<[Vec<f64>; 2]> =
-            (0..32u64).map(|seed| band_db(&body.taps(&mut Rng::stream(seed, tag("test.body.spread"))))).collect();
+        let runs: Vec<[Vec<f64>; 2]> = (0..32u64)
+            .map(|seed| band_db(&body.taps(&mut Rng::stream(seed, tag("test.body.spread")))))
+            .collect();
         for k in 0..23 {
             let fc = 80.0 * 2f64.powf(k as f64 / 3.0);
             if body == Body::Violin && fc < 200.0 {
@@ -157,8 +181,13 @@ fn body_bands_are_stable_across_seeds() {
             for c in 0..2 {
                 let v: Vec<f64> = runs.iter().map(|r| r[c][k]).collect();
                 let m = v.iter().sum::<f64>() / v.len() as f64;
-                let sd = (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len() - 1) as f64).sqrt();
-                let lim = if fc * 2f64.powf(1.0 / 6.0) < 300.0 { 0.6 } else { 2.0 };
+                let sd =
+                    (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (v.len() - 1) as f64).sqrt();
+                let lim = if fc * 2f64.powf(1.0 / 6.0) < 300.0 {
+                    0.6
+                } else {
+                    2.0
+                };
                 assert!(sd < lim, "{body:?} {fc:.0} Hz ch {c}: std {sd:.2} dB");
             }
         }
@@ -181,7 +210,6 @@ fn body_channels_are_decorrelated() {
     }
 }
 
-
 /// Energy groups (design 5.6) over 32 seeds: each holds at least
 /// `MIN_GROUP` modes, lies on one side of `F_CROSS`, keeps at least 5% of
 /// its drawn power through the step and DC removal, and has a gain under
@@ -194,7 +222,8 @@ fn body_channels_are_decorrelated() {
 fn body_groups_are_well_posed() {
     for body in BODIES {
         for seed in 0..32u64 {
-            let (taps, groups) = body.taps_with_groups(&mut Rng::stream(seed, tag("test.body.groups")));
+            let (taps, groups) =
+                body.taps_with_groups(&mut Rng::stream(seed, tag("test.body.groups")));
             assert!(taps.iter().all(|c| c.iter().all(|x| x.is_finite())));
             for g in &groups {
                 let at = format!("{body:?} seed {seed} {:.0}-{:.0} Hz", g.f_lo, g.f_hi);
@@ -202,7 +231,11 @@ fn body_groups_are_well_posed() {
                 assert_eq!(g.f_lo < F_CROSS, g.f_hi < F_CROSS, "{at}: crosses F_CROSS");
                 for c in 0..2 {
                     assert!(g.kept[c] >= 0.05, "{at} ch {c}: kept {:.3}", g.kept[c]);
-                    assert!(g.gain[c] > 0.0 && g.gain[c] < 100.0, "{at} ch {c}: gain {:.3e}", g.gain[c]);
+                    assert!(
+                        g.gain[c] > 0.0 && g.gain[c] < 100.0,
+                        "{at} ch {c}: gain {:.3e}",
+                        g.gain[c]
+                    );
                 }
             }
         }
@@ -219,14 +252,26 @@ fn body_low_groups_are_fixed_and_well_posed() {
     for body in [Body::Guitar, Body::Harp] {
         let low = |seed: u64| {
             let (_, g) = body.taps_with_groups(&mut Rng::stream(seed, tag("test.body.low")));
-            g.into_iter().filter(|g| g.f_hi < F_CROSS).collect::<Vec<_>>()
+            g.into_iter()
+                .filter(|g| g.f_hi < F_CROSS)
+                .collect::<Vec<_>>()
         };
         let first = low(0);
         assert!(first.len() >= 10, "{body:?}: {} low groups", first.len());
-        assert!(first[0].f_lo < body.spec().f_min + 10.0, "{body:?}: lowest mode {:.1} Hz", first[0].f_lo);
+        assert!(
+            first[0].f_lo < body.spec().f_min + 10.0,
+            "{body:?}: lowest mode {:.1} Hz",
+            first[0].f_lo
+        );
         for g in &first {
             for c in 0..2 {
-                assert!(g.kept[c] >= 0.2 && g.gain[c] < 20.0, "{body:?} {:.0} Hz ch {c}: kept {:.3} gain {:.2}", g.f_lo, g.kept[c], g.gain[c]);
+                assert!(
+                    g.kept[c] >= 0.2 && g.gain[c] < 20.0,
+                    "{body:?} {:.0} Hz ch {c}: kept {:.3} gain {:.2}",
+                    g.f_lo,
+                    g.kept[c],
+                    g.gain[c]
+                );
             }
         }
         for seed in 1..8u64 {

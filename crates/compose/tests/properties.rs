@@ -5,8 +5,8 @@ use compose::prepare::{prepare, Prepared};
 use song::{Pc, SectionKind, Song, Voice};
 
 fn demo() -> Song {
-    let raw: serde_json::Value =
-        serde_json::from_str(include_str!("../../engine/src/demo.json")).expect("demo.json is JSON");
+    let raw: serde_json::Value = serde_json::from_str(include_str!("../../engine/src/demo.json"))
+        .expect("demo.json is JSON");
     let (s, repairs) = song::normalize_value(&raw).expect("demo normalises");
     assert!(repairs.is_empty(), "{repairs:?}");
     s
@@ -46,7 +46,10 @@ fn tonic_cadences(p: &Prepared) -> (usize, usize) {
             continue;
         }
         let rh = l.rh.as_ref().expect("composed");
-        let (Some(&last), Some(&on)) = (l.pitches.as_ref().expect("composed").last(), rh.onsets.last()) else {
+        let (Some(&last), Some(&on)) = (
+            l.pitches.as_ref().expect("composed").last(),
+            rh.onsets.last(),
+        ) else {
             continue;
         };
         let beat = (l.start_bar as i32 * p.form.bpb()) as f64 + on + 0.01;
@@ -86,8 +89,14 @@ fn melody_fits_the_voice() {
             let lo = ms[ms.len() / 20];
             let hi = ms[ms.len() * 19 / 20];
             // The 5th-95th percentile span sits inside the range, give or take a tone.
-            assert!(lo >= r.lo as i32 - 2 && hi <= r.hi as i32 + 2, "{v} seed {seed}: {lo}-{hi} vs {r:?}");
-            inside += ms.iter().filter(|&&m| (r.lo as i32..=r.hi as i32).contains(&m)).count();
+            assert!(
+                lo >= r.lo as i32 - 2 && hi <= r.hi as i32 + 2,
+                "{v} seed {seed}: {lo}-{hi} vs {r:?}"
+            );
+            inside += ms
+                .iter()
+                .filter(|&&m| (r.lo as i32..=r.hi as i32).contains(&m))
+                .count();
             all += ms.len();
         }
         let rate = inside as f64 / all as f64;
@@ -105,11 +114,26 @@ fn same_seed_same_melody() {
         p.comp
             .lead
             .iter()
-            .map(|n| (n.midi, n.grace, n.beat.to_bits(), n.dur.to_bits(), n.t0.to_bits(), n.t1.to_bits()))
+            .map(|n| {
+                (
+                    n.midi,
+                    n.grace,
+                    n.beat.to_bits(),
+                    n.dur.to_bits(),
+                    n.t0.to_bits(),
+                    n.t1.to_bits(),
+                )
+            })
             .collect::<Vec<_>>()
     };
     assert_eq!(key(&a), key(&b));
-    let inst = |p: &Prepared| p.comp.inst.iter().map(|n| (n.midi, n.beat.to_bits())).collect::<Vec<_>>();
+    let inst = |p: &Prepared| {
+        p.comp
+            .inst
+            .iter()
+            .map(|n| (n.midi, n.beat.to_bits()))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(inst(&a), inst(&b));
     let c = prepare(&s, 1235, None);
     assert_ne!(key(&a), key(&c));
@@ -120,15 +144,26 @@ fn repeated_chorus_repeats_its_pitches() {
     let s = demo();
     for seed in 0..20 {
         let p = prepare(&s, seed, None);
-        let choruses: Vec<&compose::form::Sec> =
-            p.form.sections.iter().filter(|x| x.kind == SectionKind::Chorus && x.is_sung()).collect();
+        let choruses: Vec<&compose::form::Sec> = p
+            .form
+            .sections
+            .iter()
+            .filter(|x| x.kind == SectionKind::Chorus && x.is_sung())
+            .collect();
         assert!(choruses.len() >= 2);
         let pitches = |sec: &compose::form::Sec| {
-            sec.lines.iter().map(|&i| p.form.lines[i].pitches.clone().expect("composed")).collect::<Vec<_>>()
+            sec.lines
+                .iter()
+                .map(|&i| p.form.lines[i].pitches.clone().expect("composed"))
+                .collect::<Vec<_>>()
         };
         let first = pitches(choruses[0]);
         for c in &choruses[1..] {
-            let same_text = c.lines.iter().zip(&choruses[0].lines).all(|(&a, &b)| p.form.lines[a].text == p.form.lines[b].text);
+            let same_text = c
+                .lines
+                .iter()
+                .zip(&choruses[0].lines)
+                .all(|(&a, &b)| p.form.lines[a].text == p.form.lines[b].text);
             if same_text && c.lines.len() == choruses[0].lines.len() {
                 assert_eq!(pitches(c), first, "seed {seed}");
             }

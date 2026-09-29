@@ -8,9 +8,13 @@ use serde::Serialize;
 use std::fmt;
 
 /// Sharp spellings of the twelve pitch classes, C = 0.
-pub const SHARPS: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+pub const SHARPS: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
 /// Flat spellings of the twelve pitch classes, C = 0.
-pub const FLATS: [&str; 12] = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+pub const FLATS: [&str; 12] = [
+    "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B",
+];
 
 /// A pitch class, 0..12, C = 0. The constructor reduces mod 12, so every
 /// value is in range.

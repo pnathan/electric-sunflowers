@@ -99,7 +99,10 @@ struct Decay {
 
 impl Decay {
     fn new(tau: f64) -> Self {
-        Decay { e: 1.0, r: (-1.0 / (tau * SR_F)).exp() }
+        Decay {
+            e: 1.0,
+            r: (-1.0 / (tau * SR_F)).exp(),
+        }
     }
 
     /// Current value, then advance.
@@ -120,7 +123,10 @@ struct Attack {
 
 impl Attack {
     fn new(t_att: f64) -> Self {
-        Attack { a: 0.0, inc: 1.0 / (t_att * SR_F) }
+        Attack {
+            a: 0.0,
+            inc: 1.0 / (t_att * SR_F),
+        }
     }
 
     #[inline(always)]
@@ -260,7 +266,12 @@ fn synth(kind: DrumKind, rng: &mut Rng, s: &mut DrumScratch) -> usize {
         DrumKind::Kick => {
             let click_n = secs(0.004).min(n);
             rng.fill_bipolar(&mut n0[..click_n]);
-            let (mut osc, mut env, mut sweep, mut click) = (Sine::new(), Decay::new(0.17), Decay::new(0.034), Decay::new(0.0012));
+            let (mut osc, mut env, mut sweep, mut click) = (
+                Sine::new(),
+                Decay::new(0.17),
+                Decay::new(0.034),
+                Decay::new(0.0012),
+            );
             for (i, v) in out.iter_mut().enumerate() {
                 let k = Sine::k_of(47.0 + 72.0 * sweep.next());
                 let mut x = osc.next(k) * env.next();
@@ -300,9 +311,16 @@ fn synth(kind: DrumKind, rng: &mut Rng, s: &mut DrumScratch) -> usize {
             filter(h2, bp(330.0, 5.0));
             let k = Sine::k_of(186.0);
             let mut osc = Sine::new();
-            let (mut eh, mut ah, mut ew, mut aw) = (Decay::new(0.07), Attack::new(0.002), Decay::new(0.1), Attack::new(0.004));
+            let (mut eh, mut ah, mut ew, mut aw) = (
+                Decay::new(0.07),
+                Attack::new(0.002),
+                Decay::new(0.1),
+                Attack::new(0.004),
+            );
             for i in 0..n {
-                let head = (osc.next(k) * 0.35 + h1[i] as f64 * 1.6 + h2[i] as f64 * 0.9) * eh.next() * ah.next();
+                let head = (osc.next(k) * 0.35 + h1[i] as f64 * 1.6 + h2[i] as f64 * 0.9)
+                    * eh.next()
+                    * ah.next();
                 let wire = wires[i] as f64 * 0.75 * ew.next() * aw.next();
                 out[i] = (head + wire) as f32;
             }
@@ -348,7 +366,12 @@ fn synth(kind: DrumKind, rng: &mut Rng, s: &mut DrumScratch) -> usize {
             let f = tom_hz(hz);
             let nz = &mut n0[..n];
             rng.fill_bipolar(nz);
-            let (mut osc, mut env, mut sweep, mut en) = (Sine::new(), Decay::new(0.28), Decay::new(0.04), Decay::new(0.02));
+            let (mut osc, mut env, mut sweep, mut en) = (
+                Sine::new(),
+                Decay::new(0.28),
+                Decay::new(0.04),
+                Decay::new(0.02),
+            );
             for (v, z) in out.iter_mut().zip(nz.iter()) {
                 let k = Sine::k_of(f * (1.0 + 0.35 * sweep.next()));
                 *v = (osc.next(k) * env.next() + *z as f64 * 0.05 * en.next()) as f32;
@@ -384,14 +407,26 @@ fn synth(kind: DrumKind, rng: &mut Rng, s: &mut DrumScratch) -> usize {
 /// `hit.vel`, pan with equal-power gains and add at `sample_at(hit.t)`.
 /// Samples outside the stem are dropped. A non-finite velocity renders
 /// nothing.
-pub fn render_hit(hit: &DrumHit, rng: &mut Rng, out_l: &mut [f32], out_r: &mut [f32], scratch: &mut DrumScratch) {
+pub fn render_hit(
+    hit: &DrumHit,
+    rng: &mut Rng,
+    out_l: &mut [f32],
+    out_r: &mut [f32],
+    scratch: &mut DrumScratch,
+) {
     let vel = hit.vel;
     if !vel.is_finite() || vel == 0.0 || !hit.t.is_finite() {
         return;
     }
     let n = synth(hit.kind, rng, scratch);
     let [gl, gr] = equal_power(hit.pan as f64);
-    add_mono(out_l, out_r, sample_at(hit.t), &scratch.mono[..n], [gl * vel, gr * vel]);
+    add_mono(
+        out_l,
+        out_r,
+        sample_at(hit.t),
+        &scratch.mono[..n],
+        [gl * vel, gr * vel],
+    );
 }
 
 /// Render all hits into a stereo stem of `len` samples. Hit k draws from

@@ -79,7 +79,18 @@ impl PhrasingParams {
             Endings::Released => RELEASED,
             Endings::Clipped => CLIPPED,
         };
-        PhrasingParams { sustain, onset_share, lead_in, vibrato, glide, swell, breath, end_len, fade_depth, fade_from }
+        PhrasingParams {
+            sustain,
+            onset_share,
+            lead_in,
+            vibrato,
+            glide,
+            swell,
+            breath,
+            end_len,
+            fade_depth,
+            fade_from,
+        }
     }
 }
 
@@ -132,7 +143,17 @@ mod tests {
     use super::*;
 
     fn note(t0: f64, t1: f64, phrase_end: bool) -> VocalNote {
-        VocalNote { t0, t1, midi: 60.0, phones: Vec::new(), amp: 1.0, stress: false, phrase_start: false, phrase_end, grace: None }
+        VocalNote {
+            t0,
+            t1,
+            midi: 60.0,
+            phones: Vec::new(),
+            amp: 1.0,
+            stress: false,
+            phrase_start: false,
+            phrase_end,
+            grace: None,
+        }
     }
 
     #[test]
@@ -163,10 +184,16 @@ mod tests {
     #[test]
     fn phrase_notes_caps_a_non_final_note_by_sustain() {
         let notes = [note(0.0, 1.0, false), note(2.0, 2.5, true)];
-        let p = PhrasingParams { sustain: 0.5, ..PhrasingParams::default() };
+        let p = PhrasingParams {
+            sustain: 0.5,
+            ..PhrasingParams::default()
+        };
         let out = phrase_notes(&notes, &p);
         assert!((out[0].t1 - 1.0).abs() < 1e-12); // 0.5 * (2.0 - 0.0) = 1.0 < original 1.0
-        let p2 = PhrasingParams { sustain: 0.2, ..PhrasingParams::default() };
+        let p2 = PhrasingParams {
+            sustain: 0.2,
+            ..PhrasingParams::default()
+        };
         let out2 = phrase_notes(&notes, &p2);
         assert!((out2[0].t1 - 0.4).abs() < 1e-12); // 0.2 * 2.0 = 0.4
         assert_eq!(out2[1].t1, notes[1].t1); // phrase_end untouched by sustain
@@ -175,7 +202,10 @@ mod tests {
     #[test]
     fn phrase_notes_shortens_a_phrase_final_note_by_end_len() {
         let notes = [note(0.0, 1.0, false), note(1.0, 3.0, true)];
-        let p = PhrasingParams { end_len: 0.6, ..PhrasingParams::default() };
+        let p = PhrasingParams {
+            end_len: 0.6,
+            ..PhrasingParams::default()
+        };
         let out = phrase_notes(&notes, &p);
         assert_eq!(out[0].t1, notes[0].t1); // non-final untouched by end_len
         assert!((out[1].t1 - (1.0 + 0.6 * 2.0)).abs() < 1e-12);
@@ -184,7 +214,11 @@ mod tests {
     #[test]
     fn phrase_notes_floors_at_min_shaped() {
         let notes = [note(0.0, 1.0, false), note(1.001, 1.002, true)];
-        let p = PhrasingParams { sustain: 0.01, end_len: 0.01, ..PhrasingParams::default() };
+        let p = PhrasingParams {
+            sustain: 0.01,
+            end_len: 0.01,
+            ..PhrasingParams::default()
+        };
         let out = phrase_notes(&notes, &p);
         assert!((out[0].t1 - 0.0 - MIN_SHAPED).abs() < 1e-12);
         assert_eq!(out[1].t1, 1.002); // shorter than the floor: left alone, never lengthened

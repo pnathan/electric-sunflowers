@@ -3,7 +3,9 @@
 
 use dsp::biquad::{Biquad, BiquadCoeffs, Cascade, EqBand, EqKind, StereoBiquad};
 use dsp::dynamics::{Compressor, GainComputer, Link, PeakDetector};
-use dsp::onepole::{zero_phase_smooth, zero_phase_smooth_lanes, DcBlocker, OnePole, UnequalLengths};
+use dsp::onepole::{
+    zero_phase_smooth, zero_phase_smooth_lanes, DcBlocker, OnePole, UnequalLengths,
+};
 use dsp::pan::{add_mono, balance, equal_power};
 use dsp::resonator::{coeffs, Resonator};
 use dsp::smoother::Ramp;
@@ -35,13 +37,23 @@ fn lowpass_highpass_minus_3db_at_corner() {
         close(lp.magnitude_db(f, FS), -3.0103, 0.05, "LP at f");
         close(hp.magnitude_db(f, FS), -3.0103, 0.05, "HP at f");
         close(lp.magnitude_db(1e-3, FS), 0.0, 1e-6, "LP at DC");
-        close(hp.magnitude_db(FS / 2.0 - 1e-3, FS), 0.0, 1e-3, "HP at Nyquist");
+        close(
+            hp.magnitude_db(FS / 2.0 - 1e-3, FS),
+            0.0,
+            1e-3,
+            "HP at Nyquist",
+        );
     }
 }
 
 #[test]
 fn peaking_and_bandpass_gain_at_centre() {
-    for &(f, q, db) in &[(250.0, 1.0, -1.5), (2900.0, 1.0, 1.5), (115.0, 0.9, 3.0), (5000.0, 2.0, -12.0)] {
+    for &(f, q, db) in &[
+        (250.0, 1.0, -1.5),
+        (2900.0, 1.0, 1.5),
+        (115.0, 0.9, 3.0),
+        (5000.0, 2.0, -12.0),
+    ] {
         let pk = BiquadCoeffs::peaking(FS, f, q, db);
         close(pk.magnitude_db(f, FS), db, 0.05, "peaking at f");
         close(pk.magnitude_db(1e-3, FS), 0.0, 0.05, "peaking at DC");
@@ -69,7 +81,13 @@ fn design_clamps_bad_input() {
         BiquadCoeffs::lowpass(FS, 1e9, 0.7),
         BiquadCoeffs::highpass(FS, -5.0, 0.0),
         BiquadCoeffs::peaking(FS, f64::NAN, f64::INFINITY, f64::NAN),
-        EqBand { kind: EqKind::HighShelf, f: 0.0, q: -1.0, db: 3.0 }.design(FS),
+        EqBand {
+            kind: EqKind::HighShelf,
+            f: 0.0,
+            q: -1.0,
+            db: 3.0,
+        }
+        .design(FS),
     ] {
         for v in [c.b0, c.b1, c.b2, c.a1, c.a2] {
             assert!(v.is_finite(), "{c:?}");
@@ -156,7 +174,10 @@ fn onepole_time_constant() {
             y = lp.tick(1.0);
         }
         let want = 1.0 - (-(n as f64) / (tau * FS)).exp();
-        assert!((y - 0.632_12).abs() < 0.01 * 0.632_12, "step at tau {tau}: {y}");
+        assert!(
+            (y - 0.632_12).abs() < 0.01 * 0.632_12,
+            "step at tau {tau}: {y}"
+        );
         close(y, want, 1e-9, "exact step");
     }
     let mut hp = OnePole::from_hz(100.0, FS);
@@ -188,7 +209,12 @@ fn zero_phase_smooth_is_symmetric_and_keeps_constants() {
     p[100] = 1.0;
     zero_phase_smooth(&mut p, 0.1);
     for k in 1..60 {
-        assert!((p[100 - k] - p[100 + k]).abs() < 1e-6, "k {k}: {} {}", p[100 - k], p[100 + k]);
+        assert!(
+            (p[100 - k] - p[100 + k]).abs() < 1e-6,
+            "k {k}: {} {}",
+            p[100 - k],
+            p[100 + k]
+        );
     }
     let mut e: Vec<f32> = vec![];
     zero_phase_smooth(&mut e, 0.5);
@@ -196,18 +222,28 @@ fn zero_phase_smooth_is_symmetric_and_keeps_constants() {
 
 #[test]
 fn zero_phase_smooth_lanes_equals_separate_calls() {
-    let a: Vec<f32> = (0..300).map(|i| ((i * 37 % 101) as f32 / 50.0) - 1.0).collect();
-    let b: Vec<f32> = (0..300).map(|i| ((i * 11 % 53) as f32 / 26.0) - 1.0).collect();
+    let a: Vec<f32> = (0..300)
+        .map(|i| ((i * 37 % 101) as f32 / 50.0) - 1.0)
+        .collect();
+    let b: Vec<f32> = (0..300)
+        .map(|i| ((i * 11 % 53) as f32 / 26.0) - 1.0)
+        .collect();
     let (mut a1, mut b1) = (a.clone(), b.clone());
     zero_phase_smooth(&mut a1, 0.2);
     zero_phase_smooth(&mut b1, 0.05);
     let (mut a2, mut b2) = (a.clone(), b.clone());
-    assert_eq!(zero_phase_smooth_lanes([&mut a2, &mut b2], [0.2, 0.05]), Ok(()));
+    assert_eq!(
+        zero_phase_smooth_lanes([&mut a2, &mut b2], [0.2, 0.05]),
+        Ok(())
+    );
     assert!(a1.iter().zip(&a2).all(|(x, y)| x.to_bits() == y.to_bits()));
     assert!(b1.iter().zip(&b2).all(|(x, y)| x.to_bits() == y.to_bits()));
     // Unequal lengths: an error, and no track changes.
     let (mut a3, mut short) = (a.clone(), b[..299].to_vec());
-    assert_eq!(zero_phase_smooth_lanes([&mut a3, &mut short], [0.2, 0.05]), Err(UnequalLengths));
+    assert_eq!(
+        zero_phase_smooth_lanes([&mut a3, &mut short], [0.2, 0.05]),
+        Err(UnequalLengths)
+    );
     assert_eq!(a3, a);
 }
 
@@ -222,7 +258,13 @@ fn res_mag(a: f64, b: f64, c: f64, f: f64) -> f64 {
 
 #[test]
 fn resonator_unity_dc_peak_and_bandwidth() {
-    for &(f, bw) in &[(300.0, 60.0), (700.0, 80.0), (2200.0, 120.0), (3000.0, 200.0), (5500.0, 250.0)] {
+    for &(f, bw) in &[
+        (300.0, 60.0),
+        (700.0, 80.0),
+        (2200.0, 120.0),
+        (3000.0, 200.0),
+        (5500.0, 250.0),
+    ] {
         let (a, b, c) = coeffs(f, bw, FS);
         close(res_mag(a, b, c, 0.0), 1.0, 1e-12, "DC gain");
         // Time domain DC gain too.
@@ -233,14 +275,32 @@ fn resonator_unity_dc_peak_and_bandwidth() {
         }
         close(y, 1.0, 1e-9, "step settles at 1");
         // Scan on a 0.1 Hz grid.
-        let grid: Vec<(f64, f64)> = (1..80_000).map(|k| k as f64 * 0.1).map(|g| (g, res_mag(a, b, c, g))).collect();
-        let (fp, mp) = grid.iter().copied().fold((0.0, 0.0), |m, v| if v.1 > m.1 { v } else { m });
+        let grid: Vec<(f64, f64)> = (1..80_000)
+            .map(|k| k as f64 * 0.1)
+            .map(|g| (g, res_mag(a, b, c, g)))
+            .collect();
+        let (fp, mp) = grid
+            .iter()
+            .copied()
+            .fold((0.0, 0.0), |m, v| if v.1 > m.1 { v } else { m });
         assert!((fp - f).abs() < 0.01 * f, "peak {fp} for f {f}");
         let half = mp * FRAC_1_SQRT_2;
-        let lo = grid.iter().rev().find(|v| v.0 < fp && v.1 < half).map(|v| v.0).unwrap();
-        let hi = grid.iter().find(|v| v.0 > fp && v.1 < half).map(|v| v.0).unwrap();
+        let lo = grid
+            .iter()
+            .rev()
+            .find(|v| v.0 < fp && v.1 < half)
+            .map(|v| v.0)
+            .unwrap();
+        let hi = grid
+            .iter()
+            .find(|v| v.0 > fp && v.1 < half)
+            .map(|v| v.0)
+            .unwrap();
         let meas = hi - lo;
-        assert!((meas - bw).abs() < 0.05 * bw, "bandwidth {meas} for bw {bw} at f {f}");
+        assert!(
+            (meas - bw).abs() < 0.05 * bw,
+            "bandwidth {meas} for bw {bw} at f {f}"
+        );
     }
 }
 
@@ -251,7 +311,11 @@ fn ramped_resonator_stays_bounded() {
     let mut peak = 0.0f64;
     for i in 0..400 {
         // Alternate between extreme stable designs: narrow and wide, low and high.
-        let (f, bw) = if i % 2 == 0 { (60.0 + 5000.0 * nz.next().abs(), 20.0) } else { (4000.0 + 12000.0 * nz.next().abs(), 400.0) };
+        let (f, bw) = if i % 2 == 0 {
+            (60.0 + 5000.0 * nz.next().abs(), 20.0)
+        } else {
+            (4000.0 + 12000.0 * nz.next().abs(), 400.0)
+        };
         r.set_ramped(coeffs(f, bw, FS), 64);
         for _ in 0..64 {
             let y = r.tick(0.1 * nz.next());
@@ -285,7 +349,15 @@ fn ramp_reaches_target() {
 }
 
 fn comp(ratio: f64, knee: f64, link: Link) -> Compressor {
-    Compressor::new(PeakDetector::new(0.008, 0.15, FS), GainComputer { thr_db: -19.0, ratio, knee_db: knee }, link)
+    Compressor::new(
+        PeakDetector::new(0.008, 0.15, FS),
+        GainComputer {
+            thr_db: -19.0,
+            ratio,
+            knee_db: knee,
+        },
+        link,
+    )
 }
 
 #[test]
@@ -313,7 +385,11 @@ fn compressor_static_curve_equals_gain_computer() {
 #[test]
 fn gain_computer_knee_is_continuous() {
     for &w in &[0.0, 6.0, 10.0] {
-        let gc = GainComputer { thr_db: -20.0, ratio: 3.0, knee_db: w };
+        let gc = GainComputer {
+            thr_db: -20.0,
+            ratio: 3.0,
+            knee_db: w,
+        };
         let mut prev = gc.gain_db(-60.0);
         let mut l = -60.0;
         while l < 20.0 {
@@ -323,7 +399,12 @@ fn gain_computer_knee_is_continuous() {
             assert!(g <= 0.0);
             prev = g;
         }
-        close(gc.gain_db(-20.0 + 20.0), -20.0 * (1.0 - 1.0 / 3.0), 1e-12, "above knee");
+        close(
+            gc.gain_db(-20.0 + 20.0),
+            -20.0 * (1.0 - 1.0 / 3.0),
+            1e-12,
+            "above knee",
+        );
         assert_eq!(gc.gain_db(-40.0), 0.0);
     }
 }
@@ -337,8 +418,16 @@ fn compressor_gain_has_no_steps() {
     x[2000..].iter_mut().for_each(|v| *v = 0.8);
     let orig = x.clone();
     c.process_mono(&mut x);
-    let g: Vec<f64> = x.iter().zip(&orig).map(|(a, b)| *a as f64 / *b as f64).collect();
-    let max_step = g.windows(2).skip(2001).map(|w| (w[1] - w[0]).abs()).fold(0.0, f64::max);
+    let g: Vec<f64> = x
+        .iter()
+        .zip(&orig)
+        .map(|(a, b)| *a as f64 / *b as f64)
+        .collect();
+    let max_step = g
+        .windows(2)
+        .skip(2001)
+        .map(|w| (w[1] - w[0]).abs())
+        .fold(0.0, f64::max);
     assert!(max_step < 0.01, "max per-sample gain step {max_step}");
 }
 
@@ -356,7 +445,11 @@ fn equal_power_sums_to_unit_power() {
 #[test]
 fn balance_law() {
     assert_eq!(balance(0.0)[0][0], 1.0);
-    assert!(balance(0.0)[0][1].abs() < 1e-7 && balance(0.0)[1][0] == 0.0 && (balance(0.0)[1][1] - 1.0).abs() < 1e-7);
+    assert!(
+        balance(0.0)[0][1].abs() < 1e-7
+            && balance(0.0)[1][0] == 0.0
+            && (balance(0.0)[1][1] - 1.0).abs() < 1e-7
+    );
     // Hard left: both channels to the left.
     let m = balance(-1.0);
     assert_eq!(m, [[1.0, 1.0], [0.0, 0.0]]);
@@ -365,7 +458,11 @@ fn balance_law() {
     // Far channel energy is conserved across the fold.
     for p in [-0.4, 0.34, 0.45] {
         let m = balance(p);
-        let far = if p <= 0.0 { m[0][1].powi(2) + m[1][1].powi(2) } else { m[0][0].powi(2) + m[1][0].powi(2) };
+        let far = if p <= 0.0 {
+            m[0][1].powi(2) + m[1][1].powi(2)
+        } else {
+            m[0][0].powi(2) + m[1][0].powi(2)
+        };
         close(far as f64, 1.0, 1e-6, "far channel power");
     }
 }
@@ -388,15 +485,29 @@ fn coefficients_come_from_sfcore_math() {
     use sfcore::math::{db_to_gain, gain_to_db, one_pole_coeff_tau};
     // OnePole a equals the sfcore coefficient; a bad tau gives a = 1.
     for tau in [1e-4, 0.005, 0.1, 2.0] {
-        assert_eq!(OnePole::from_tau(tau, FS).a, one_pole_coeff_tau(tau, FS), "tau {tau}");
+        assert_eq!(
+            OnePole::from_tau(tau, FS).a,
+            one_pole_coeff_tau(tau, FS),
+            "tau {tau}"
+        );
     }
     for tau in [0.0, -1.0, f64::NAN, f64::INFINITY] {
         assert_eq!(OnePole::from_tau(tau, FS).a, 1.0, "tau {tau}");
     }
     // Detector pole k = 1 - a; a bad time is instant (k = 0).
     let d = PeakDetector::new(0.01, 0.2, FS);
-    close(d.attack_coef, 1.0 - one_pole_coeff_tau(0.01, FS), 1e-15, "attack pole");
-    close(d.release_coef, 1.0 - one_pole_coeff_tau(0.2, FS), 1e-15, "release pole");
+    close(
+        d.attack_coef,
+        1.0 - one_pole_coeff_tau(0.01, FS),
+        1e-15,
+        "attack pole",
+    );
+    close(
+        d.release_coef,
+        1.0 - one_pole_coeff_tau(0.2, FS),
+        1e-15,
+        "release pole",
+    );
     let d = PeakDetector::new(f64::NAN, f64::INFINITY, FS);
     assert_eq!((d.attack_coef, d.release_coef), (0.0, 0.0));
     // Level in dB: sfcore gain_to_db, with its floor for silence.

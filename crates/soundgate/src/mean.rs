@@ -47,7 +47,13 @@
 //! (the per-seed rule allowed +2 on one take; the mean of 8 takes has a
 //! third of the take noise).
 
-use crate::compare::{is_mid, LtasFile, MIX_PEAK, MIX_PEAK_TOL, MIX_RMS_DB, PITCH_FRACTION_DROP, REL_FLOOR_DB};
+// See crates/soundgate/src/compare.rs: `!(x <= tol)` must fail the gate on
+// a NaN measurement, which `x > tol` would not.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
+
+use crate::compare::{
+    is_mid, LtasFile, MIX_PEAK, MIX_PEAK_TOL, MIX_RMS_DB, PITCH_FRACTION_DROP, REL_FLOOR_DB,
+};
 use crate::ltas::NOMINAL_HZ;
 use crate::pitch::PitchReport;
 use serde::{Deserialize, Serialize};
@@ -102,14 +108,22 @@ pub struct MeanFile {
 fn mean_std(x: &[f64]) -> (f64, f64) {
     let n = x.len() as f64;
     let m = x.iter().sum::<f64>() / n;
-    let v = if x.len() > 1 { x.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / (n - 1.0) } else { 0.0 };
+    let v = if x.len() > 1 {
+        x.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / (n - 1.0)
+    } else {
+        0.0
+    };
     (m, v.sqrt())
 }
 
 /// Summarises per-seed LTAS files (and optional pitch reports, one per
 /// seed). A file absent from some seed is summarised over the seeds that
 /// hold it.
-pub fn summarise(labels: Vec<String>, runs: &[LtasFile], pitch: &[PitchReport]) -> Result<MeanFile, String> {
+pub fn summarise(
+    labels: Vec<String>,
+    runs: &[LtasFile],
+    pitch: &[PitchReport],
+) -> Result<MeanFile, String> {
     let mut names: Vec<&String> = runs.iter().flat_map(|r| r.files.keys()).collect();
     names.sort();
     names.dedup();
@@ -127,8 +141,10 @@ pub fn summarise(labels: Vec<String>, runs: &[LtasFile], pitch: &[PitchReport]) 
             mean_db.push(m);
             std_db.push(s);
         }
-        let (gated_rms_mean, gated_rms_std) = mean_std(&es.iter().map(|e| e.gated_rms_dbfs).collect::<Vec<_>>());
-        let (active_mean, active_std) = mean_std(&es.iter().map(|e| e.active_fraction).collect::<Vec<_>>());
+        let (gated_rms_mean, gated_rms_std) =
+            mean_std(&es.iter().map(|e| e.gated_rms_dbfs).collect::<Vec<_>>());
+        let (active_mean, active_std) =
+            mean_std(&es.iter().map(|e| e.active_fraction).collect::<Vec<_>>());
         files.insert(
             name.clone(),
             FileStats {
@@ -160,7 +176,12 @@ pub fn summarise(labels: Vec<String>, runs: &[LtasFile], pitch: &[PitchReport]) 
             octave_errors_per_seed: oe as f64 / pitch.len() as f64,
         })
     };
-    Ok(MeanFile { centres_hz: NOMINAL_HZ.to_vec(), seeds: labels, files, pitch })
+    Ok(MeanFile {
+        centres_hz: NOMINAL_HZ.to_vec(),
+        seeds: labels,
+        files,
+        pitch,
+    })
 }
 
 /// Band tolerance: fixed limits, or `k` times the base seed-to-seed std
@@ -180,7 +201,11 @@ impl BandTol {
     /// Allowed |delta| in band `i` given the base std there:
     /// `min(max(fixed, k sd), cap)`, never below the fixed tolerance.
     pub fn allowed(&self, i: usize, base_std: f64) -> f64 {
-        let (fixed, cap) = if is_mid(i) { (self.mid_db, self.cap_mid_db) } else { (self.edge_db, self.cap_edge_db) };
+        let (fixed, cap) = if is_mid(i) {
+            (self.mid_db, self.cap_mid_db)
+        } else {
+            (self.edge_db, self.cap_edge_db)
+        };
         fixed.max((self.k * base_std).min(cap))
     }
 }
@@ -211,18 +236,36 @@ pub fn compare_means(base: &MeanFile, new: &MeanFile, tol: &BandTol) -> Vec<Mean
     names.dedup();
     let mut rows = Vec::new();
     for name in names {
-        let mut row =
-            MeanRow { file: name.clone(), worst: None, failed_bands: vec![], rms_db: None, active_pts: None, fails: vec![] };
+        let mut row = MeanRow {
+            file: name.clone(),
+            worst: None,
+            failed_bands: vec![],
+            rms_db: None,
+            active_pts: None,
+            fails: vec![],
+        };
         match (base.files.get(name), new.files.get(name)) {
             (Some(b), Some(n)) => {
-                if b.mean_db.len() != NOMINAL_HZ.len() || n.mean_db.len() != NOMINAL_HZ.len() || b.std_db.len() != NOMINAL_HZ.len() {
+                if b.mean_db.len() != NOMINAL_HZ.len()
+                    || n.mean_db.len() != NOMINAL_HZ.len()
+                    || b.std_db.len() != NOMINAL_HZ.len()
+                {
                     row.fails.push("band count".into());
                 } else {
                     for i in 0..NOMINAL_HZ.len() {
                         let delta = n.mean_db[i] - b.mean_db[i];
                         let allowed = tol.allowed(i, b.std_db[i]);
-                        let w = Worst { band: i, delta, base_std: b.std_db[i], allowed };
-                        if row.worst.as_ref().is_none_or(|o| delta.abs() / allowed > o.delta.abs() / o.allowed) {
+                        let w = Worst {
+                            band: i,
+                            delta,
+                            base_std: b.std_db[i],
+                            allowed,
+                        };
+                        if row
+                            .worst
+                            .as_ref()
+                            .is_none_or(|o| delta.abs() / allowed > o.delta.abs() / o.allowed)
+                        {
                             row.worst = Some(w);
                         }
                         if !(delta.abs() <= allowed) {
@@ -230,7 +273,11 @@ pub fn compare_means(base: &MeanFile, new: &MeanFile, tol: &BandTol) -> Vec<Mean
                         }
                     }
                     if !row.failed_bands.is_empty() {
-                        let hz: Vec<String> = row.failed_bands.iter().map(|&i| format!("{}", NOMINAL_HZ[i])).collect();
+                        let hz: Vec<String> = row
+                            .failed_bands
+                            .iter()
+                            .map(|&i| format!("{}", NOMINAL_HZ[i]))
+                            .collect();
                         row.fails.push(format!("bands {} Hz", hz.join(",")));
                     }
                 }
@@ -247,8 +294,12 @@ pub fn compare_means(base: &MeanFile, new: &MeanFile, tol: &BandTol) -> Vec<Mean
                 if n.nonfinite > 0 {
                     row.fails.push(format!("{} NaN/inf", n.nonfinite));
                 }
-                if name == "mix" && !((n.peak_min - MIX_PEAK).abs() <= MIX_PEAK_TOL && (n.peak_max - MIX_PEAK).abs() <= MIX_PEAK_TOL) {
-                    row.fails.push(format!("peak {:.4}-{:.4}", n.peak_min, n.peak_max));
+                if name == "mix"
+                    && !((n.peak_min - MIX_PEAK).abs() <= MIX_PEAK_TOL
+                        && (n.peak_max - MIX_PEAK).abs() <= MIX_PEAK_TOL)
+                {
+                    row.fails
+                        .push(format!("peak {:.4}-{:.4}", n.peak_min, n.peak_max));
                 }
             }
             (Some(_), None) => row.fails.push("missing in new".into()),
@@ -264,7 +315,10 @@ pub fn compare_means(base: &MeanFile, new: &MeanFile, tol: &BandTol) -> Vec<Mean
 pub fn compare_pitch_pool(base: &PitchPool, new: &PitchPool) -> Vec<String> {
     let mut f = Vec::new();
     if !(new.fraction_within_50c >= base.fraction_within_50c - PITCH_FRACTION_DROP) {
-        f.push(format!("fraction {:.3} < {:.3}-{PITCH_FRACTION_DROP}", new.fraction_within_50c, base.fraction_within_50c));
+        f.push(format!(
+            "fraction {:.3} < {:.3}-{PITCH_FRACTION_DROP}",
+            new.fraction_within_50c, base.fraction_within_50c
+        ));
     }
     if !(new.octave_errors_per_seed <= base.octave_errors_per_seed + OCTAVE_PER_SEED_RISE) {
         f.push(format!(
@@ -305,7 +359,11 @@ pub fn mean_table(rows: &[MeanRow]) -> String {
             al,
             o(r.rms_db, 2),
             o(r.active_pts, 1),
-            if r.fails.is_empty() { "PASS".to_string() } else { format!("FAIL {}", r.fails.join(", ")) }
+            if r.fails.is_empty() {
+                "PASS".to_string()
+            } else {
+                format!("FAIL {}", r.fails.join(", "))
+            }
         );
     }
     s
@@ -318,12 +376,12 @@ pub fn band_table(name: &str, b: &FileStats, n: &FileStats, tol: &BandTol) -> St
         "-- {name}\n{:>7} {:>8} {:>7} {:>8} {:>7} {:>8} {:>8}\n",
         "Hz", "base", "base sd", "new", "new sd", "delta", "allowed"
     );
-    for i in 0..NOMINAL_HZ.len() {
+    for (i, hz) in NOMINAL_HZ.iter().enumerate() {
         let d = n.mean_db[i] - b.mean_db[i];
         let a = tol.allowed(i, b.std_db[i]);
         s += &format!(
             "{:>7} {:>8.2} {:>7.2} {:>8.2} {:>7.2} {:>+8.2} {:>8.2}{}\n",
-            NOMINAL_HZ[i],
+            hz,
             b.mean_db[i],
             b.std_db[i],
             n.mean_db[i],
@@ -355,10 +413,19 @@ mod tests {
         };
         files.insert("mix".to_string(), l.clone());
         files.insert("lead".to_string(), l);
-        LtasFile { centres_hz: NOMINAL_HZ.to_vec(), files }
+        LtasFile {
+            centres_hz: NOMINAL_HZ.to_vec(),
+            files,
+        }
     }
 
-    const TOL: BandTol = BandTol { mid_db: 3.0, edge_db: 6.0, k: 2.0, cap_mid_db: 6.0, cap_edge_db: 9.0 };
+    const TOL: BandTol = BandTol {
+        mid_db: 3.0,
+        edge_db: 6.0,
+        k: 2.0,
+        cap_mid_db: 6.0,
+        cap_edge_db: 9.0,
+    };
 
     #[test]
     fn mean_std_and_floor() {
@@ -375,11 +442,23 @@ mod tests {
     #[test]
     fn spread_widens_the_band_tolerance() {
         // base: bands alternate -20/-30 over seeds, sd 5.77 dB (4 seeds)
-        let base = summarise(vec![], &[run(-20.0, 0.89), run(-30.0, 0.89), run(-20.0, 0.89), run(-30.0, 0.89)], &[]).unwrap();
+        let base = summarise(
+            vec![],
+            &[
+                run(-20.0, 0.89),
+                run(-30.0, 0.89),
+                run(-20.0, 0.89),
+                run(-30.0, 0.89),
+            ],
+            &[],
+        )
+        .unwrap();
         // new: mean shifted by 5 dB (-20 vs -25): beyond 3 dB, within 2 sd
         // and under the 6 dB cap
         let new = summarise(vec![], &[run(-20.0, 0.89), run(-20.0, 0.89)], &[]).unwrap();
-        assert!(compare_means(&base, &new, &TOL).iter().all(|r| r.fails.is_empty()));
+        assert!(compare_means(&base, &new, &TOL)
+            .iter()
+            .all(|r| r.fails.is_empty()));
         // stable base (sd 0): the fixed tolerance applies
         let base = summarise(vec![], &[run(-25.0, 0.89), run(-25.0, 0.89)], &[]).unwrap();
         let rows = compare_means(&base, &new, &TOL);
@@ -398,10 +477,24 @@ mod tests {
         assert_eq!(TOL.allowed(0, 4.0), 8.0);
         assert_eq!(TOL.allowed(0, 20.0), 9.0);
         // a cap under the fixed tolerance never tightens it
-        let t = BandTol { cap_mid_db: 1.0, cap_edge_db: 1.0, ..TOL };
+        let t = BandTol {
+            cap_mid_db: 1.0,
+            cap_edge_db: 1.0,
+            ..TOL
+        };
         assert_eq!(t.allowed(10, 9.6), 3.0);
         // bimodal base: sd 10 dB, a 7 dB shift fails although within 2 sd
-        let base = summarise(vec![], &[run(-10.0, 0.89), run(-30.0, 0.89), run(-10.0, 0.89), run(-30.0, 0.89)], &[]).unwrap();
+        let base = summarise(
+            vec![],
+            &[
+                run(-10.0, 0.89),
+                run(-30.0, 0.89),
+                run(-10.0, 0.89),
+                run(-30.0, 0.89),
+            ],
+            &[],
+        )
+        .unwrap();
         let new = summarise(vec![], &[run(-13.0, 0.89), run(-13.0, 0.89)], &[]).unwrap();
         let rows = compare_means(&base, &new, &TOL);
         let lead = rows.iter().find(|r| r.file == "lead").unwrap();
@@ -413,10 +506,18 @@ mod tests {
         let base = summarise(vec![], &[run(-20.0, 0.89)], &[]).unwrap();
         let mut new = base.clone();
         new.files.get_mut("mix").unwrap().gated_rms_mean += 1.4;
-        assert!(compare_means(&base, &new, &TOL).iter().all(|r| r.fails.is_empty()));
+        assert!(compare_means(&base, &new, &TOL)
+            .iter()
+            .all(|r| r.fails.is_empty()));
         new.files.get_mut("mix").unwrap().gated_rms_mean += 0.2;
         let rows = compare_means(&base, &new, &TOL);
-        assert!(rows.iter().find(|r| r.file == "mix").unwrap().fails.iter().any(|f| f.starts_with("rms")));
+        assert!(rows
+            .iter()
+            .find(|r| r.file == "mix")
+            .unwrap()
+            .fails
+            .iter()
+            .any(|f| f.starts_with("rms")));
     }
 
     #[test]
@@ -424,10 +525,21 @@ mod tests {
         let base = summarise(vec![], &[run(-20.0, 0.89)], &[]).unwrap();
         let new = summarise(vec![], &[run(-20.0, 0.89), run(-20.0, 0.85)], &[]).unwrap();
         let rows = compare_means(&base, &new, &TOL);
-        assert!(rows.iter().find(|r| r.file == "mix").unwrap().fails.iter().any(|f| f.starts_with("peak")));
+        assert!(rows
+            .iter()
+            .find(|r| r.file == "mix")
+            .unwrap()
+            .fails
+            .iter()
+            .any(|f| f.starts_with("peak")));
         let mut new = base.clone();
         new.files.remove("lead");
-        assert!(!compare_means(&base, &new, &TOL).iter().find(|r| r.file == "lead").unwrap().fails.is_empty());
+        assert!(!compare_means(&base, &new, &TOL)
+            .iter()
+            .find(|r| r.file == "lead")
+            .unwrap()
+            .fails
+            .is_empty());
     }
 
     #[test]
@@ -442,11 +554,22 @@ mod tests {
             notes: vec![],
         };
         let r = [run(-20.0, 0.89), run(-20.0, 0.89)];
-        let base = summarise(vec![], &r, &[p(99, 1), p(97, 1)]).unwrap().pitch.unwrap();
-        assert!((base.fraction_within_50c - 0.98).abs() < 1e-12 && base.octave_errors_per_seed == 1.0);
-        let ok = summarise(vec![], &r, &[p(96, 2), p(96, 2)]).unwrap().pitch.unwrap();
+        let base = summarise(vec![], &r, &[p(99, 1), p(97, 1)])
+            .unwrap()
+            .pitch
+            .unwrap();
+        assert!(
+            (base.fraction_within_50c - 0.98).abs() < 1e-12 && base.octave_errors_per_seed == 1.0
+        );
+        let ok = summarise(vec![], &r, &[p(96, 2), p(96, 2)])
+            .unwrap()
+            .pitch
+            .unwrap();
         assert!(compare_pitch_pool(&base, &ok).is_empty());
-        let bad = summarise(vec![], &r, &[p(93, 3), p(96, 2)]).unwrap().pitch.unwrap();
+        let bad = summarise(vec![], &r, &[p(93, 3), p(96, 2)])
+            .unwrap()
+            .pitch
+            .unwrap();
         assert_eq!(compare_pitch_pool(&base, &bad).len(), 2);
     }
 }

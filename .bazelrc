@@ -19,15 +19,18 @@ build:release -c opt
 build:release --@rules_rust//rust/settings:lto=fat
 build:release --@rules_rust//rust/settings:codegen_units=1
 
-# --- Lint (opt-in): rustfmt-check and clippy aspects, self-employment's
-# convention. NOT wired into plain `build`/`test`: `cargo fmt --check`
-# already fails on this tree today (e.g. crates/arrange/src/bass.rs), so
-# making this the default would fail every build for a reason unrelated to
-# this trial. Enable per-invocation with --config=lint once the tree is
-# rustfmt-clean, or to see the clippy findings on their own.
-build:lint --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect
-build:lint --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect
-build:lint --output_groups=+rustfmt_checks,+clippy_checks
+# --- Lint: rustfmt-check and clippy aspects, self-employment's convention.
+# On for every build/test now that the tree is rustfmt-clean and the
+# clippy findings are fixed or allowed with a reason (issue #4). Turn off
+# with --config=nolint (quick iteration, or a build that must not fail on
+# lint) since --output_groups accepts "-group" to drop a group the plain
+# `build` line above added; the aspects still run, they just stop feeding
+# their check actions into the requested output.
+build --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect
+build --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect
+build --output_groups=+rustfmt_checks,+clippy_checks
+
+build:nolint --output_groups=-rustfmt_checks,-clippy_checks
 
 # Format the tree with: bazel run @rules_rust//tools/rustfmt
 

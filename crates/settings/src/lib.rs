@@ -57,7 +57,11 @@ pub struct UnknownDuetChoice(pub String);
 
 impl std::fmt::Display for UnknownDuetChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "unknown duet choice {:?} (want auto, solo, duet)", self.0)
+        write!(
+            f,
+            "unknown duet choice {:?} (want auto, solo, duet)",
+            self.0
+        )
     }
 }
 

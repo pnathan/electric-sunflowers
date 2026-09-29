@@ -21,7 +21,9 @@ fn blues(drums: &str) -> Song {
             {"type":"verse","same":true}
         ]
     });
-    song::normalize_value(&raw).expect("blues literal normalises").0
+    song::normalize_value(&raw)
+        .expect("blues literal normalises")
+        .0
 }
 
 fn peak(m: &Stereo) -> f32 {
@@ -31,7 +33,10 @@ fn peak(m: &Stereo) -> f32 {
 fn assert_valid(m: &Stereo, len: usize) {
     assert_eq!(m.l.len(), len);
     assert_eq!(m.r.len(), len);
-    assert!(m.l.iter().chain(&m.r).all(|v| v.is_finite()), "non-finite sample");
+    assert!(
+        m.l.iter().chain(&m.r).all(|v| v.is_finite()),
+        "non-finite sample"
+    );
     assert!((peak(m) as f64 - 0.89).abs() < 1e-3, "peak {}", peak(m));
 }
 
@@ -91,7 +96,9 @@ fn has_events(song: &Song, seed: u64, id: TrackId) -> bool {
         TrackId::Harmony => !v.harmony.notes.is_empty(),
         TrackId::Choir => v.choir.iter().flatten().any(|s| !s.notes.is_empty()),
         TrackId::Guitar => a.guitar.iter().any(|s| !s.is_empty()),
-        TrackId::HarmonyGuitar => !a.harmony_guitar.lead.is_empty() || !a.harmony_guitar.arp.is_empty(),
+        TrackId::HarmonyGuitar => {
+            !a.harmony_guitar.lead.is_empty() || !a.harmony_guitar.arp.is_empty()
+        }
         TrackId::Bass => !a.bass.is_empty(),
         TrackId::Drums => a.drums.as_ref().is_some_and(|d| !d.is_empty()),
         TrackId::Harp => !a.harp.is_empty(),
@@ -106,7 +113,12 @@ fn stems_follow_the_song() {
         let (stems, m) = render_mix(&song, seed);
         assert_valid(&m, stems.len);
         for id in TrackId::ALL {
-            assert_eq!(stems.get(id).is_some(), has_events(&song, seed, id), "{} stem, drums {drums}", id.name());
+            assert_eq!(
+                stems.get(id).is_some(),
+                has_events(&song, seed, id),
+                "{} stem, drums {drums}",
+                id.name()
+            );
         }
         assert_eq!(stems.get(TrackId::Drums).is_some(), drums != "none");
     }
@@ -121,19 +133,42 @@ fn band_toggles_remix_the_cached_stems() {
         part.switch_off(&mut band);
         let m = mix(&stems, &band, 11);
         assert_valid(&m, stems.len);
-        let present = TrackId::ALL.iter().any(|id| id.strip().band == Some(part) && stems.get(*id).is_some());
-        assert_eq!(bits(&m) != bits(&full), present, "switching off {}", part.name());
+        let present = TrackId::ALL
+            .iter()
+            .any(|id| id.strip().band == Some(part) && stems.get(*id).is_some());
+        assert_eq!(
+            bits(&m) != bits(&full),
+            present,
+            "switching off {}",
+            part.name()
+        );
 
         // The same as mixing stems that never had the track.
         let mut without = stems.clone();
-        for id in TrackId::ALL.into_iter().filter(|id| id.strip().band == Some(part)) {
+        for id in TrackId::ALL
+            .into_iter()
+            .filter(|id| id.strip().band == Some(part))
+        {
             without.tracks[id.index()] = None;
         }
-        assert!(bits(&m) == bits(&mix(&without, &song.band, 11)), "{}", part.name());
+        assert!(
+            bits(&m) == bits(&mix(&without, &song.band, 11)),
+            "{}",
+            part.name()
+        );
     }
     // The cache is not consumed: the full band mixes to the same samples.
     assert!(bits(&mix(&stems, &song.band, 11)) == bits(&full));
     // Everything off but the lead and guitar.
-    let bare = Band { drums: DrumKit::None, bass: false, harmony_guitar: false, harp: false, violin: false, choir: false, harmonies: false, doubles: false };
+    let bare = Band {
+        drums: DrumKit::None,
+        bass: false,
+        harmony_guitar: false,
+        harp: false,
+        violin: false,
+        choir: false,
+        harmonies: false,
+        doubles: false,
+    };
     assert_valid(&mix(&stems, &bare, 11), stems.len);
 }

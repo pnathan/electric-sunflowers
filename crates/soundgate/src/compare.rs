@@ -1,6 +1,12 @@
 //! Comparison of two runs: LTAS tables (per file) and pitch reports.
 //! Thresholds follow docs/engine-design.md section 12.
 
+// The gate's tolerance checks below write `!(x <= tol)` on purpose: a NaN
+// measurement must fail the gate, and `x <= tol` is false for NaN, so the
+// negation is true. Rewriting to `x > tol` (clippy's usual advice) would
+// make a NaN measurement pass instead, which is the opposite of intent.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
+
 use crate::ltas::{Ltas, NOMINAL_HZ};
 use crate::pitch::PitchReport;
 use serde::{Deserialize, Serialize};
@@ -58,8 +64,16 @@ pub fn compare_ltas(base: &LtasFile, new: &LtasFile, tol: &Tolerances) -> Vec<Ro
     names.dedup();
     let mut rows = Vec::new();
     for name in names {
-        let mut row =
-            Row { file: name.clone(), mid: None, edge: None, active_pts: None, rms_db: None, peak: None, nonfinite: None, fails: vec![] };
+        let mut row = Row {
+            file: name.clone(),
+            mid: None,
+            edge: None,
+            active_pts: None,
+            rms_db: None,
+            peak: None,
+            nonfinite: None,
+            fails: vec![],
+        };
         match (base.files.get(name), new.files.get(name)) {
             (Some(b), Some(n)) => {
                 if b.bands_db.len() != NOMINAL_HZ.len() || n.bands_db.len() != NOMINAL_HZ.len() {
@@ -67,7 +81,8 @@ pub fn compare_ltas(base: &LtasFile, new: &LtasFile, tol: &Tolerances) -> Vec<Ro
                 } else {
                     let (mut mid, mut edge) = (0.0f64, 0.0f64);
                     for i in 0..NOMINAL_HZ.len() {
-                        let d = (n.bands_db[i].max(REL_FLOOR_DB) - b.bands_db[i].max(REL_FLOOR_DB)).abs();
+                        let d = (n.bands_db[i].max(REL_FLOOR_DB) - b.bands_db[i].max(REL_FLOOR_DB))
+                            .abs();
                         if is_mid(i) {
                             mid = mid.max(d);
                         } else {
@@ -133,7 +148,11 @@ pub fn table(rows: &[Row]) -> String {
             opt(r.rms_db, 2),
             opt(r.peak, 4),
             r.nonfinite.map_or("-".into(), |v| v.to_string()),
-            if r.fails.is_empty() { "PASS".to_string() } else { format!("FAIL {}", r.fails.join(", ")) }
+            if r.fails.is_empty() {
+                "PASS".to_string()
+            } else {
+                format!("FAIL {}", r.fails.join(", "))
+            }
         );
     }
     s
@@ -144,10 +163,16 @@ pub fn table(rows: &[Row]) -> String {
 pub fn compare_pitch(base: &PitchReport, new: &PitchReport) -> Vec<String> {
     let mut f = Vec::new();
     if !(new.fraction_within_50c >= base.fraction_within_50c - PITCH_FRACTION_DROP) {
-        f.push(format!("fraction {:.3} < {:.3}-{PITCH_FRACTION_DROP}", new.fraction_within_50c, base.fraction_within_50c));
+        f.push(format!(
+            "fraction {:.3} < {:.3}-{PITCH_FRACTION_DROP}",
+            new.fraction_within_50c, base.fraction_within_50c
+        ));
     }
     if new.octave_errors > base.octave_errors + PITCH_OCTAVE_RISE {
-        f.push(format!("octave errors {} > {}+{PITCH_OCTAVE_RISE}", new.octave_errors, base.octave_errors));
+        f.push(format!(
+            "octave errors {} > {}+{PITCH_OCTAVE_RISE}",
+            new.octave_errors, base.octave_errors
+        ));
     }
     if new.notes_analysed == 0 {
         f.push("no notes analysed".into());
@@ -177,9 +202,17 @@ mod tests {
         let mut files = BTreeMap::new();
         files.insert("mix".to_string(), entry(0.89));
         files.insert("lead".to_string(), entry(0.5));
-        let base = LtasFile { centres_hz: NOMINAL_HZ.to_vec(), files };
-        let tol = Tolerances { mid_db: 0.5, edge_db: 1.0 };
-        assert!(compare_ltas(&base, &base, &tol).iter().all(|r| r.fails.is_empty()));
+        let base = LtasFile {
+            centres_hz: NOMINAL_HZ.to_vec(),
+            files,
+        };
+        let tol = Tolerances {
+            mid_db: 0.5,
+            edge_db: 1.0,
+        };
+        assert!(compare_ltas(&base, &base, &tol)
+            .iter()
+            .all(|r| r.fails.is_empty()));
 
         let mut new = base.clone();
         new.files.get_mut("lead").unwrap().bands_db[16] += 0.6; // 1 kHz, mid
@@ -195,8 +228,14 @@ mod tests {
         let mut files = BTreeMap::new();
         files.insert("violin".to_string(), entry(0.5));
         files.get_mut("violin").unwrap().bands_db[0] = -88.0;
-        let base = LtasFile { centres_hz: NOMINAL_HZ.to_vec(), files };
-        let tol = Tolerances { mid_db: 0.5, edge_db: 1.0 };
+        let base = LtasFile {
+            centres_hz: NOMINAL_HZ.to_vec(),
+            files,
+        };
+        let tol = Tolerances {
+            mid_db: 0.5,
+            edge_db: 1.0,
+        };
         let mut new = base.clone();
         new.files.get_mut("violin").unwrap().bands_db[0] = -70.0;
         assert!(compare_ltas(&base, &new, &tol)[0].fails.is_empty());

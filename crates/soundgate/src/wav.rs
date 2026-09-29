@@ -30,7 +30,11 @@ pub fn read(path: &Path) -> Result<Audio, String> {
     match spec.sample_format {
         hound::SampleFormat::Float => {
             if spec.bits_per_sample != 32 {
-                return Err(format!("{}: float WAV with {} bits", path.display(), spec.bits_per_sample));
+                return Err(format!(
+                    "{}: float WAV with {} bits",
+                    path.display(),
+                    spec.bits_per_sample
+                ));
             }
             for s in r.samples::<f32>() {
                 let v = s.map_err(|e| format!("{}: {e}", path.display()))?;
@@ -55,5 +59,8 @@ pub fn read(path: &Path) -> Result<Audio, String> {
     for c in channels.iter_mut() {
         c.truncate(n);
     }
-    Ok(Audio { channels, sample_rate: spec.sample_rate })
+    Ok(Audio {
+        channels,
+        sample_rate: spec.sample_rate,
+    })
 }

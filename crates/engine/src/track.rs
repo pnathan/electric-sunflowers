@@ -207,23 +207,55 @@ const PRESENCE_CUT_DB: f64 = -3.0;
 pub const TARGET_RMS: f64 = 0.1;
 
 const fn hp(f: f64) -> EqBand {
-    EqBand { kind: EqKind::Highpass, f, q: 0.7, db: 0.0 }
+    EqBand {
+        kind: EqKind::Highpass,
+        f,
+        q: 0.7,
+        db: 0.0,
+    }
 }
 const fn lp(f: f64) -> EqBand {
-    EqBand { kind: EqKind::Lowpass, f, q: 0.7, db: 0.0 }
+    EqBand {
+        kind: EqKind::Lowpass,
+        f,
+        q: 0.7,
+        db: 0.0,
+    }
 }
 const fn pk(f: f64, q: f64, db: f64) -> EqBand {
-    EqBand { kind: EqKind::Peaking, f, q, db }
+    EqBand {
+        kind: EqKind::Peaking,
+        f,
+        q,
+        db,
+    }
 }
 const fn hs(f: f64, db: f64) -> EqBand {
-    EqBand { kind: EqKind::HighShelf, f, q: 0.7, db }
+    EqBand {
+        kind: EqKind::HighShelf,
+        f,
+        q: 0.7,
+        db,
+    }
 }
 
 /// Lead and harmony compressor: 3:1, 8/150 ms, 6 dB knee, 1 dB over target.
-pub const VOCAL_COMP: CompSpec = CompSpec { ratio: 3.0, attack: 0.008, release: 0.15, knee_db: 6.0, above_target_db: 1.0 };
+pub const VOCAL_COMP: CompSpec = CompSpec {
+    ratio: 3.0,
+    attack: 0.008,
+    release: 0.15,
+    knee_db: 6.0,
+    above_target_db: 1.0,
+};
 
 /// Lead slapback: 340 ms, feedback 0.22 through a 3.2 kHz low-pass, level 0.07.
-pub const LEAD_SLAP: Slapback = Slapback { delay_s: 0.34, feedback: 0.22, lp_hz: 3200.0, lp_q: 0.7, level: 0.07 };
+pub const LEAD_SLAP: Slapback = Slapback {
+    delay_s: 0.34,
+    feedback: 0.22,
+    lp_hz: 3200.0,
+    lp_q: 0.7,
+    level: 0.07,
+};
 
 /// The strips, indexed by `TrackId as usize`.
 pub const STRIPS: [Strip; N_TRACKS] = [
@@ -288,8 +320,16 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         pan: -0.2,
         send: 0.16,
         band: None,
-        eq: &[hp(70.0), pk(115.0, 0.9, 3.0), pk(PRESENCE_HZ, 1.0, PRESENCE_CUT_DB), hs(9500.0, -2.0)],
-        body: Some(BodyMount { body: Body::Guitar, seed_offset: 0 }),
+        eq: &[
+            hp(70.0),
+            pk(115.0, 0.9, 3.0),
+            pk(PRESENCE_HZ, 1.0, PRESENCE_CUT_DB),
+            hs(9500.0, -2.0),
+        ],
+        body: Some(BodyMount {
+            body: Body::Guitar,
+            seed_offset: 0,
+        }),
         comp: None,
         slapback: None,
     },
@@ -299,8 +339,15 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         pan: 0.45,
         send: 0.28,
         band: Some(BandPart::HarmonyGuitar),
-        eq: &[hp(120.0), pk(PRESENCE_HZ, 1.0, PRESENCE_CUT_DB), hs(9000.0, -2.0)],
-        body: Some(BodyMount { body: Body::Guitar, seed_offset: 17 }),
+        eq: &[
+            hp(120.0),
+            pk(PRESENCE_HZ, 1.0, PRESENCE_CUT_DB),
+            hs(9000.0, -2.0),
+        ],
+        body: Some(BodyMount {
+            body: Body::Guitar,
+            seed_offset: 17,
+        }),
         comp: None,
         slapback: None,
     },
@@ -333,7 +380,10 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         send: 0.4,
         band: Some(BandPart::Harp),
         eq: &[hp(75.0), pk(180.0, 0.8, 1.5)],
-        body: Some(BodyMount { body: Body::Harp, seed_offset: 0 }),
+        body: Some(BodyMount {
+            body: Body::Harp,
+            seed_offset: 0,
+        }),
         comp: None,
         slapback: None,
     },
@@ -343,8 +393,16 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         pan: -0.4,
         send: 0.42,
         band: Some(BandPart::Violin),
-        eq: &[hp(190.0), hs(2800.0, 7.0), pk(PRESENCE_HZ, 1.0, PRESENCE_CUT_DB), hs(7000.0, 5.0)],
-        body: Some(BodyMount { body: Body::Violin, seed_offset: 0 }),
+        eq: &[
+            hp(190.0),
+            hs(2800.0, 7.0),
+            pk(PRESENCE_HZ, 1.0, PRESENCE_CUT_DB),
+            hs(7000.0, 5.0),
+        ],
+        body: Some(BodyMount {
+            body: Body::Violin,
+            seed_offset: 0,
+        }),
         comp: None,
         slapback: None,
     },
@@ -365,7 +423,10 @@ mod tests {
     fn band_names_round_trip() {
         for p in BandPart::ALL {
             assert_eq!(BandPart::from_name(p.name()), Some(p));
-            let mut b = Band { harp: true, ..Band::default() };
+            let mut b = Band {
+                harp: true,
+                ..Band::default()
+            };
             assert!(p.on(&b));
             p.switch_off(&mut b);
             assert!(!p.on(&b));

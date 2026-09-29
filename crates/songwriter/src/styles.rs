@@ -18,8 +18,8 @@ use std::str::FromStr;
 
 use sfcore::random::Rng;
 use song::{
-    Band, BreakLead, Delivery, DrumKit, Endings, GuitarPattern, Meter, Mode, Phrasing, Repair, SectionKind,
-    SectionRole, Song,
+    Band, BreakLead, Delivery, DrumKit, Endings, GuitarPattern, Meter, Mode, Phrasing, Repair,
+    SectionKind, SectionRole, Song,
 };
 
 /// Declares a fieldless id enum with its spellings: `ALL`, `as_str`,
@@ -193,23 +193,43 @@ pub struct FormStep {
 }
 
 const fn inst(kind: SectionKind, bars: u8) -> FormStep {
-    FormStep { kind, role: SectionRole::Plain, body: StepBody::Instrumental { bars } }
+    FormStep {
+        kind,
+        role: SectionRole::Plain,
+        body: StepBody::Instrumental { bars },
+    }
 }
 
 const fn brk(kind: SectionKind, bars: u8) -> FormStep {
-    FormStep { kind, role: SectionRole::Break, body: StepBody::Instrumental { bars } }
+    FormStep {
+        kind,
+        role: SectionRole::Break,
+        body: StepBody::Instrumental { bars },
+    }
 }
 
 const fn sung(kind: SectionKind, lines: Lines) -> FormStep {
-    FormStep { kind, role: SectionRole::Plain, body: StepBody::Sung { lines } }
+    FormStep {
+        kind,
+        role: SectionRole::Plain,
+        body: StepBody::Sung { lines },
+    }
 }
 
 const fn same(kind: SectionKind) -> FormStep {
-    FormStep { kind, role: SectionRole::Plain, body: StepBody::Repeat }
+    FormStep {
+        kind,
+        role: SectionRole::Plain,
+        body: StepBody::Repeat,
+    }
 }
 
 const fn tag(lines: Lines) -> FormStep {
-    FormStep { kind: SectionKind::Outro, role: SectionRole::Tag, body: StepBody::Sung { lines } }
+    FormStep {
+        kind: SectionKind::Outro,
+        role: SectionRole::Tag,
+        body: StepBody::Sung { lines },
+    }
 }
 
 /// A song form.
@@ -483,7 +503,10 @@ pub struct Style {
 impl Style {
     /// The style's tempo range for `meter`, if it plays in that meter.
     pub fn tempo_for(&self, meter: Meter) -> Option<(u32, u32)> {
-        self.tempo.iter().find(|(m, _, _)| *m == meter).map(|(_, lo, hi)| (*lo, *hi))
+        self.tempo
+            .iter()
+            .find(|(m, _, _)| *m == meter)
+            .map(|(_, lo, hi)| (*lo, *hi))
     }
 
     /// Imposes the style's arrangement on `song`: guitar pattern, break
@@ -929,7 +952,11 @@ pub fn style_direction(style: Option<StyleId>, rng: &mut Rng) -> Direction {
     let (tempo_lo, tempo_hi) = s.tempo_for(meter).unwrap_or((60, 120));
     let form = pick(rng, s.forms, FormId::Vc);
     let mode = pick(rng, s.modes, Mode::Major);
-    let world = if rng.uniform() < WORLD_FLAVOUR_P { rng.pick(WORLD_FLAVOURS).copied() } else { None };
+    let world = if rng.uniform() < WORLD_FLAVOUR_P {
+        rng.pick(WORLD_FLAVOURS).copied()
+    } else {
+        None
+    };
     Direction {
         style: id,
         label: s.label,
@@ -976,7 +1003,11 @@ mod tests {
     #[test]
     fn every_style_is_complete() {
         for s in &STYLES {
-            assert!(!s.meters.is_empty() && !s.modes.is_empty() && !s.forms.is_empty(), "{}", s.id);
+            assert!(
+                !s.meters.is_empty() && !s.modes.is_empty() && !s.forms.is_empty(),
+                "{}",
+                s.id
+            );
             for &m in s.meters {
                 let (lo, hi) = s.tempo_for(m).unwrap_or_else(|| panic!("{} {m}", s.id));
                 assert!(lo < hi, "{} {m}", s.id);
@@ -1020,7 +1051,13 @@ mod tests {
     #[test]
     fn roles_are_exposed() {
         let steps = FormId::VcBreaks.form().steps;
-        assert_eq!(steps.iter().filter(|s| s.role == SectionRole::Break).count(), 3);
+        assert_eq!(
+            steps
+                .iter()
+                .filter(|s| s.role == SectionRole::Break)
+                .count(),
+            3
+        );
         assert_eq!(steps.last().map(|s| s.role), Some(SectionRole::Tag));
     }
 
@@ -1030,10 +1067,17 @@ mod tests {
             let mut rng = Rng::from_seed(seed);
             let d = style_direction(None, &mut rng);
             let s = d.style.style();
-            assert!(s.meters.contains(&d.meter) && s.modes.contains(&d.mode) && s.forms.contains(&d.form));
+            assert!(
+                s.meters.contains(&d.meter)
+                    && s.modes.contains(&d.mode)
+                    && s.forms.contains(&d.form)
+            );
             assert_eq!(s.tempo_for(d.meter), Some((d.tempo_lo, d.tempo_hi)));
             let mut rng = Rng::from_seed(seed);
-            assert_eq!(style_direction(Some(StyleId::Blues), &mut rng).form, FormId::Blues12);
+            assert_eq!(
+                style_direction(Some(StyleId::Blues), &mut rng).form,
+                FormId::Blues12
+            );
         }
     }
 
@@ -1056,7 +1100,10 @@ mod tests {
     #[test]
     fn unknown_style_is_an_error() {
         let mut s = song_in("4/4");
-        assert_eq!(apply_style("polka", &mut s), Err(UnknownStyle("polka".into())));
+        assert_eq!(
+            apply_style("polka", &mut s),
+            Err(UnknownStyle("polka".into()))
+        );
         assert!(s.style.is_none());
         assert!(style("Cowboy").is_err());
         assert!("vcbreaks".parse::<FormId>().is_err());

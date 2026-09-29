@@ -2,7 +2,9 @@
 //! decay, DC, bounds, and the string semantics.
 
 use dsp::biquad::{Biquad, BiquadCoeffs};
-use instruments::guitar::{render_bass, render_guitar, render_plucks, render_strings, Sympathetic, OPEN_STRINGS};
+use instruments::guitar::{
+    render_bass, render_guitar, render_plucks, render_strings, Sympathetic, OPEN_STRINGS,
+};
 use instruments::pluck::{pluck_into, PluckParams, PluckScratch};
 use sfcore::math::mtof;
 use sfcore::random::{tag, Rng};
@@ -119,7 +121,11 @@ fn pluck_fundamental_t60_within_10_percent() {
             let x = render(&p, f, 0.9 * p.t60 + 0.2, &mut rng);
             let t = measured_t60(&x, f, p.t60);
             let err = t / p.t60 - 1.0;
-            println!("{name} midi {m}: T60 asked {:.3} s, measured {t:.3} s ({:+.1}%)", p.t60, 100.0 * err);
+            println!(
+                "{name} midi {m}: T60 asked {:.3} s, measured {t:.3} s ({:+.1}%)",
+                p.t60,
+                100.0 * err
+            );
             assert!(err.abs() < 0.10, "{name} midi {m}: {:+.1}%", 100.0 * err);
         }
     }
@@ -145,12 +151,20 @@ fn pluck_has_no_dc_and_is_bounded() {
             let peak = x.iter().fold(0.0f64, |a, &v| a.max((v as f64).abs()));
             let mean = x.iter().map(|&v| v as f64).sum::<f64>() / x.len() as f64;
             assert!(peak > 0.0, "{name} {m}: silent");
-            assert!(peak <= 1.6 * p.amp, "{name} {m}: peak {peak} for amp {}", p.amp);
+            assert!(
+                peak <= 1.6 * p.amp,
+                "{name} {m}: peak {peak} for amp {}",
+                p.amp
+            );
             // The bass's 1.8 ms attack ramp (brightness 0.12) removes onset
             // area from the velocity output: a one-time transient, measured
             // at up to 1.8e-4 of the peak. The loop itself carries no net DC.
             let limit = if name == "BASS" { 2.5e-4 } else { 1e-4 };
-            assert!(mean.abs() < limit * peak, "{name} {m}: mean {:.2e} of peak", mean / peak);
+            assert!(
+                mean.abs() < limit * peak,
+                "{name} {m}: mean {:.2e} of peak",
+                mean / peak
+            );
         }
     }
 }
@@ -167,12 +181,30 @@ fn pluck_ignores_bad_input() {
     pluck_into(&mut out, 0, 220.0, 0, &p, &mut rng, &mut s);
     pluck_into(&mut out, 0, 30000.0, 1000, &p, &mut rng, &mut s);
     assert!(out.iter().all(|&v| v == 0.0));
-    for nan in [PluckParams { amp: f64::NAN, ..p }, PluckParams { noise: f64::NAN, ..p }, PluckParams { glide: f64::INFINITY, ..p }] {
+    for nan in [
+        PluckParams { amp: f64::NAN, ..p },
+        PluckParams {
+            noise: f64::NAN,
+            ..p
+        },
+        PluckParams {
+            glide: f64::INFINITY,
+            ..p
+        },
+    ] {
         pluck_into(&mut out, 0, 220.0, 1000, &nan, &mut rng, &mut s);
     }
     assert!(out.iter().all(|&v| v == 0.0));
     // Clipped at the buffer end, extreme parameters: finite, no panic.
-    let wild = PluckParams { pick: 3.0, bright: -2.0, damp: 5.0, t60: -1.0, glide: 500.0, attack_noise: 1.0, ..p };
+    let wild = PluckParams {
+        pick: 3.0,
+        bright: -2.0,
+        damp: 5.0,
+        t60: -1.0,
+        glide: 500.0,
+        attack_noise: 1.0,
+        ..p
+    };
     pluck_into(&mut out, 900, 220.0, 100_000, &wild, &mut rng, &mut s);
     assert!(out.iter().all(|v| v.is_finite()));
 }
@@ -184,7 +216,13 @@ fn energy(x: &[f32]) -> f64 {
 #[test]
 fn string_restrike_stops_previous_note() {
     let len = (2.0 * SR_F) as usize;
-    let one = StringNote { t: 0.1, stop: 1.9, string: 0, midi: 45, vel: 0.8 };
+    let one = StringNote {
+        t: 0.1,
+        stop: 1.9,
+        string: 0,
+        midi: 45,
+        vel: 0.8,
+    };
     let mut strings: [Vec<StringNote>; 6] = Default::default();
     strings[1].push(one);
     let a = render_strings(&strings, &PluckParams::GUITAR, 5, len);
@@ -233,12 +271,43 @@ fn guitar_bass_harp_render_finite() {
     let len = (3.0 * SR_F) as usize;
     let mut strings: [Vec<StringNote>; 6] = Default::default();
     for (s, notes) in strings.iter_mut().enumerate() {
-        notes.push(StringNote { t: 0.2 + 0.01 * s as f64, stop: 2.5, string: s as u8, midi: OPEN_STRINGS[s] + 2, vel: 0.7 });
-        notes.push(StringNote { t: 1.2, stop: 8.0, string: s as u8, midi: OPEN_STRINGS[s], vel: 0.6 });
+        notes.push(StringNote {
+            t: 0.2 + 0.01 * s as f64,
+            stop: 2.5,
+            string: s as u8,
+            midi: OPEN_STRINGS[s] + 2,
+            vel: 0.7,
+        });
+        notes.push(StringNote {
+            t: 1.2,
+            stop: 8.0,
+            string: s as u8,
+            midi: OPEN_STRINGS[s],
+            vel: 0.6,
+        });
     }
     let g = render_guitar(&strings, 1234, len);
     assert!(g.iter().all(|v| v.is_finite()) && energy(&g) > 0.0);
-    let notes = [PluckNote { t0: 0.1, t1: 1.0, midi: 40.0, vel: 0.9 }, PluckNote { t0: 2.9, t1: 5.0, midi: 43.0, vel: 0.7 }, PluckNote { t0: -1.0, t1: 1.0, midi: 40.0, vel: 0.9 }];
+    let notes = [
+        PluckNote {
+            t0: 0.1,
+            t1: 1.0,
+            midi: 40.0,
+            vel: 0.9,
+        },
+        PluckNote {
+            t0: 2.9,
+            t1: 5.0,
+            midi: 43.0,
+            vel: 0.7,
+        },
+        PluckNote {
+            t0: -1.0,
+            t1: 1.0,
+            midi: 40.0,
+            vel: 0.9,
+        },
+    ];
     let b = render_bass(&notes, 1234, len);
     assert!(b.iter().all(|v| v.is_finite()) && energy(&b) > 0.0);
     let pk = b.iter().fold(0.0f32, |a, &v| a.max(v.abs()));
@@ -246,7 +315,6 @@ fn guitar_bass_harp_render_finite() {
     let h = render_plucks(&notes, &PluckParams::HARP, 1234, tag("harp.note"), len);
     assert!(h.iter().all(|v| v.is_finite()) && energy(&h) > 0.0);
 }
-
 
 /// The tension glide starts sharp and relaxes (70 ms time constant): over
 /// 20-120 ms the pitch sits above the same note without glide, and the
@@ -270,4 +338,3 @@ fn glide_raises_onset_pitch() {
         assert!(late.abs() < 0.3, "midi {m}: late {late:+.2}");
     }
 }
-

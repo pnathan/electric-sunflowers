@@ -92,7 +92,14 @@ struct VoicingKey {
 
 impl VoicingKey {
     fn of(ch: &Chord) -> VoicingKey {
-        VoicingKey { tones: ch.tones, root: ch.root, bass: ch.bass, third: ch.third, fifth: ch.fifth, essential: ch.essential }
+        VoicingKey {
+            tones: ch.tones,
+            root: ch.root,
+            bass: ch.bass,
+            third: ch.third,
+            fifth: ch.fifth,
+            essential: ch.essential,
+        }
     }
 }
 
@@ -207,7 +214,15 @@ pub fn voicing(ch: &Chord) -> Voicing {
 
 fn search(key: &VoicingKey) -> Voicing {
     let pcs = key.tones.with(key.bass);
-    let mut sr = Search { key, opts: [Opts::default(); 6], bass_string: 0, pos: 0, cur: [None; 6], best: None, best_score: f64::NEG_INFINITY };
+    let mut sr = Search {
+        key,
+        opts: [Opts::default(); 6],
+        bass_string: 0,
+        pos: 0,
+        cur: [None; 6],
+        best: None,
+        best_score: f64::NEG_INFINITY,
+    };
     for pos in 0..=MAX_POS {
         for s in 0..6 {
             sr.opts[s] = opts_for(s, pos, pcs);
@@ -290,33 +305,103 @@ fn meter_index(m: Meter) -> usize {
 /// (slot, stroke, velocity); slots are grid steps of the meter.
 type Pattern = &'static [(u8, Stroke, f32)];
 
-use Stroke::{AltBass as B2, Bass as Bs, Down as D, DownLite as Dl, Up as U, UpLite as Ul, B, E, G};
+use Stroke::{
+    AltBass as B2, Bass as Bs, Down as D, DownLite as Dl, Up as U, UpLite as Ul, B, E, G,
+};
 
 /// Patterns indexed by `[Pat as usize][meter_index]` (4/4, 3/4, 6/8).
 const PATTERNS: [[Pattern; 3]; 4] = [
     // Strum
     [
-        &[(0, D, 0.85), (2, D, 0.7), (3, U, 0.45), (5, U, 0.5), (6, D, 0.65), (7, U, 0.45)],
+        &[
+            (0, D, 0.85),
+            (2, D, 0.7),
+            (3, U, 0.45),
+            (5, U, 0.5),
+            (6, D, 0.65),
+            (7, U, 0.45),
+        ],
         &[(0, Bs, 0.9), (2, D, 0.6), (4, D, 0.6), (5, U, 0.4)],
-        &[(0, D, 0.85), (2, U, 0.4), (3, D, 0.7), (4, U, 0.4), (5, U, 0.45)],
+        &[
+            (0, D, 0.85),
+            (2, U, 0.4),
+            (3, D, 0.7),
+            (4, U, 0.4),
+            (5, U, 0.45),
+        ],
     ],
     // StrumLite
     [
-        &[(0, Bs, 0.85), (2, Dl, 0.55), (4, B2, 0.75), (6, Dl, 0.55), (7, Ul, 0.35)],
+        &[
+            (0, Bs, 0.85),
+            (2, Dl, 0.55),
+            (4, B2, 0.75),
+            (6, Dl, 0.55),
+            (7, Ul, 0.35),
+        ],
         &[(0, Bs, 0.85), (2, Dl, 0.5), (4, Dl, 0.5)],
         &[(0, Bs, 0.85), (2, Dl, 0.45), (3, B2, 0.7), (5, Dl, 0.45)],
     ],
     // Fingerpick
     [
-        &[(0, Bs, 0.85), (1, G, 0.5), (2, B, 0.55), (3, E, 0.6), (4, B2, 0.75), (5, B, 0.5), (6, G, 0.5), (7, B, 0.5)],
-        &[(0, Bs, 0.85), (1, G, 0.5), (2, B, 0.55), (3, E, 0.6), (4, B, 0.5), (5, G, 0.5)],
-        &[(0, Bs, 0.85), (1, G, 0.5), (2, B, 0.55), (3, E, 0.6), (4, B, 0.5), (5, G, 0.5)],
+        &[
+            (0, Bs, 0.85),
+            (1, G, 0.5),
+            (2, B, 0.55),
+            (3, E, 0.6),
+            (4, B2, 0.75),
+            (5, B, 0.5),
+            (6, G, 0.5),
+            (7, B, 0.5),
+        ],
+        &[
+            (0, Bs, 0.85),
+            (1, G, 0.5),
+            (2, B, 0.55),
+            (3, E, 0.6),
+            (4, B, 0.5),
+            (5, G, 0.5),
+        ],
+        &[
+            (0, Bs, 0.85),
+            (1, G, 0.5),
+            (2, B, 0.55),
+            (3, E, 0.6),
+            (4, B, 0.5),
+            (5, G, 0.5),
+        ],
     ],
     // Travis
     [
-        &[(0, Bs, 0.85), (0, E, 0.55), (1, B, 0.45), (2, B2, 0.75), (3, G, 0.5), (4, Bs, 0.8), (5, E, 0.5), (6, B2, 0.75), (7, B, 0.45)],
-        &[(0, Bs, 0.85), (0, E, 0.55), (1, B, 0.45), (2, B2, 0.7), (3, G, 0.5), (4, B2, 0.7), (5, B, 0.45)],
-        &[(0, Bs, 0.85), (0, E, 0.5), (1, G, 0.45), (2, B, 0.5), (3, B2, 0.75), (4, B, 0.45), (5, G, 0.45)],
+        &[
+            (0, Bs, 0.85),
+            (0, E, 0.55),
+            (1, B, 0.45),
+            (2, B2, 0.75),
+            (3, G, 0.5),
+            (4, Bs, 0.8),
+            (5, E, 0.5),
+            (6, B2, 0.75),
+            (7, B, 0.45),
+        ],
+        &[
+            (0, Bs, 0.85),
+            (0, E, 0.55),
+            (1, B, 0.45),
+            (2, B2, 0.7),
+            (3, G, 0.5),
+            (4, B2, 0.7),
+            (5, B, 0.45),
+        ],
+        &[
+            (0, Bs, 0.85),
+            (0, E, 0.5),
+            (1, G, 0.45),
+            (2, B, 0.5),
+            (3, B2, 0.75),
+            (4, B, 0.45),
+            (5, G, 0.45),
+        ],
     ],
 ];
 
@@ -358,7 +443,11 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> [Vec<StringNo
             pat = Pat::Fingerpick;
         }
         let last = bi + 1 == nbars;
-        let strokes = if last { LAST_BAR } else { PATTERNS[pat as usize][mi] };
+        let strokes = if last {
+            LAST_BAR
+        } else {
+            PATTERNS[pat as usize][mi]
+        };
         let vel_sec = 0.72 + 0.1 * intensity as f64;
 
         for (j, &(slot, kind, vel)) in strokes.iter().enumerate() {
@@ -367,13 +456,22 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> [Vec<StringNo
             let v = voicing_at(tl.chord_at(form, beat + 0.01));
             let t = tl.to_time(beat) + 0.006 * r.bipolar();
             let vv = vel as f64 * vel_sec * (0.92 + 0.16 * r.uniform());
-            let Some(bass) = v.bass_string() else { continue };
+            let Some(bass) = v.bass_string() else {
+                continue;
+            };
             // The next sounding string above the bass, at most string 3.
-            let alt = (bass + 1..=3.min(bass + 2)).find(|&s| v.notes[s].is_some()).unwrap_or(bass);
+            let alt = (bass + 1..=3.min(bass + 2))
+                .find(|&s| v.notes[s].is_some())
+                .unwrap_or(bass);
             // A picked string, or the nearest sounding one below it.
             let mut pick = |s: usize| {
                 if let Some(ss) = (0..=s).rev().find(|&ss| v.notes[ss].is_some()) {
-                    ev[ss].push(Ev { t, midi: v.notes[ss], vel: vv as f32, stop: false });
+                    ev[ss].push(Ev {
+                        t,
+                        midi: v.notes[ss],
+                        vel: vv as f32,
+                        stop: false,
+                    });
                 }
             };
             match kind {
@@ -402,12 +500,23 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> [Vec<StringNo
                         strs.reverse();
                     }
                     let strs = if down { &strs[..] } else { &strs[..n.min(4)] };
-                    let spread = if last { SPREAD_LAST } else if down { SPREAD_DOWN } else { SPREAD_UP };
+                    let spread = if last {
+                        SPREAD_LAST
+                    } else if down {
+                        SPREAD_DOWN
+                    } else {
+                        SPREAD_UP
+                    };
                     for (k, &s) in strs.iter().enumerate() {
                         let tt = t + k as f64 * spread * (0.8 + 0.4 * r.uniform());
                         let accent = if k == 0 && down { 1.05 } else { 1.0 };
                         let vs = vv * if down { 1.0 } else { 0.75 } * accent;
-                        ev[s].push(Ev { t: tt, midi: v.notes[s], vel: vs as f32, stop: false });
+                        ev[s].push(Ev {
+                            t: tt,
+                            midi: v.notes[s],
+                            vel: vs as f32,
+                            stop: false,
+                        });
                     }
                 }
             }
@@ -419,7 +528,12 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> [Vec<StringNo
         let v = voicing_at(form.chord(sg.chord));
         let t = tl.to_time(sg.b0) - CHANGE_LEAD;
         for (s, e) in ev.iter_mut().enumerate() {
-            e.push(Ev { t, midi: v.notes[s], vel: 0.0, stop: true });
+            e.push(Ev {
+                t,
+                midi: v.notes[s],
+                vel: 0.0,
+                stop: true,
+            });
         }
     }
 
@@ -427,7 +541,9 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> [Vec<StringNo
     for (s, e) in ev.iter_mut().enumerate() {
         e.sort_by(|a, b| a.t.total_cmp(&b.t));
         for (k, x) in e.iter().enumerate() {
-            let (false, Some(midi)) = (x.stop, x.midi) else { continue };
+            let (false, Some(midi)) = (x.stop, x.midi) else {
+                continue;
+            };
             let mut stop = x.t + MAX_RING;
             for y in &e[k + 1..] {
                 if !y.stop {
@@ -438,7 +554,13 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> [Vec<StringNo
                     break;
                 }
             }
-            out[s].push(StringNote { t: x.t, stop, string: s as u8, midi, vel: x.vel });
+            out[s].push(StringNote {
+                t: x.t,
+                stop,
+                string: s as u8,
+                midi,
+                vel: x.vel,
+            });
         }
     }
     out

@@ -57,11 +57,20 @@ impl StereoIr {
             // Lengths come from the plan itself; the call cannot fail.
             let ok = plan.process_with_scratch(&mut time, &mut spec, &mut scratch);
             debug_assert!(ok.is_ok());
-            spec.iter().map(|c| C32::new((c.re * scale) as f32, (c.im * scale) as f32)).collect()
+            spec.iter()
+                .map(|c| C32::new((c.re * scale) as f32, (c.im * scale) as f32))
+                .collect()
         };
         let hl = half(l);
         let hr = half(r);
-        StereoIr { len, n, block, fft, hl, hr }
+        StereoIr {
+            len,
+            n,
+            block,
+            fft,
+            hl,
+            hr,
+        }
     }
 
     /// Converts f32 taps and builds the IR.
@@ -103,7 +112,12 @@ struct Work {
 impl Work {
     fn new(ir: &StereoIr) -> Self {
         let k = ir.fft.spectrum_len();
-        Work { time: vec![0.0; ir.n], spec: vec![C32::default(); k], prod: vec![C32::default(); k], scratch: ir.fft.make_scratch() }
+        Work {
+            time: vec![0.0; ir.n],
+            spec: vec![C32::default(); k],
+            prod: vec![C32::default(); k],
+            scratch: ir.fft.make_scratch(),
+        }
     }
 }
 
@@ -142,12 +156,22 @@ pub fn convolve_mono_to_stereo(x: &[f32], ir: &StereoIr, out_len: usize) -> [Vec
         for i in 0..nr {
             let b0 = i * nb / nr;
             let b1 = (i + 1) * nb / nr;
-            let end = if i + 1 == nr { out_len } else { (b1 * m).min(out_len) };
+            let end = if i + 1 == nr {
+                out_len
+            } else {
+                (b1 * m).min(out_len)
+            };
             let (l, tl) = std::mem::take(&mut rest_l).split_at_mut(end - start);
             let (r, tr) = std::mem::take(&mut rest_r).split_at_mut(end - start);
             rest_l = tl;
             rest_r = tr;
-            jobs.push(Job { b0, b1, start, l, r });
+            jobs.push(Job {
+                b0,
+                b1,
+                start,
+                l,
+                r,
+            });
             start = end;
         }
     }
@@ -175,7 +199,13 @@ pub fn convolve_mono_to_stereo(x: &[f32], ir: &StereoIr, out_len: usize) -> [Vec
 }
 
 /// Renders blocks b0..b1 into the job's span; returns (first sample, tail).
-fn run_range(x: &[f32], ir: &StereoIr, used: usize, job: Job<'_>, w: &mut Work) -> (usize, [Vec<f32>; 2]) {
+fn run_range(
+    x: &[f32],
+    ir: &StereoIr,
+    used: usize,
+    job: Job<'_>,
+    w: &mut Work,
+) -> (usize, [Vec<f32>; 2]) {
     let m = ir.block;
     let span_end = job.start + job.l.len();
     let mut tail = [vec![0.0f32; ir.n - m], vec![0.0f32; ir.n - m]];
@@ -194,15 +224,24 @@ fn run_range(x: &[f32], ir: &StereoIr, used: usize, job: Job<'_>, w: &mut Work) 
             for ((p, a), b) in w.prod.iter_mut().zip(&w.spec).zip(h.iter()) {
                 *p = a * b;
             }
-            let ok = ir.fft.inverse_unscaled(&mut w.prod, &mut w.time, &mut w.scratch);
+            let ok = ir
+                .fft
+                .inverse_unscaled(&mut w.prod, &mut w.time, &mut w.scratch);
             debug_assert!(ok.is_ok());
-            let (span, tl) = if ch == 0 { (&mut *job.l, &mut tail[0]) } else { (&mut *job.r, &mut tail[1]) };
+            let (span, tl) = if ch == 0 {
+                (&mut *job.l, &mut tail[0])
+            } else {
+                (&mut *job.r, &mut tail[1])
+            };
             // Samples s .. s + valid (the linear convolution support; the
             // rest of the n-point cycle is rounding noise and is dropped):
             // the part below span_end goes to the span, the rest to the tail.
             let valid = seg.len() + ir.len - 1;
             let in_span = span_end.saturating_sub(s).min(valid);
-            for (o, v) in span[s - job.start..s - job.start + in_span].iter_mut().zip(&w.time[..in_span]) {
+            for (o, v) in span[s - job.start..s - job.start + in_span]
+                .iter_mut()
+                .zip(&w.time[..in_span])
+            {
                 *o += *v;
             }
             for (o, v) in tl.iter_mut().zip(&w.time[in_span..valid]) {
