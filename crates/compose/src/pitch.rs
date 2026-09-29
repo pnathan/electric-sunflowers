@@ -49,7 +49,11 @@ pub struct PitchStyle {
 impl Default for PitchStyle {
     /// The neutral style used for instrumental lines.
     fn default() -> Self {
-        PitchStyle { leap: 0.3, rep: 0.3, noise: 0.7 }
+        PitchStyle {
+            leap: 0.3,
+            rep: 0.3,
+            noise: 0.7,
+        }
     }
 }
 
@@ -224,7 +228,11 @@ fn emission(p: &PitchProblem, i: usize, m: i32, w: &PitchWeights) -> f64 {
     if p.durs[i] >= w.long_dur && !ct {
         s += w.long_nonchord;
     }
-    let x = if p.line_beats > 0.0 { (p.onsets[i] / p.line_beats).clamp(0.0, 1.0) } else { 0.0 };
+    let x = if p.line_beats > 0.0 {
+        (p.onsets[i] / p.line_beats).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     s -= w.contour * ((m - p.register) as f64 - (p.center + p.contour.at(x))).abs();
     if let Some(r) = p.reference.filter(|r| !r.is_empty()) {
         let idx = (i as f64 * (r.len() - 1) as f64 / (n.max(2) - 1) as f64 + 0.5).floor() as usize;
@@ -278,7 +286,9 @@ pub fn pitch_line(p: &PitchProblem, rng: &mut Rng) -> Vec<i32> {
 /// `pitch_line` with explicit weights (window size fixed by `PITCH_WEIGHTS`).
 pub fn pitch_line_with(p: &PitchProblem, w: &PitchWeights, rng: &mut Rng) -> Vec<i32> {
     let n = p.onsets.len();
-    debug_assert!(p.durs.len() == n && p.weights.len() == n && p.chord_pcs.len() == n && p.scales.len() == n);
+    debug_assert!(
+        p.durs.len() == n && p.weights.len() == n && p.chord_pcs.len() == n && p.scales.len() == n
+    );
     if n == 0 {
         return Vec::new();
     }
@@ -331,7 +341,11 @@ pub fn pitch_line_with(p: &PitchProblem, w: &PitchWeights, rng: &mut Rng) -> Vec
         let ma = cand[a];
         for b in 0..nc[1] {
             let mb = cand[W + b];
-            let hook = if p.hook != 0 && mb - ma == p.hook { w.hook } else { 0.0 };
+            let hook = if p.hook != 0 && mb - ma == p.hook {
+                w.hook
+            } else {
+                0.0
+            };
             dp[a * W + b] = em[a] + em[W + b] + ivs(ma, mb) + hook;
         }
     }
@@ -379,7 +393,10 @@ pub fn pitch_line_with(p: &PitchProblem, w: &PitchWeights, rng: &mut Rng) -> Vec
     for i in (2..n).rev() {
         idx[i - 2] = bp[(i - 2) * W * W + idx[i - 1] * W + idx[i]] as usize;
     }
-    idx.iter().enumerate().map(|(i, &k)| cand[i * W + k]).collect()
+    idx.iter()
+        .enumerate()
+        .map(|(i, &k)| cand[i * W + k])
+        .collect()
 }
 
 /// Index of the first maximum.
@@ -417,7 +434,12 @@ mod tests {
             register,
             tonic: Pc::new(register),
             center: 2.0,
-            contour: Contour { kind: ContourKind::Arch, amp: 3.0, gain: 1.0, slope: 0.0 },
+            contour: Contour {
+                kind: ContourKind::Arch,
+                amp: 3.0,
+                gain: 1.0,
+                slope: 0.0,
+            },
             cadence,
             reference: None,
             prev_end: None,
@@ -449,7 +471,9 @@ mod tests {
             let out = pitch_line(&p, &mut Rng::event(2, tag("t"), k));
             assert_eq!(out.len(), 6);
             assert_eq!(out[5].rem_euclid(12), 0, "{out:?}");
-            assert!(out.iter().all(|&m| scales[0].contains(Pc::new(m)) && (55..=74).contains(&m)));
+            assert!(out
+                .iter()
+                .all(|&m| scales[0].contains(Pc::new(m)) && (55..=74).contains(&m)));
         }
     }
 
@@ -463,8 +487,14 @@ mod tests {
             let ch0 = [PcSet::from_intervals(Pc::C, &[0, 3, 7]); 5];
             let sc5 = [song::Mode::Dorian.scale().transpose(5); 5];
             let ch5 = [PcSet::from_intervals(Pc::new(5), &[0, 3, 7]); 5];
-            let a = pitch_line(&problem(&on, &du, &wt, &ch0, &sc0, 60, Cadence::Open), &mut Rng::event(3, tag("t"), k));
-            let b = pitch_line(&problem(&on, &du, &wt, &ch5, &sc5, 53, Cadence::Open), &mut Rng::event(3, tag("t"), k));
+            let a = pitch_line(
+                &problem(&on, &du, &wt, &ch0, &sc0, 60, Cadence::Open),
+                &mut Rng::event(3, tag("t"), k),
+            );
+            let b = pitch_line(
+                &problem(&on, &du, &wt, &ch5, &sc5, 53, Cadence::Open),
+                &mut Rng::event(3, tag("t"), k),
+            );
             let d: Vec<i32> = a.iter().zip(&b).map(|(x, y)| y - x).collect();
             assert!(d.iter().all(|&x| x == -7), "{a:?} {b:?}");
         }

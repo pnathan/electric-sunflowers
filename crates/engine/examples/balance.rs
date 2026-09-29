@@ -11,7 +11,6 @@ use dsp::biquad::{Biquad, BiquadCoeffs};
 use engine::render::{render, NoProgress};
 use engine::track::TrackId;
 
-
 fn main() {
     let mut args = std::env::args().skip(1);
     let path = args.next().expect("SONG.json");
@@ -49,7 +48,10 @@ fn main() {
     let duck = engine::mix::duck_gains(&stems, &song.band, &settings);
     // Frames where the lead sings: 2048-sample blocks within 20 dB of its loudest.
     const B: usize = 2048;
-    let rms: Vec<f64> = lead.chunks(B).map(|c| (c.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / c.len() as f64).sqrt()).collect();
+    let rms: Vec<f64> = lead
+        .chunks(B)
+        .map(|c| (c.iter().map(|v| (*v as f64).powi(2)).sum::<f64>() / c.len() as f64).sqrt())
+        .collect();
     let top = rms.iter().cloned().fold(0.0, f64::max);
     let active: Vec<bool> = rms.iter().map(|r| *r > top * 0.1).collect();
     let power = |x: &[f32], band: bool| -> f64 {
@@ -58,7 +60,11 @@ fn main() {
             let mut f = Biquad::new(BiquadCoeffs::bandpass(sfcore::SR as f64, 2000.0, 0.7));
             f.process(&mut y);
         }
-        y.chunks(B).zip(&active).filter(|(_, a)| **a).map(|(c, _)| c.iter().map(|v| (*v as f64).powi(2)).sum::<f64>()).sum()
+        y.chunks(B)
+            .zip(&active)
+            .filter(|(_, a)| **a)
+            .map(|(c, _)| c.iter().map(|v| (*v as f64).powi(2)).sum::<f64>())
+            .sum()
     };
     let (lb, lp) = (power(&lead, false), power(&lead, true));
     let mut acc_b = vec![0f32; len];
@@ -77,11 +83,21 @@ fn main() {
             }
         }
         let (b, p) = (power(&x, false), power(&x, true));
-        println!("{:<16} {:>8.1} dB {:>8.1} dB", id.name(), 10.0 * (b / lb).log10(), 10.0 * (p / lp).log10());
+        println!(
+            "{:<16} {:>8.1} dB {:>8.1} dB",
+            id.name(),
+            10.0 * (b / lb).log10(),
+            10.0 * (p / lp).log10()
+        );
         for (a, v) in acc_b.iter_mut().zip(&x) {
             *a += v;
         }
     }
     let (ab, ap) = (power(&acc_b, false), power(&acc_b, true));
-    println!("{:<16} {:>8.1} dB {:>8.1} dB", "ALL accomp.", 10.0 * (ab / lb).log10(), 10.0 * (ap / lp).log10());
+    println!(
+        "{:<16} {:>8.1} dB {:>8.1} dB",
+        "ALL accomp.",
+        10.0 * (ab / lb).log10(),
+        10.0 * (ap / lp).log10()
+    );
 }

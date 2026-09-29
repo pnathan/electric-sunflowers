@@ -44,7 +44,13 @@ pub fn pick_register(rng: &mut Rng) -> &'static str {
 /// duet choice left to the songwriter (`DuetRequest::Auto`). Shim for
 /// callers from before the duet request existed; `song_prompt_with` is the
 /// full form.
-pub fn song_prompt(mood: &str, voice: Option<Voice>, dir: &Direction, register: &str, year: i32) -> String {
+pub fn song_prompt(
+    mood: &str,
+    voice: Option<Voice>,
+    dir: &Direction,
+    register: &str,
+    year: i32,
+) -> String {
     song_prompt_with(mood, voice, dir, register, year, &DuetRequest::Auto)
 }
 
@@ -53,10 +59,16 @@ pub fn song_prompt(mood: &str, voice: Option<Voice>, dir: &Direction, register: 
 fn duet_choice_line(duet: &DuetRequest) -> String {
     match duet {
         DuetRequest::Auto => String::new(),
-        DuetRequest::Solo => "- The choice is fixed: write this as a solo song, one singer throughout.\n".to_string(),
+        DuetRequest::Solo => {
+            "- The choice is fixed: write this as a solo song, one singer throughout.\n".to_string()
+        }
         DuetRequest::Duet { a, b } => {
-            let a_txt = a.map(|v| v.to_string()).unwrap_or_else(|| "your choice of voice".to_string());
-            let b_txt = b.map(|v| v.to_string()).unwrap_or_else(|| "your choice of voice".to_string());
+            let a_txt = a
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "your choice of voice".to_string());
+            let b_txt = b
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "your choice of voice".to_string());
             format!("- The choice is fixed: write this as a duet. Singer A is {a_txt}, singer B is {b_txt}.\n")
         }
     }

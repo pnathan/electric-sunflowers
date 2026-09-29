@@ -13,7 +13,11 @@ use std::f64::consts::PI;
 
 /// Equal-power gains [left, right] for a mono source.
 pub fn equal_power(pan: f64) -> [f32; 2] {
-    let pan = if pan.is_finite() { pan.clamp(-1.0, 1.0) } else { 0.0 };
+    let pan = if pan.is_finite() {
+        pan.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
     let th = (pan + 1.0) * PI / 4.0;
     [th.cos() as f32, th.sin() as f32]
 }
@@ -21,7 +25,11 @@ pub fn equal_power(pan: f64) -> [f32; 2] {
 /// Balance matrix for a stereo source: `[[ll, rl], [lr, rr]]`, rows are the
 /// output channels, so out_l = m[0][0] L + m[0][1] R and out_r = m[1][0] L + m[1][1] R.
 pub fn balance(pan: f64) -> [[f32; 2]; 2] {
-    let pan = if pan.is_finite() { pan.clamp(-1.0, 1.0) } else { 0.0 };
+    let pan = if pan.is_finite() {
+        pan.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
     if pan <= 0.0 {
         let x = (pan + 1.0) * PI / 2.0;
         [[1.0, x.cos() as f32], [0.0, x.sin() as f32]]
@@ -45,7 +53,11 @@ pub fn add_mono(dst_l: &mut [f32], dst_r: &mut [f32], start: isize, src: &[f32],
     }
     let n = (src.len() - skip).min(end - at);
     let [gl, gr] = gains;
-    for ((l, r), s) in dst_l[at..at + n].iter_mut().zip(dst_r[at..at + n].iter_mut()).zip(&src[skip..skip + n]) {
+    for ((l, r), s) in dst_l[at..at + n]
+        .iter_mut()
+        .zip(dst_r[at..at + n].iter_mut())
+        .zip(&src[skip..skip + n])
+    {
         *l += s * gl;
         *r += s * gr;
     }

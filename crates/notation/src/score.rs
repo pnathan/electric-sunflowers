@@ -27,7 +27,12 @@ impl Grid {
     pub(crate) fn of(meter: Meter) -> Grid {
         let g = meter.grid();
         let beat_u = 2 * g.sub as i64;
-        Grid { bar_u: beat_u * g.beats as i64, beat_u, compound: meter == Meter::Six8, bpb: g.beats as i64 }
+        Grid {
+            bar_u: beat_u * g.beats as i64,
+            beat_u,
+            compound: meter == Meter::Six8,
+            bpb: g.beats as i64,
+        }
     }
 
     /// Beats per unit.
@@ -78,7 +83,11 @@ impl Grid {
         const VALS: [i64; 8] = [16, 12, 8, 6, 4, 3, 2, 1];
         let mut out = Vec::new();
         while d > 0 {
-            let v = VALS.iter().copied().find(|&v| v <= d && self.allowed(st, v, rest)).unwrap_or(1);
+            let v = VALS
+                .iter()
+                .copied()
+                .find(|&v| v <= d && self.allowed(st, v, rest))
+                .unwrap_or(1);
             out.push((st, v));
             st += v;
             d -= v;
@@ -181,9 +190,6 @@ pub struct Score {
     pub(crate) tempo: f64,
     /// Key signature: sharps positive, flats negative.
     pub(crate) fifths: i32,
-    /// Treble clef an octave down (bass, baritone, tenor): pitches are
-    /// written an octave above the sound. Singer A's clef outside a duet.
-    pub(crate) clef8: bool,
     pub(crate) grid: Grid,
     pub(crate) measures: Vec<Measure>,
     /// Whether the song is a duet: gates every duet-only drawing (labels,
@@ -203,7 +209,13 @@ fn clef8_of(v: Voice) -> bool {
 /// duration unit, `NoteEv`) triples, tied across barlines, as `Score::new`
 /// did inline before the duet staff (wave 3) needed it for two note
 /// sources.
-fn bucket_notes(notes: &[LeadNote], grid: &Grid, tl: &Timeline, first_bar: i64, n_meas: usize) -> Vec<Vec<(i64, i64, NoteEv)>> {
+fn bucket_notes(
+    notes: &[LeadNote],
+    grid: &Grid,
+    tl: &Timeline,
+    first_bar: i64,
+    n_meas: usize,
+) -> Vec<Vec<(i64, i64, NoteEv)>> {
     let u = grid.unit();
     let bar_u = grid.bar_u;
     let n = notes.len();
@@ -238,8 +250,16 @@ fn bucket_notes(notes: &[LeadNote], grid: &Grid, tl: &Timeline, first_bar: i64, 
                 hyphen: first && !ln.syl.word_end,
                 tie_in: !first,
                 tie_out: be < e[i],
-                t0: if first { ln.t0 } else { tl.to_time(beat0).min(ln.t1) },
-                t1: if be >= e[i] { ln.t1 } else { tl.to_time(beat1).min(ln.t1) },
+                t0: if first {
+                    ln.t0
+                } else {
+                    tl.to_time(beat0).min(ln.t1)
+                },
+                t1: if be >= e[i] {
+                    ln.t1
+                } else {
+                    tl.to_time(beat1).min(ln.t1)
+                },
             };
             if let Some(v) = raw.get_mut((b - first_bar) as usize) {
                 v.push((st - b * bar_u, be - st, ev));
@@ -261,7 +281,11 @@ fn events_of(notes: Vec<(i64, i64, NoteEv)>, from_u: i64, bar_u: i64, grid: &Gri
     for (st, d, ev) in notes {
         if st > c {
             for (rs, rd) in grid.split(c, st - c, true) {
-                events.push(Event { s: rs, d: rd, note: None });
+                events.push(Event {
+                    s: rs,
+                    d: rd,
+                    note: None,
+                });
             }
         }
         let parts = grid.split(st, d, false);
@@ -281,13 +305,21 @@ fn events_of(notes: Vec<(i64, i64, NoteEv)>, from_u: i64, bar_u: i64, grid: &Gri
             let b = (ps + pd - st) as f64 / d as f64;
             p.t0 = ev.t0 + span * a;
             p.t1 = ev.t0 + span * b;
-            events.push(Event { s: ps, d: pd, note: Some(p) });
+            events.push(Event {
+                s: ps,
+                d: pd,
+                note: Some(p),
+            });
         }
         c = st + d;
     }
     if n_notes > 0 && c < bar_u {
         for (rs, rd) in grid.split(c, bar_u - c, true) {
-            events.push(Event { s: rs, d: rd, note: None });
+            events.push(Event {
+                s: rs,
+                d: rd,
+                note: None,
+            });
         }
     }
     events
@@ -296,14 +328,23 @@ fn events_of(notes: Vec<(i64, i64, NoteEv)>, from_u: i64, bar_u: i64, grid: &Gri
 /// Accidentals against the key and the bar, for one measure's events; `notes`
 /// is the source slice `ev.note`'s indices refer into (`Comp::lead` or
 /// `Comp::second`).
-fn spell_events(events: &mut [Event], notes: &[LeadNote], written: i32, fifths: i32, key_alt: &[i32; 7]) {
+fn spell_events(
+    events: &mut [Event],
+    notes: &[LeadNote],
+    written: i32,
+    fifths: i32,
+    key_alt: &[i32; 7],
+) {
     let mut state: Vec<(i32, i32)> = Vec::new();
     for ev in events.iter_mut() {
         let Some(ne) = ev.note.as_mut() else { continue };
         let m = notes.get(ne.note).map_or(60, |x| x.midi) + written;
-        let (l, a, step) = spell(m, fifths, &key_alt);
+        let (l, a, step) = spell(m, fifths, key_alt);
         ne.step = step;
-        let cur = state.iter().find(|x| x.0 == step).map_or(key_alt[l], |x| x.1);
+        let cur = state
+            .iter()
+            .find(|x| x.0 == step)
+            .map_or(key_alt[l], |x| x.1);
         if a != cur && !ne.tie_in {
             ne.accidental = Some(a);
             state.retain(|x| x.0 != step);
@@ -430,8 +471,13 @@ impl Score {
         let key_alt = key_alterations(fifths);
         let voice_a = prep.voice;
         let voice_b = prep.voice_b;
-        let voice_of = |s: SingerId| if s == SingerId::A { voice_a } else { voice_b.unwrap_or(voice_a) };
-        let clef8 = clef8_of(voice_a);
+        let voice_of = |s: SingerId| {
+            if s == SingerId::A {
+                voice_a
+            } else {
+                voice_b.unwrap_or(voice_a)
+            }
+        };
         let u = grid.unit();
         let bar_u = grid.bar_u;
 
@@ -453,10 +499,15 @@ impl Score {
 
         let first_bar = s.first().map_or(0, |&x| x.div_euclid(bar_u)).min(0);
         let n_form = form.bars.len() as i64;
-        let last_bar = e.last().map_or(0, |&x| (x - 1).div_euclid(bar_u)).max(n_form - 1);
+        let last_bar = e
+            .last()
+            .map_or(0, |&x| (x - 1).div_euclid(bar_u))
+            .max(n_form - 1);
         let bar_info = |b: i64| -> (usize, Option<usize>) {
             let i = b.clamp(0, n_form - 1).max(0) as usize;
-            form.bars.get(i).map_or((0, None), |bar| (bar.sec, bar.line))
+            form.bars
+                .get(i)
+                .map_or((0, None), |bar| (bar.sec, bar.line))
         };
 
         // Notes into bars, tied across barlines: the melody (every line,
@@ -471,11 +522,18 @@ impl Score {
             let pos = (seg.b0 / u).round() as i64;
             let b = pos.div_euclid(bar_u);
             if let Some(v) = marks.get_mut((b - first_bar) as usize) {
-                v.push(ChordMark { u: pos - b * bar_u, name: form.chord(seg.chord).symbol.clone() });
+                v.push(ChordMark {
+                    u: pos - b * bar_u,
+                    name: form.chord(seg.chord).symbol.clone(),
+                });
             }
         }
 
-        let verses = form.sections.iter().filter(|x| x.kind == SectionKind::Verse).count();
+        let verses = form
+            .sections
+            .iter()
+            .filter(|x| x.kind == SectionKind::Verse)
+            .count();
         let mut measures = Vec::with_capacity(n_meas);
         let mut chunk = 0usize;
         let mut prev_key: Option<(usize, Option<usize>)> = None;
@@ -495,7 +553,11 @@ impl Score {
                 .sections
                 .get(sec)
                 .and_then(|x| starts(x).then(|| section_label(x.kind, x.role, x.occ, verses)));
-            let from_u = if bar < 0 { notes.first().map_or(0, |x| x.0) } else { 0 };
+            let from_u = if bar < 0 {
+                notes.first().map_or(0, |x| x.0)
+            } else {
+                0
+            };
             let empty = notes.is_empty();
 
             // This bar's melody singer and, on a shared line, the other
@@ -510,21 +572,45 @@ impl Score {
             let (second_clef8, melody_on_top) = match other {
                 Some((os, _)) => {
                     let o_voice = voice_of(os);
-                    (clef8_of(o_voice), m_voice.range().centre() >= o_voice.range().centre())
+                    (
+                        clef8_of(o_voice),
+                        m_voice.range().centre() >= o_voice.range().centre(),
+                    )
                 }
                 None => (false, false),
             };
 
             let mut events = events_of(notes, from_u, bar_u, &grid);
-            spell_events(&mut events, lead, if m_clef8 { 12 } else { 0 }, fifths, &key_alt);
+            spell_events(
+                &mut events,
+                lead,
+                if m_clef8 { 12 } else { 0 },
+                fifths,
+                &key_alt,
+            );
 
-            let from_u2 = if bar < 0 { notes2.first().map_or(0, |x| x.0) } else { 0 };
-            let mut second = if shared { events_of(notes2, from_u2, bar_u, &grid) } else { Vec::new() };
+            let from_u2 = if bar < 0 {
+                notes2.first().map_or(0, |x| x.0)
+            } else {
+                0
+            };
+            let mut second = if shared {
+                events_of(notes2, from_u2, bar_u, &grid)
+            } else {
+                Vec::new()
+            };
             if shared {
-                spell_events(&mut second, second_notes, if second_clef8 { 12 } else { 0 }, fifths, &key_alt);
+                spell_events(
+                    &mut second,
+                    second_notes,
+                    if second_clef8 { 12 } else { 0 },
+                    fifths,
+                    &key_alt,
+                );
             }
 
-            let sounding = (bar >= 0).then(|| tl.chord_at(form, (bar * grid.bpb) as f64).symbol.clone());
+            let sounding =
+                (bar >= 0).then(|| tl.chord_at(form, (bar * grid.bpb) as f64).symbol.clone());
             let b0 = (bar * bar_u + from_u) as f64 * u;
             let b1 = ((bar + 1) * bar_u) as f64 * u;
             measures.push(Measure {
@@ -559,7 +645,12 @@ impl Score {
             Mode::Dorian => "Dorian",
             Mode::Mixolydian => "Mixolydian",
         };
-        let caption = format!("{}, {} {}", prep.voice.label(), Pc::new(prep.tonic).name(flats), mode);
+        let caption = format!(
+            "{}, {} {}",
+            prep.voice.label(),
+            Pc::new(prep.tonic).name(flats),
+            mode
+        );
         Score {
             title: song.title.clone(),
             caption,
@@ -567,7 +658,6 @@ impl Score {
             meter: song.meter,
             tempo: song.tempo_bpm,
             fifths,
-            clef8,
             grid,
             measures,
             duet: song.is_duet(),
@@ -578,7 +668,11 @@ impl Score {
 
     /// The same score laid out for a page `width` px wide (at least 300).
     pub fn with_width(mut self, width: f64) -> Score {
-        self.width = if width.is_finite() { width.max(300.0) } else { DEFAULT_WIDTH };
+        self.width = if width.is_finite() {
+            width.max(300.0)
+        } else {
+            DEFAULT_WIDTH
+        };
         self
     }
 }

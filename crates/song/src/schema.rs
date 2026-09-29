@@ -3,7 +3,9 @@
 //! (`additionalProperties: false`) and lists `required`. Enum lists come
 //! from the model enums (`NAMES`), so schema and parser cannot disagree.
 
-use crate::model::{Blend, Delivery, DrumKit, Endings, GuitarPattern, Meter, Mode, SectionKind, SingerId, Voice};
+use crate::model::{
+    Blend, Delivery, DrumKit, Endings, GuitarPattern, Meter, Mode, SectionKind, SingerId, Voice,
+};
 use serde_json::{json, Value};
 
 /// `SingerId::NAMES` ("A", "B") plus "both", the enum list of `sing`.
@@ -116,7 +118,10 @@ mod tests {
     use super::*;
 
     fn names(v: &Value) -> Vec<&str> {
-        v["enum"].as_array().map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default()
+        v["enum"]
+            .as_array()
+            .map(|a| a.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default()
     }
 
     #[test]
@@ -129,15 +134,27 @@ mod tests {
         assert_eq!(names(&p["voice"]), Voice::NAMES);
         assert!(names(&p["voice"]).contains(&"bass"));
         assert_eq!(names(&p["band"]["properties"]["drums"]), DrumKit::NAMES);
-        assert_eq!(names(&p["sections"]["items"]["properties"]["type"]), SectionKind::NAMES);
+        assert_eq!(
+            names(&p["sections"]["items"]["properties"]["type"]),
+            SectionKind::NAMES
+        );
         for n in names(&p["voice"]) {
             assert!(n.parse::<Voice>().is_ok());
         }
 
-        assert_eq!(names(&p["phrasing"]["properties"]["delivery"]), Delivery::NAMES);
-        assert_eq!(names(&p["phrasing"]["properties"]["endings"]), Endings::NAMES);
+        assert_eq!(
+            names(&p["phrasing"]["properties"]["delivery"]),
+            Delivery::NAMES
+        );
+        assert_eq!(
+            names(&p["phrasing"]["properties"]["endings"]),
+            Endings::NAMES
+        );
         assert_eq!(names(&p["duet"]["properties"]["voice"]), Voice::NAMES);
-        assert_eq!(names(&p["duet"]["properties"]["phrasing"]["properties"]["delivery"]), Delivery::NAMES);
+        assert_eq!(
+            names(&p["duet"]["properties"]["phrasing"]["properties"]["delivery"]),
+            Delivery::NAMES
+        );
 
         let line = &p["sections"]["items"]["properties"]["lines"]["items"]["properties"];
         assert_eq!(names(&line["sing"]), sing_names());
@@ -158,12 +175,25 @@ mod tests {
         let s = json_schema();
         assert_eq!(s["additionalProperties"], false);
         assert_eq!(s["properties"]["band"]["additionalProperties"], false);
-        assert_eq!(s["properties"]["sections"]["items"]["additionalProperties"], false);
-        assert_eq!(s["properties"]["sections"]["items"]["properties"]["lines"]["items"]["additionalProperties"], false);
+        assert_eq!(
+            s["properties"]["sections"]["items"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            s["properties"]["sections"]["items"]["properties"]["lines"]["items"]
+                ["additionalProperties"],
+            false
+        );
         assert_eq!(s["properties"]["phrasing"]["additionalProperties"], false);
         assert_eq!(s["properties"]["duet"]["additionalProperties"], false);
-        assert_eq!(s["properties"]["duet"]["properties"]["phrasing"]["additionalProperties"], false);
+        assert_eq!(
+            s["properties"]["duet"]["properties"]["phrasing"]["additionalProperties"],
+            false
+        );
         assert_eq!(s["properties"]["duet"]["required"], json!(["voice"]));
-        assert_eq!(s["properties"]["phrasing"]["required"], json!(["delivery", "endings"]));
+        assert_eq!(
+            s["properties"]["phrasing"]["required"],
+            json!(["delivery", "endings"])
+        );
     }
 }

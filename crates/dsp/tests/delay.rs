@@ -77,7 +77,11 @@ fn gain_at(w: f64, d: f64, lagrange: bool) -> f64 {
         let x = (w * n as f64 + 0.3).sin();
         l.push(x as f32);
         if n >= 64 {
-            let y = if lagrange { l.read_lagrange3(d) } else { l.read_linear(d) };
+            let y = if lagrange {
+                l.read_lagrange3(d)
+            } else {
+                l.read_linear(d)
+            };
             sx += x * x;
             sy += y * y;
         }
@@ -147,7 +151,13 @@ fn one_pole_phase_delay_limits() {
 
 #[test]
 fn schroeder_allpass_unit_energy() {
-    for &(m, g) in &[(142usize, 0.65f32), (379, 0.62), (107, 0.58), (1, 0.5), (29, -0.7)] {
+    for &(m, g) in &[
+        (142usize, 0.65f32),
+        (379, 0.62),
+        (107, 0.58),
+        (1, 0.5),
+        (29, -0.7),
+    ] {
         let mut ap = SchroederAllpass::new(m, g);
         let mut e = 0.0f64;
         for n in 0..60000 {
@@ -165,7 +175,10 @@ fn schroeder_allpass_unit_energy() {
 fn ou_stationary_variance() {
     // Coarse step (dt = tau / 2): exact discretisation holds at any dt, where
     // Euler-Maruyama would give variance 1 / (1 - 0.25) = 1.33.
-    for &(theta, sigma, dt) in &[(2.0, 0.7, 0.25), (1.0 / 0.12, (2.0f64 / 0.12).sqrt(), 16.0 / 44100.0)] {
+    for &(theta, sigma, dt) in &[
+        (2.0, 0.7, 0.25),
+        (1.0 / 0.12, (2.0f64 / 0.12).sqrt(), 16.0 / 44100.0),
+    ] {
         let mut p = OuProcess::new(0.3, theta, sigma, dt);
         let mut g = Normal::new(42);
         let n = if dt > 0.1 { 400_000 } else { 8_000_000 };
@@ -233,18 +246,44 @@ fn fractional_reads_clamp_bad_delays() {
     }
     let top = (cap - 3) as f64;
     // Huge, infinite and past-capacity delays read as capacity - 3.
-    for d in [f64::INFINITY, 1e300, usize::MAX as f64, top + 0.5, cap as f64] {
-        assert_eq!(line.read_linear(d), line.read_int(cap - 3) as f64, "linear {d}");
-        assert_eq!(line.read_lagrange3(d), line.read_int(cap - 3) as f64, "lagrange {d}");
+    for d in [
+        f64::INFINITY,
+        1e300,
+        usize::MAX as f64,
+        top + 0.5,
+        cap as f64,
+    ] {
+        assert_eq!(
+            line.read_linear(d),
+            line.read_int(cap - 3) as f64,
+            "linear {d}"
+        );
+        assert_eq!(
+            line.read_lagrange3(d),
+            line.read_int(cap - 3) as f64,
+            "lagrange {d}"
+        );
     }
     // NaN and negative delays read the lower limit (0 linear, 1 Lagrange).
     for d in [f64::NAN, f64::NEG_INFINITY, -5.0] {
         assert_eq!(line.read_linear(d), line.read_int(0) as f64, "linear {d}");
-        assert_eq!(line.read_lagrange3(d), line.read_int(1) as f64, "lagrange {d}");
+        assert_eq!(
+            line.read_lagrange3(d),
+            line.read_int(1) as f64,
+            "lagrange {d}"
+        );
     }
     // In range, the clamp does nothing: integer delays are exact.
     for i in 1..=cap - 3 {
-        assert_eq!(line.read_lagrange3(i as f64), line.read_int(i) as f64, "lagrange {i}");
-        assert_eq!(line.read_linear(i as f64), line.read_int(i) as f64, "linear {i}");
+        assert_eq!(
+            line.read_lagrange3(i as f64),
+            line.read_int(i) as f64,
+            "lagrange {i}"
+        );
+        assert_eq!(
+            line.read_linear(i as f64),
+            line.read_int(i) as f64,
+            "linear {i}"
+        );
     }
 }

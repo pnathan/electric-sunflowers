@@ -38,13 +38,21 @@ pub struct PeakDetector {
 impl PeakDetector {
     /// Attack and release time constants in seconds.
     pub fn new(attack: f64, release: f64, fs: f64) -> Self {
-        PeakDetector { attack_coef: pole(attack, fs), release_coef: pole(release, fs), env: 0.0 }
+        PeakDetector {
+            attack_coef: pole(attack, fs),
+            release_coef: pole(release, fs),
+            env: 0.0,
+        }
     }
 
     /// Feed |x| (already rectified); returns the envelope.
     #[inline(always)]
     pub fn tick(&mut self, a: f64) -> f64 {
-        let k = if a > self.env { self.attack_coef } else { self.release_coef };
+        let k = if a > self.env {
+            self.attack_coef
+        } else {
+            self.release_coef
+        };
         self.env = k * self.env + (1.0 - k) * a;
         self.env
     }
@@ -102,7 +110,12 @@ pub struct Compressor {
 
 impl Compressor {
     pub fn new(det: PeakDetector, gc: GainComputer, link: Link) -> Self {
-        Compressor { det, gc, link, gain: 1.0 }
+        Compressor {
+            det,
+            gc,
+            link,
+            gain: 1.0,
+        }
     }
 
     /// Detector level of the last sample fed, in dB.
@@ -139,7 +152,10 @@ impl Compressor {
     /// rest of the longer channel is left unchanged.
     pub fn process_stereo(&mut self, l: &mut [f32], r: &mut [f32]) {
         let n = l.len().min(r.len());
-        for (cl, cr) in l[..n].chunks_mut(GAIN_PERIOD).zip(r[..n].chunks_mut(GAIN_PERIOD)) {
+        for (cl, cr) in l[..n]
+            .chunks_mut(GAIN_PERIOD)
+            .zip(r[..n].chunks_mut(GAIN_PERIOD))
+        {
             for (a, b) in cl.iter().zip(cr.iter()) {
                 self.det.tick((*a as f64).abs().max((*b as f64).abs()));
             }

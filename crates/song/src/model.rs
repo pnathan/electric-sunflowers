@@ -78,10 +78,24 @@ impl MeterGrid {
     }
 }
 
-const GRID_44: MeterGrid =
-    MeterGrid { beats: 4, sub: 2, split: 2, weights: &[1.0, 0.15, 0.5, 0.15, 0.8, 0.15, 0.5, 0.15] };
-const GRID_34: MeterGrid = MeterGrid { beats: 3, sub: 2, split: 2, weights: &[1.0, 0.15, 0.45, 0.15, 0.5, 0.15] };
-const GRID_68: MeterGrid = MeterGrid { beats: 2, sub: 3, split: 1, weights: &[1.0, 0.2, 0.35, 0.8, 0.2, 0.35] };
+const GRID_44: MeterGrid = MeterGrid {
+    beats: 4,
+    sub: 2,
+    split: 2,
+    weights: &[1.0, 0.15, 0.5, 0.15, 0.8, 0.15, 0.5, 0.15],
+};
+const GRID_34: MeterGrid = MeterGrid {
+    beats: 3,
+    sub: 2,
+    split: 2,
+    weights: &[1.0, 0.15, 0.45, 0.15, 0.5, 0.15],
+};
+const GRID_68: MeterGrid = MeterGrid {
+    beats: 2,
+    sub: 3,
+    split: 1,
+    weights: &[1.0, 0.2, 0.35, 0.8, 0.2, 0.35],
+};
 
 impl Meter {
     /// Metric grid: 4/4 is 4 beats of eighths, 3/4 is 3 beats of eighths, 6/8
@@ -271,7 +285,10 @@ pub struct Phrasing {
 
 impl Default for Phrasing {
     fn default() -> Phrasing {
-        Phrasing { delivery: Delivery::Flowing, endings: Endings::Released }
+        Phrasing {
+            delivery: Delivery::Flowing,
+            endings: Endings::Released,
+        }
     }
 }
 
@@ -582,9 +599,12 @@ impl Song {
     /// `Phrasing::default()`; `A`'s is the song's, else the default.
     pub fn phrasing_of(&self, s: SingerId) -> Phrasing {
         match s {
-            SingerId::B => {
-                self.duet.as_ref().and_then(|d| d.phrasing).or(self.phrasing).unwrap_or_default()
-            }
+            SingerId::B => self
+                .duet
+                .as_ref()
+                .and_then(|d| d.phrasing)
+                .or(self.phrasing)
+                .unwrap_or_default(),
             SingerId::A => self.phrasing.unwrap_or_default(),
         }
     }

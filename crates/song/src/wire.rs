@@ -49,8 +49,9 @@
 use crate::chord::{parse_detail, Chord, ChordId, ChordTable};
 use crate::g2p::g2p;
 use crate::model::{
-    Band, BarChords, Blend, BreakLead, Delivery, Duet, Endings, GuitarPattern, Line, Meter, Mode, Part,
-    Phrasing, Section, SectionBody, SectionKind, SectionRole, SingerId, Song, Syllable, Voice,
+    Band, BarChords, Blend, BreakLead, Delivery, Duet, Endings, GuitarPattern, Line, Meter, Mode,
+    Part, Phrasing, Section, SectionBody, SectionKind, SectionRole, SingerId, Song, Syllable,
+    Voice,
 };
 use crate::phoneme::Phoneme;
 use crate::pitch::Pc;
@@ -130,7 +131,11 @@ pub struct WireBand {
     pub drums: Option<String>,
     #[serde(deserialize_with = "loose_bool")]
     pub bass: Option<bool>,
-    #[serde(rename = "harmonyGuitar", alias = "harmony_guitar", deserialize_with = "loose_bool")]
+    #[serde(
+        rename = "harmonyGuitar",
+        alias = "harmony_guitar",
+        deserialize_with = "loose_bool"
+    )]
     pub harmony_guitar: Option<bool>,
     #[serde(deserialize_with = "loose_bool")]
     pub harp: Option<bool>,
@@ -246,12 +251,23 @@ fn loose_chords<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<String>>, 
         Value::String(s) => s.split([',', '|']).map(str::to_string).collect(),
         _ => return Ok(None),
     };
-    Ok(Some(v.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()))
+    Ok(Some(
+        v.into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    ))
 }
 
-fn loose_obj<'de, D: Deserializer<'de>, T: for<'a> Deserialize<'a>>(d: D) -> Result<Option<T>, D::Error> {
+fn loose_obj<'de, D: Deserializer<'de>, T: for<'a> Deserialize<'a>>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
     let v = Value::deserialize(d)?;
-    Ok(if v.is_object() { T::deserialize(v).ok() } else { None })
+    Ok(if v.is_object() {
+        T::deserialize(v).ok()
+    } else {
+        None
+    })
 }
 
 /// Wraps `loose_str` so absence of the JSON key can be told apart from a
@@ -272,11 +288,20 @@ fn loose_obj_seen<'de, D: Deserializer<'de>, T: for<'a> Deserialize<'a>>(
     Ok(Some(loose_obj(d)?))
 }
 
-fn loose_objs<'de, D: Deserializer<'de>, T: for<'a> Deserialize<'a>>(d: D) -> Result<Vec<Option<T>>, D::Error> {
+fn loose_objs<'de, D: Deserializer<'de>, T: for<'a> Deserialize<'a>>(
+    d: D,
+) -> Result<Vec<Option<T>>, D::Error> {
     Ok(match Value::deserialize(d)? {
-        Value::Array(a) => {
-            a.into_iter().map(|v| if v.is_object() { T::deserialize(v).ok() } else { None }).collect()
-        }
+        Value::Array(a) => a
+            .into_iter()
+            .map(|v| {
+                if v.is_object() {
+                    T::deserialize(v).ok()
+                } else {
+                    None
+                }
+            })
+            .collect(),
         _ => Vec::new(),
     })
 }
@@ -317,47 +342,105 @@ impl std::error::Error for SongError {}
 #[serde(tag = "repair", rename_all = "snake_case")]
 pub enum Repair {
     /// Field absent or unusable; the default was used.
-    DefaultedField { field: &'static str },
+    DefaultedField {
+        field: &'static str,
+    },
     /// Text cut to `chars` characters.
-    TruncatedField { field: &'static str, chars: usize },
-    ClampedTempo { from: f64, to: f64 },
+    TruncatedField {
+        field: &'static str,
+        chars: usize,
+    },
+    ClampedTempo {
+        from: f64,
+        to: f64,
+    },
     /// Mode absent or unknown; read from the key's suffix.
-    ModeFromKey { mode: Mode },
+    ModeFromKey {
+        mode: Mode,
+    },
     /// Section type absent, unknown, or changed (an instrumental verse or
     /// chorus becomes an interlude).
-    SectionType { section: usize, text: String, kind: SectionKind },
+    SectionType {
+        section: usize,
+        text: String,
+        kind: SectionKind,
+    },
     /// Section not an object, or with neither lines nor chords.
-    DroppedSection { section: usize },
+    DroppedSection {
+        section: usize,
+    },
     /// A lyric part with no letter or digit ("...", "*", a word of only
     /// hyphens); not sung. `text` is the part, or the whole word when the
     /// word is only hyphens.
-    DroppedSyllable { section: usize, line: usize, text: String },
+    DroppedSyllable {
+        section: usize,
+        line: usize,
+        text: String,
+    },
     /// Line not an object, or with no syllable.
-    DroppedLine { section: usize, line: usize },
+    DroppedLine {
+        section: usize,
+        line: usize,
+    },
     /// A chord beyond the bar, line or section limit. `line` is `None` in
     /// an instrumental section.
-    DroppedChord { section: usize, line: Option<usize>, bar: usize, symbol: String },
+    DroppedChord {
+        section: usize,
+        line: Option<usize>,
+        bar: usize,
+        symbol: String,
+    },
     /// Chord that does not parse; removed from its bar.
-    UnknownChord { section: usize, symbol: String },
+    UnknownChord {
+        section: usize,
+        symbol: String,
+    },
     /// Chord quality text not understood and ignored ("#9" in "C7#9").
-    ChordSuffixIgnored { symbol: String, ignored: String },
+    ChordSuffixIgnored {
+        symbol: String,
+        ignored: String,
+    },
     /// A line (or a bar) with no usable chord keeps the previous chord.
-    DefaultedChords { section: usize, line: Option<usize>, bar: usize, symbol: String },
+    DefaultedChords {
+        section: usize,
+        line: Option<usize>,
+        bar: usize,
+        symbol: String,
+    },
     /// G2P used for one syllable (ARPAbet group missing or unusable).
-    PhonemeFallback { section: usize, line: usize, syllable: usize },
+    PhonemeFallback {
+        section: usize,
+        line: usize,
+        syllable: usize,
+    },
     /// `same: true` with no earlier sung section of that type.
-    MissingRepeatSource { section: usize },
+    MissingRepeatSource {
+        section: usize,
+    },
     /// `duet` not an object, or its `voice` absent or unknown; the song
     /// stays solo.
-    DuetDropped { reason: &'static str },
+    DuetDropped {
+        reason: &'static str,
+    },
     /// `sing` text not `A`, `B` or `both`; read as `A`.
-    UnknownPart { section: usize, line: Option<usize>, text: String },
+    UnknownPart {
+        section: usize,
+        line: Option<usize>,
+        text: String,
+    },
     /// `sing` named `B` or `both` in a song with no duet; read as `A`. One
     /// per section when it comes from the section's own default, rather
     /// than once per line that inherits it.
-    PartWithoutDuet { section: usize, line: Option<usize> },
+    PartWithoutDuet {
+        section: usize,
+        line: Option<usize>,
+    },
     /// `lead` or `blend` given on a line that is not shared; ignored.
-    IgnoredPartField { section: usize, line: usize, field: &'static str },
+    IgnoredPartField {
+        section: usize,
+        line: usize,
+        field: &'static str,
+    },
     /// A duet where singer B sings no line, alone, as the melody or as the
     /// other voice; the song is read as solo.
     UnusedDuet,
@@ -371,45 +454,126 @@ impl fmt::Display for Repair {
             TruncatedField { field, chars } => write!(f, "{field}: cut to {chars} characters"),
             ClampedTempo { from, to } => write!(f, "tempo {from} clamped to {to}"),
             ModeFromKey { mode } => write!(f, "mode {mode} read from the key"),
-            SectionType { section, text, kind } => write!(f, "section {section}: type {text:?} read as {kind}"),
-            DroppedSection { section } => write!(f, "section {section}: dropped (no lines and no chords)"),
-            DroppedSyllable { section, line, text } => {
-                write!(f, "section {section} line {line}: {text:?} has no letter or digit, dropped")
+            SectionType {
+                section,
+                text,
+                kind,
+            } => write!(f, "section {section}: type {text:?} read as {kind}"),
+            DroppedSection { section } => {
+                write!(f, "section {section}: dropped (no lines and no chords)")
             }
-            DroppedLine { section, line } => write!(f, "section {section} line {line}: dropped (no syllables)"),
-            DroppedChord { section, line: Some(l), bar, symbol } => {
+            DroppedSyllable {
+                section,
+                line,
+                text,
+            } => {
+                write!(
+                    f,
+                    "section {section} line {line}: {text:?} has no letter or digit, dropped"
+                )
+            }
+            DroppedLine { section, line } => {
+                write!(f, "section {section} line {line}: dropped (no syllables)")
+            }
+            DroppedChord {
+                section,
+                line: Some(l),
+                bar,
+                symbol,
+            } => {
                 write!(f, "section {section} line {l} bar {bar}: chord {symbol:?} over the limit, dropped")
             }
-            DroppedChord { section, line: None, bar, symbol } => {
-                write!(f, "section {section} bar {bar}: chord {symbol:?} over the limit, dropped")
+            DroppedChord {
+                section,
+                line: None,
+                bar,
+                symbol,
+            } => {
+                write!(
+                    f,
+                    "section {section} bar {bar}: chord {symbol:?} over the limit, dropped"
+                )
             }
-            UnknownChord { section, symbol } => write!(f, "section {section}: chord {symbol:?} does not parse"),
-            ChordSuffixIgnored { symbol, ignored } => write!(f, "chord {symbol:?}: {ignored:?} ignored"),
-            DefaultedChords { section, line: Some(l), bar, symbol } => {
-                write!(f, "section {section} line {l} bar {bar}: no chord, {symbol} kept")
+            UnknownChord { section, symbol } => {
+                write!(f, "section {section}: chord {symbol:?} does not parse")
             }
-            DefaultedChords { section, line: None, bar, symbol } => {
+            ChordSuffixIgnored { symbol, ignored } => {
+                write!(f, "chord {symbol:?}: {ignored:?} ignored")
+            }
+            DefaultedChords {
+                section,
+                line: Some(l),
+                bar,
+                symbol,
+            } => {
+                write!(
+                    f,
+                    "section {section} line {l} bar {bar}: no chord, {symbol} kept"
+                )
+            }
+            DefaultedChords {
+                section,
+                line: None,
+                bar,
+                symbol,
+            } => {
                 write!(f, "section {section} bar {bar}: no chord, {symbol} kept")
             }
-            PhonemeFallback { section, line, syllable } => {
-                write!(f, "section {section} line {line} syllable {syllable}: ARPAbet unusable, G2P used")
+            PhonemeFallback {
+                section,
+                line,
+                syllable,
+            } => {
+                write!(
+                    f,
+                    "section {section} line {line} syllable {syllable}: ARPAbet unusable, G2P used"
+                )
             }
-            MissingRepeatSource { section } => write!(f, "section {section}: same without an earlier section"),
+            MissingRepeatSource { section } => {
+                write!(f, "section {section}: same without an earlier section")
+            }
             DuetDropped { reason } => write!(f, "duet dropped: {reason}"),
-            UnknownPart { section, line: Some(l), text } => {
-                write!(f, "section {section} line {l}: sing {text:?} unknown, read as A")
+            UnknownPart {
+                section,
+                line: Some(l),
+                text,
+            } => {
+                write!(
+                    f,
+                    "section {section} line {l}: sing {text:?} unknown, read as A"
+                )
             }
-            UnknownPart { section, line: None, text } => {
+            UnknownPart {
+                section,
+                line: None,
+                text,
+            } => {
                 write!(f, "section {section}: sing {text:?} unknown, read as A")
             }
-            PartWithoutDuet { section, line: Some(l) } => {
-                write!(f, "section {section} line {l}: sing without a duet, read as A")
+            PartWithoutDuet {
+                section,
+                line: Some(l),
+            } => {
+                write!(
+                    f,
+                    "section {section} line {l}: sing without a duet, read as A"
+                )
             }
-            PartWithoutDuet { section, line: None } => {
+            PartWithoutDuet {
+                section,
+                line: None,
+            } => {
                 write!(f, "section {section}: sing without a duet, read as A")
             }
-            IgnoredPartField { section, line, field } => {
-                write!(f, "section {section} line {line}: {field} ignored, the line is not shared")
+            IgnoredPartField {
+                section,
+                line,
+                field,
+            } => {
+                write!(
+                    f,
+                    "section {section} line {line}: {field} ignored, the line is not shared"
+                )
             }
             UnusedDuet => f.write_str("duet dropped: singer B sings no line"),
         }
@@ -435,9 +599,10 @@ pub fn normalize_value(v: &Value) -> Result<(Song, Vec<Repair>), SongError> {
 
 /// Function words left unstressed when a line has no '*' marks.
 const FUNCTION_WORDS: &[&str] = &[
-    "a", "an", "the", "and", "but", "or", "of", "to", "in", "on", "at", "by", "for", "with", "from", "as", "is",
-    "was", "be", "are", "am", "i", "my", "me", "you", "your", "he", "she", "it", "its", "we", "our", "they",
-    "their", "them", "his", "her", "that", "this", "than", "then", "so", "if", "nor", "oh", "o", "yet",
+    "a", "an", "the", "and", "but", "or", "of", "to", "in", "on", "at", "by", "for", "with",
+    "from", "as", "is", "was", "be", "are", "am", "i", "my", "me", "you", "your", "he", "she",
+    "it", "its", "we", "our", "they", "their", "them", "his", "her", "that", "this", "than",
+    "then", "so", "if", "nor", "oh", "o", "yet",
 ];
 
 fn truncate_chars(s: String, max: usize, field: &'static str, rep: &mut Vec<Repair>) -> String {
@@ -452,7 +617,12 @@ fn truncate_chars(s: String, max: usize, field: &'static str, rep: &mut Vec<Repa
 
 /// Picks an enum value from optional text; absent or unknown text gives the
 /// default and a `DefaultedField` repair.
-fn pick<T: std::str::FromStr + Copy>(v: Option<&str>, default: T, field: &'static str, rep: &mut Vec<Repair>) -> T {
+fn pick<T: std::str::FromStr + Copy>(
+    v: Option<&str>,
+    default: T,
+    field: &'static str,
+    rep: &mut Vec<Repair>,
+) -> T {
     match v.and_then(|s| s.parse::<T>().ok()) {
         Some(x) => x,
         None => {
@@ -483,12 +653,21 @@ fn phrasing_field(
     let wp = match p? {
         Some(wp) => wp,
         None => {
-            rep.push(Repair::DefaultedField { field: delivery_field });
-            rep.push(Repair::DefaultedField { field: endings_field });
+            rep.push(Repair::DefaultedField {
+                field: delivery_field,
+            });
+            rep.push(Repair::DefaultedField {
+                field: endings_field,
+            });
             return None;
         }
     };
-    let delivery = pick(wp.delivery.as_deref(), Delivery::Flowing, delivery_field, rep);
+    let delivery = pick(
+        wp.delivery.as_deref(),
+        Delivery::Flowing,
+        delivery_field,
+        rep,
+    );
     let endings = pick(wp.endings.as_deref(), Endings::Released, endings_field, rep);
     Some(Phrasing { delivery, endings })
 }
@@ -500,18 +679,27 @@ fn duet_header(d: Option<Option<WireDuet>>, rep: &mut Vec<Repair>) -> Option<Due
     let wd = match d? {
         Some(wd) => wd,
         None => {
-            rep.push(Repair::DuetDropped { reason: "duet is not an object" });
+            rep.push(Repair::DuetDropped {
+                reason: "duet is not an object",
+            });
             return None;
         }
     };
     let voice = match wd.voice.as_deref().and_then(|v| v.parse::<Voice>().ok()) {
         Some(v) => v,
         None => {
-            rep.push(Repair::DuetDropped { reason: "duet.voice is absent or unknown" });
+            rep.push(Repair::DuetDropped {
+                reason: "duet.voice is absent or unknown",
+            });
             return None;
         }
     };
-    let phrasing = phrasing_field(wd.phrasing, "duet.phrasing.delivery", "duet.phrasing.endings", rep);
+    let phrasing = phrasing_field(
+        wd.phrasing,
+        "duet.phrasing.delivery",
+        "duet.phrasing.endings",
+        rep,
+    );
     Some(Duet { voice, phrasing })
 }
 
@@ -554,7 +742,11 @@ fn resolve_sing(
         None => SingText::A,
         Some(text) => match parse_sing(&text) {
             None => {
-                rep.push(Repair::UnknownPart { section, line, text });
+                rep.push(Repair::UnknownPart {
+                    section,
+                    line,
+                    text,
+                });
                 SingText::A
             }
             Some(SingText::A) => SingText::A,
@@ -589,9 +781,19 @@ fn resolve_named<T: std::str::FromStr + Copy>(
     }
 }
 
-fn ignore_if_present(present: bool, field: &'static str, section: usize, line: usize, rep: &mut Vec<Repair>) {
+fn ignore_if_present(
+    present: bool,
+    field: &'static str,
+    section: usize,
+    line: usize,
+    rep: &mut Vec<Repair>,
+) {
     if present {
-        rep.push(Repair::IgnoredPartField { section, line, field });
+        rep.push(Repair::IgnoredPartField {
+            section,
+            line,
+            field,
+        });
     }
 }
 
@@ -616,7 +818,11 @@ fn mode_from_key_suffix(rest: &str) -> Option<Mode> {
 
 /// Section type from free text: case and non-letters ignored.
 fn section_kind(text: &str) -> (SectionKind, bool) {
-    let t: String = text.chars().filter(char::is_ascii_alphabetic).map(|c| c.to_ascii_lowercase()).collect();
+    let t: String = text
+        .chars()
+        .filter(char::is_ascii_alphabetic)
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
     if let Ok(k) = t.parse::<SectionKind>() {
         return (k, true);
     }
@@ -660,7 +866,13 @@ impl Chords<'_> {
 
     /// One bar from its text ("G" or "G D"). `line` is `None` in an
     /// instrumental section.
-    fn bar(&mut self, text: &str, section: usize, line: Option<usize>, bar: usize) -> Option<BarChords> {
+    fn bar(
+        &mut self,
+        text: &str,
+        section: usize,
+        line: Option<usize>,
+        bar: usize,
+    ) -> Option<BarChords> {
         let mut ids: [Option<ChordId>; BAR_MAX_CHORDS] = [None; BAR_MAX_CHORDS];
         let mut n = 0;
         for tok in text.split_whitespace() {
@@ -670,17 +882,28 @@ impl Chords<'_> {
                     if let Some(ig) = ignored {
                         if !self.ignored_seen.contains(&c.symbol) {
                             self.ignored_seen.push(c.symbol.clone());
-                            self.rep.push(Repair::ChordSuffixIgnored { symbol: c.symbol.clone(), ignored: ig });
+                            self.rep.push(Repair::ChordSuffixIgnored {
+                                symbol: c.symbol.clone(),
+                                ignored: ig,
+                            });
                         }
                     }
                     if n == BAR_MAX_CHORDS {
-                        self.rep.push(Repair::DroppedChord { section, line, bar, symbol: c.symbol });
+                        self.rep.push(Repair::DroppedChord {
+                            section,
+                            line,
+                            bar,
+                            symbol: c.symbol,
+                        });
                         continue;
                     }
                     ids[n] = self.intern(c);
                     n += 1;
                 }
-                Err(_) => self.rep.push(Repair::UnknownChord { section, symbol: tok.to_string() }),
+                Err(_) => self.rep.push(Repair::UnknownChord {
+                    section,
+                    symbol: tok.to_string(),
+                }),
             }
         }
         let out = match (ids[0], ids[1]) {
@@ -689,7 +912,12 @@ impl Chords<'_> {
             _ => {
                 let id = self.fallback()?;
                 let symbol = self.table.get(id).symbol.clone();
-                self.rep.push(Repair::DefaultedChords { section, line, bar, symbol });
+                self.rep.push(Repair::DefaultedChords {
+                    section,
+                    line,
+                    bar,
+                    symbol,
+                });
                 BarChords::one(id)
             }
         };
@@ -699,12 +927,23 @@ impl Chords<'_> {
 
     /// Bars from chord entries, at most `max`; later entries are dropped
     /// with a repair. No entries gives one bar with the fallback chord.
-    fn bars(&mut self, entries: &[String], max: usize, section: usize, line: Option<usize>) -> Vec<BarChords> {
+    fn bars(
+        &mut self,
+        entries: &[String],
+        max: usize,
+        section: usize,
+        line: Option<usize>,
+    ) -> Vec<BarChords> {
         let mut out = Vec::with_capacity(entries.len().min(max).max(1));
         for (bi, e) in entries.iter().enumerate() {
             if bi >= max {
                 for tok in e.split_whitespace() {
-                    self.rep.push(Repair::DroppedChord { section, line, bar: bi, symbol: tok.to_string() });
+                    self.rep.push(Repair::DroppedChord {
+                        section,
+                        line,
+                        bar: bi,
+                        symbol: tok.to_string(),
+                    });
                 }
                 continue;
             }
@@ -733,7 +972,11 @@ fn syllables(text: &str, section: usize, line: usize, rep: &mut Vec<Repair>) -> 
         for part in w.split('-') {
             if !part.chars().any(char::is_alphanumeric) {
                 if !part.is_empty() {
-                    rep.push(Repair::DroppedSyllable { section, line, text: part.to_string() });
+                    rep.push(Repair::DroppedSyllable {
+                        section,
+                        line,
+                        text: part.to_string(),
+                    });
                     reported = true;
                 }
                 continue;
@@ -753,7 +996,11 @@ fn syllables(text: &str, section: usize, line: usize, rep: &mut Vec<Repair>) -> 
             }
             word = word.saturating_add(1);
         } else if !reported {
-            rep.push(Repair::DroppedSyllable { section, line, text: w.to_string() });
+            rep.push(Repair::DroppedSyllable {
+                section,
+                line,
+                text: w.to_string(),
+            });
         }
     }
     if !out.iter().any(|s| s.stress) {
@@ -797,7 +1044,13 @@ fn phone_group(g: &str) -> Option<Vec<Phoneme>> {
 }
 
 /// Fills `phones` for every syllable from the `ph` field, with G2P where needed.
-fn assign_phones(syls: &mut [Syllable], ph: Option<&str>, section: usize, line: usize, rep: &mut Vec<Repair>) {
+fn assign_phones(
+    syls: &mut [Syllable],
+    ph: Option<&str>,
+    section: usize,
+    line: usize,
+    rep: &mut Vec<Repair>,
+) {
     let groups: Vec<&str> = match ph {
         Some(p) => {
             let all: Vec<&str> = p.split('|').collect();
@@ -805,7 +1058,8 @@ fn assign_phones(syls: &mut [Syllable], ph: Option<&str>, section: usize, line: 
                 all
             } else {
                 // Stray separators ("a||b", "a|b|") are not groups.
-                let nonempty: Vec<&str> = all.into_iter().filter(|g| !g.trim().is_empty()).collect();
+                let nonempty: Vec<&str> =
+                    all.into_iter().filter(|g| !g.trim().is_empty()).collect();
                 if nonempty.len() == syls.len() {
                     nonempty
                 } else {
@@ -820,7 +1074,11 @@ fn assign_phones(syls: &mut [Syllable], ph: Option<&str>, section: usize, line: 
             Some(p) => s.phones = p,
             None => {
                 s.phones = g2p(&s.text);
-                rep.push(Repair::PhonemeFallback { section, line, syllable: i });
+                rep.push(Repair::PhonemeFallback {
+                    section,
+                    line,
+                    syllable: i,
+                });
             }
         }
     }
@@ -880,10 +1138,18 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
     let (lo, hi) = meter.tempo_range();
     let tempo_bpm = rounded.clamp(lo as f64, hi as f64);
     if tempo_bpm != rounded {
-        rep.push(Repair::ClampedTempo { from: tempo_in, to: tempo_bpm });
+        rep.push(Repair::ClampedTempo {
+            from: tempo_in,
+            to: tempo_bpm,
+        });
     }
 
-    let guitar = pick(w.guitar.as_deref(), GuitarPattern::Fingerpick, "guitar", &mut rep);
+    let guitar = pick(
+        w.guitar.as_deref(),
+        GuitarPattern::Fingerpick,
+        "guitar",
+        &mut rep,
+    );
     let voice = pick(w.voice.as_deref(), Voice::Baritone, "voice", &mut rep);
 
     let d = Band::default();
@@ -891,7 +1157,12 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         Some(b) => Band {
             drums: pick(b.drums.as_deref(), d.drums, "band.drums", &mut rep),
             bass: flag(b.bass, d.bass, "band.bass", &mut rep),
-            harmony_guitar: flag(b.harmony_guitar, d.harmony_guitar, "band.harmonyGuitar", &mut rep),
+            harmony_guitar: flag(
+                b.harmony_guitar,
+                d.harmony_guitar,
+                "band.harmonyGuitar",
+                &mut rep,
+            ),
             harp: flag(b.harp, d.harp, "band.harp", &mut rep),
             violin: flag(b.violin, d.violin, "band.violin", &mut rep),
             choir: flag(b.choir, d.choir, "band.choir", &mut rep),
@@ -906,7 +1177,12 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
 
     let duet = duet_header(w.duet, &mut rep);
     let is_duet = duet.is_some();
-    let phrasing = phrasing_field(w.phrasing, "phrasing.delivery", "phrasing.endings", &mut rep);
+    let phrasing = phrasing_field(
+        w.phrasing,
+        "phrasing.delivery",
+        "phrasing.endings",
+        &mut rep,
+    );
 
     let mut sec_rep = Vec::new();
     let mut ch = Chords {
@@ -929,14 +1205,26 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         let text = ws.kind.unwrap_or_default();
         let (mut kind, exact) = section_kind(&text);
         if !exact {
-            ch.rep.push(Repair::SectionType { section: si, text: text.clone(), kind });
+            ch.rep.push(Repair::SectionType {
+                section: si,
+                text: text.clone(),
+                kind,
+            });
         }
 
         if ws.same == Some(true) {
-            match last_sung.get(&kind).and_then(|&i| Some((i, u16::try_from(i).ok()?))) {
+            match last_sung
+                .get(&kind)
+                .and_then(|&i| Some((i, u16::try_from(i).ok()?)))
+            {
                 Some((i, src)) => {
                     let body = sections[i].body.clone();
-                    sections.push(Section { kind, role: SectionRole::Plain, body, repeat_of: Some(src) });
+                    sections.push(Section {
+                        kind,
+                        role: SectionRole::Plain,
+                        body,
+                        repeat_of: Some(src),
+                    });
                     continue;
                 }
                 None => ch.rep.push(Repair::MissingRepeatSource { section: si }),
@@ -953,17 +1241,34 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         let mut lines = Vec::new();
         for (li, wl) in ws.lines.into_iter().enumerate() {
             let Some(wl) = wl else {
-                ch.rep.push(Repair::DroppedLine { section: si, line: li });
+                ch.rep.push(Repair::DroppedLine {
+                    section: si,
+                    line: li,
+                });
                 continue;
             };
-            let text = [wl.syl, wl.lyric, wl.text].into_iter().flatten().find(|s| !s.trim().is_empty());
-            let mut syls = text.as_deref().map(|t| syllables(t, si, li, ch.rep)).unwrap_or_default();
+            let text = [wl.syl, wl.lyric, wl.text]
+                .into_iter()
+                .flatten()
+                .find(|s| !s.trim().is_empty());
+            let mut syls = text
+                .as_deref()
+                .map(|t| syllables(t, si, li, ch.rep))
+                .unwrap_or_default();
             if syls.is_empty() {
-                ch.rep.push(Repair::DroppedLine { section: si, line: li });
+                ch.rep.push(Repair::DroppedLine {
+                    section: si,
+                    line: li,
+                });
                 continue;
             }
             assign_phones(&mut syls, wl.ph.as_deref(), si, li, ch.rep);
-            let bars = ch.bars(wl.chords.as_deref().unwrap_or(&[]), LINE_MAX_BARS, si, Some(li));
+            let bars = ch.bars(
+                wl.chords.as_deref().unwrap_or(&[]),
+                LINE_MAX_BARS,
+                si,
+                Some(li),
+            );
 
             let sing_sel = match wl.sing {
                 Some(t) => resolve_sing(Some(t), is_duet, si, Some(li), ch.rep),
@@ -996,12 +1301,21 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                     Part::Both { melody, blend }
                 }
             };
-            lines.push(Line { syllables: syls, bars, part });
+            lines.push(Line {
+                syllables: syls,
+                bars,
+                part,
+            });
         }
 
         if !lines.is_empty() {
             last_sung.insert(kind, sections.len());
-            sections.push(Section { kind, role: SectionRole::Plain, body: SectionBody::Sung(lines), repeat_of: None });
+            sections.push(Section {
+                kind,
+                role: SectionRole::Plain,
+                body: SectionBody::Sung(lines),
+                repeat_of: None,
+            });
             continue;
         }
         let entries = ws.chords.unwrap_or_default();
@@ -1011,7 +1325,11 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         }
         if matches!(kind, SectionKind::Verse | SectionKind::Chorus) {
             kind = SectionKind::Interlude;
-            ch.rep.push(Repair::SectionType { section: si, text, kind });
+            ch.rep.push(Repair::SectionType {
+                section: si,
+                text,
+                kind,
+            });
         }
         let bars = ch.bars(&entries, INSTRUMENTAL_MAX_BARS, si, None);
         sections.push(Section {
@@ -1064,7 +1382,10 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
 /// Whether singer B sings any line: alone, as the melody of a shared line,
 /// or as the other voice of one. If not, a duet header is unused.
 fn duet_used(sections: &[Section]) -> bool {
-    sections.iter().flat_map(Section::lines).any(|l| matches!(l.part, Part::Solo(SingerId::B) | Part::Both { .. }))
+    sections
+        .iter()
+        .flat_map(Section::lines)
+        .any(|l| matches!(l.part, Part::Solo(SingerId::B) | Part::Both { .. }))
 }
 
 // ---------------------------------------------------------------- back to wire
@@ -1072,7 +1393,11 @@ fn duet_used(sections: &[Section]) -> bool {
 fn bars_text(song: &Song, bars: &[BarChords]) -> Vec<Value> {
     bars.iter()
         .map(|b| {
-            let names: Vec<&str> = b.as_slice().iter().map(|&id| song.chord(id).symbol.as_str()).collect();
+            let names: Vec<&str> = b
+                .as_slice()
+                .iter()
+                .map(|&id| song.chord(id).symbol.as_str())
+                .collect();
             Value::String(names.join(" "))
         })
         .collect()
@@ -1124,10 +1449,16 @@ pub fn to_wire(song: &Song) -> Value {
                                     Part::Both { melody, blend } => {
                                         o.insert("sing".into(), Value::String("both".into()));
                                         if melody != SingerId::A {
-                                            o.insert("lead".into(), Value::String(melody.as_str().into()));
+                                            o.insert(
+                                                "lead".into(),
+                                                Value::String(melody.as_str().into()),
+                                            );
                                         }
                                         if blend != Blend::Harmony {
-                                            o.insert("blend".into(), Value::String(blend.as_str().into()));
+                                            o.insert(
+                                                "blend".into(),
+                                                Value::String(blend.as_str().into()),
+                                            );
                                         }
                                     }
                                 }
@@ -1172,7 +1503,9 @@ pub fn to_wire(song: &Song) -> Value {
     if let Some(d) = &song.duet {
         let mut dv = serde_json::json!({ "voice": d.voice.as_str() });
         if let Some(p) = d.phrasing {
-            dv.as_object_mut().expect("object literal").insert("phrasing".into(), phrasing_to_wire(p));
+            dv.as_object_mut()
+                .expect("object literal")
+                .insert("phrasing".into(), phrasing_to_wire(p));
         }
         o.insert("duet".into(), dv);
     }
@@ -1211,13 +1544,22 @@ mod tests {
         let (s, r) = normalize_value(&one_line(json!({}))).unwrap();
         assert!(r.is_empty(), "{r:?}");
         assert_eq!(s.voice, Voice::Tenor);
-        assert_eq!(s.sections[0].lines()[0].syllables[1].phones, vec![Phoneme::T, Phoneme::Uw]);
+        assert_eq!(
+            s.sections[0].lines()[0].syllables[1].phones,
+            vec![Phoneme::T, Phoneme::Uw]
+        );
     }
 
     #[test]
     fn mode_from_key_suffix_any_case() {
-        for (key, mode) in [("D Minor", Mode::Minor), ("Dm", Mode::Minor), ("Bbmin", Mode::Minor),
-                            ("C maj", Mode::Major), ("A dorian", Mode::Dorian), ("F#m", Mode::Minor)] {
+        for (key, mode) in [
+            ("D Minor", Mode::Minor),
+            ("Dm", Mode::Minor),
+            ("Bbmin", Mode::Minor),
+            ("C maj", Mode::Major),
+            ("A dorian", Mode::Dorian),
+            ("F#m", Mode::Minor),
+        ] {
             let (s, r) = normalize_value(&one_line(json!({"key": key, "mode": null}))).unwrap();
             assert_eq!(s.mode, mode, "{key}");
             assert_eq!(r, vec![Repair::ModeFromKey { mode }]);
@@ -1234,7 +1576,13 @@ mod tests {
         assert_eq!(t(json!(" 96.5 ")).0.tempo_bpm, 97.0);
         let (s, r) = t(json!(300));
         assert_eq!(s.tempo_bpm, 150.0);
-        assert_eq!(r, vec![Repair::ClampedTempo { from: 300.0, to: 150.0 }]);
+        assert_eq!(
+            r,
+            vec![Repair::ClampedTempo {
+                from: 300.0,
+                to: 150.0
+            }]
+        );
         let (s, r) = t(json!("fast"));
         assert_eq!(s.tempo_bpm, 88.0);
         assert_eq!(r, vec![Repair::DefaultedField { field: "tempo" }]);
@@ -1258,10 +1606,21 @@ mod tests {
         assert_eq!(bars.len(), 3);
         assert_eq!(s.chord(bars[1].first()).symbol, "G7#9");
         assert_eq!(s.chord(bars[2].first()).symbol, "G7#9");
-        assert!(r.contains(&Repair::UnknownChord { section: 0, symbol: "Xq".into() }));
-        assert!(r.contains(&Repair::UnknownChord { section: 0, symbol: "H".into() }));
-        assert!(r.contains(&Repair::ChordSuffixIgnored { symbol: "G7#9".into(), ignored: "#9".into() }));
-        assert!(r.iter().any(|x| matches!(x, Repair::DefaultedChords { bar: 2, .. })));
+        assert!(r.contains(&Repair::UnknownChord {
+            section: 0,
+            symbol: "Xq".into()
+        }));
+        assert!(r.contains(&Repair::UnknownChord {
+            section: 0,
+            symbol: "H".into()
+        }));
+        assert!(r.contains(&Repair::ChordSuffixIgnored {
+            symbol: "G7#9".into(),
+            ignored: "#9".into()
+        }));
+        assert!(r
+            .iter()
+            .any(|x| matches!(x, Repair::DefaultedChords { bar: 2, .. })));
     }
 
     #[test]
@@ -1273,9 +1632,24 @@ mod tests {
         assert_eq!(s.sections[0].lines()[0].bars.len(), 4);
         assert_eq!(s.sections[1].kind, SectionKind::Interlude);
         assert_eq!(s.sections[1].n_bars(), 8);
-        assert!(r.contains(&Repair::DroppedChord { section: 0, line: Some(0), bar: 1, symbol: "Am".into() }));
-        assert!(r.contains(&Repair::DroppedChord { section: 0, line: Some(0), bar: 4, symbol: "F".into() }));
-        assert!(r.contains(&Repair::DroppedChord { section: 1, line: None, bar: 8, symbol: "G".into() }));
+        assert!(r.contains(&Repair::DroppedChord {
+            section: 0,
+            line: Some(0),
+            bar: 1,
+            symbol: "Am".into()
+        }));
+        assert!(r.contains(&Repair::DroppedChord {
+            section: 0,
+            line: Some(0),
+            bar: 4,
+            symbol: "F".into()
+        }));
+        assert!(r.contains(&Repair::DroppedChord {
+            section: 1,
+            line: None,
+            bar: 8,
+            symbol: "G".into()
+        }));
     }
 
     #[test]
@@ -1287,8 +1661,18 @@ mod tests {
         let l0 = &s.sections[0].lines()[0].syllables;
         assert_eq!(l0[0].phones, vec![Phoneme::S, Phoneme::Ah]);
         assert_eq!(l0[1].phones, g2p("ny"));
-        assert_eq!(r.iter().filter(|x| matches!(x, Repair::PhonemeFallback { line: 0, .. })).count(), 1);
-        assert_eq!(r.iter().filter(|x| matches!(x, Repair::PhonemeFallback { line: 1, .. })).count(), 3);
+        assert_eq!(
+            r.iter()
+                .filter(|x| matches!(x, Repair::PhonemeFallback { line: 0, .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            r.iter()
+                .filter(|x| matches!(x, Repair::PhonemeFallback { line: 1, .. }))
+                .count(),
+            3
+        );
     }
 
     #[test]
@@ -1309,13 +1693,20 @@ mod tests {
         let v = one_line(json!({"sections": [{"type": "verse", "lines": [
             {"syl": "the ri-ver and home", "ph": "dh ax|r ih|v er|ae n d|hh ow m", "chords": ["C"]}]}]}));
         let (s, _) = normalize_value(&v).unwrap();
-        let st: Vec<bool> = s.sections[0].lines()[0].syllables.iter().map(|x| x.stress).collect();
+        let st: Vec<bool> = s.sections[0].lines()[0]
+            .syllables
+            .iter()
+            .map(|x| x.stress)
+            .collect();
         assert_eq!(st, vec![false, true, false, false, true]);
     }
 
     #[test]
     fn hard_errors() {
-        assert_eq!(normalize_value(&json!([1])).unwrap_err(), SongError::NotObject);
+        assert_eq!(
+            normalize_value(&json!([1])).unwrap_err(),
+            SongError::NotObject
+        );
         assert!(matches!(normalize_str("{"), Err(SongError::NotJson(_))));
         let v = json!({"sections": [{"type": "intro", "chords": ["C"]}]});
         assert_eq!(normalize_value(&v).unwrap_err(), SongError::NoLyrics);
@@ -1331,7 +1722,10 @@ mod tests {
         assert_eq!(s.title, "5");
         assert_eq!(s.band, Band::default());
         assert!(r.contains(&Repair::DroppedSection { section: 0 }));
-        assert!(r.contains(&Repair::DroppedLine { section: 1, line: 0 }));
+        assert!(r.contains(&Repair::DroppedLine {
+            section: 1,
+            line: 0
+        }));
     }
 
     #[test]
@@ -1339,6 +1733,12 @@ mod tests {
         let title = "\u{e9}".repeat(130);
         let (s, r) = normalize_value(&one_line(json!({ "title": title }))).unwrap();
         assert_eq!(s.title.chars().count(), 120);
-        assert_eq!(r, vec![Repair::TruncatedField { field: "title", chars: 120 }]);
+        assert_eq!(
+            r,
+            vec![Repair::TruncatedField {
+                field: "title",
+                chars: 120
+            }]
+        );
     }
 }

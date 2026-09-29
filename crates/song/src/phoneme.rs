@@ -125,7 +125,10 @@ impl FromStr for Phoneme {
     type Err = crate::UnknownName;
     /// Same rules as `parse_token`.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Phoneme::parse_token(s).ok_or_else(|| crate::UnknownName { kind: "phoneme", text: s.to_string() })
+        Phoneme::parse_token(s).ok_or_else(|| crate::UnknownName {
+            kind: "phoneme",
+            text: s.to_string(),
+        })
     }
 }
 

@@ -211,7 +211,9 @@ pub fn rasterise(plan: &[(Span, Segment)], w: Window, out: &mut ControlTracks, b
                 c.av[r.clone()].fill(av as f32);
                 c.nas[r].fill(1.0);
             }
-            Segment::Fricative { av, af, ff, fbw, .. } => {
+            Segment::Fricative {
+                av, af, ff, fbw, ..
+            } => {
                 c.av[r.clone()].fill(av as f32);
                 c.af[r.clone()].fill(af as f32);
                 c.ff[r.clone()].fill(ff as f32);
@@ -221,7 +223,9 @@ pub fn rasterise(plan: &[(Span, Segment)], w: Window, out: &mut ControlTracks, b
                 c.ah[r.clone()].fill(ah as f32);
                 c.b1x[r].fill(b1x as f32);
             }
-            Segment::Burst { af, ff, fbw, ah, .. } => {
+            Segment::Burst {
+                af, ff, fbw, ah, ..
+            } => {
                 c.af[r.clone()].fill(af as f32);
                 c.ff[r.clone()].fill(ff as f32);
                 c.fbw[r.clone()].fill(fbw as f32);
@@ -249,7 +253,11 @@ pub fn shape_dynamics(av: &mut [f32], notes: &[VocalNote], w: Window, ph: &Phras
         let len = (i1 - i0).max(1) as f64;
         for i in w.clip(i0, i1) {
             let x = (w.abs(i) - i0) as f64 / len;
-            let mut e = if dur > 0.5 { 0.9 + ph.swell * (PI * (x * 1.1).min(1.0)).sin() } else { 1.0 };
+            let mut e = if dur > 0.5 {
+                0.9 + ph.swell * (PI * (x * 1.1).min(1.0)).sin()
+            } else {
+                1.0
+            };
             if n.phrase_end {
                 e *= 1.0 - ph.fade_depth * smoothstep(ph.fade_from, 1.0, x);
             }
@@ -327,7 +335,12 @@ pub struct Vibrato {
 
 impl Vibrato {
     pub fn new(depth: f64, rate: f64, phase: f64) -> Vibrato {
-        Vibrato { depth, rate, phase, env: Vec::new() }
+        Vibrato {
+            depth,
+            rate,
+            phase,
+            env: Vec::new(),
+        }
     }
 
     /// Add vibrato for `notes` to `midi` (window `w`). See the module doc
@@ -341,9 +354,15 @@ impl Vibrato {
                 continue;
             }
             let a = Window::frame(n.t0 + VIBRATO_DELAY);
-            let d = self.depth * if n.phrase_end { VIBRATO_PHRASE_END } else { 1.0 };
+            let d = self.depth
+                * if n.phrase_end {
+                    VIBRATO_PHRASE_END
+                } else {
+                    1.0
+                };
             for i in w.clip(a.max(0), Window::frame(n.t1)) {
-                env[i] = (d * smoothstep(0.0, VIBRATO_RISE * FRAME_RATE, (w.abs(i) - a) as f64)) as f32;
+                env[i] =
+                    (d * smoothstep(0.0, VIBRATO_RISE * FRAME_RATE, (w.abs(i) - a) as f64)) as f32;
             }
         }
         zero_phase_smooth(env, one_pole_coeff_tau(SMOOTH_VIBRATO, FRAME_RATE));
@@ -400,7 +419,12 @@ impl<'a> Articulation<'a> {
     /// no-op copy for the default phrasing). `rng` is the singer's control
     /// stream: one uniform draw now (vibrato phase), then one normal draw
     /// per rendered frame (drift).
-    pub fn new(notes: &'a [VocalNote], p: &VoiceParams, settings: &VoiceSettings, mut rng: Rng) -> Self {
+    pub fn new(
+        notes: &'a [VocalNote],
+        p: &VoiceParams,
+        settings: &VoiceSettings,
+        mut rng: Rng,
+    ) -> Self {
         let phase = rng.uniform() * TAU;
         let notes = phrase_notes(notes, &settings.phrasing);
         let syl = syllables(&notes, p, &settings.phrasing);
@@ -410,7 +434,11 @@ impl<'a> Articulation<'a> {
             p: *p,
             settings: *settings,
             rng,
-            vibrato: Vibrato::new(p.vib_depth * settings.vibrato_scale, p.vib_rate * settings.vibrato_rate_scale, phase),
+            vibrato: Vibrato::new(
+                p.vib_depth * settings.vibrato_scale,
+                p.vib_rate * settings.vibrato_rate_scale,
+                phase,
+            ),
             drift: drift_walk(),
             plan: Vec::new(),
         }
@@ -451,7 +479,14 @@ impl<'a> Articulation<'a> {
         }
         let range = lo..end;
         let notes = self.notes.get(range.clone()).unwrap_or(&[]);
-        plan_syllables(&self.notes, &self.syl, range.clone(), &self.p, &self.settings, &mut self.plan);
+        plan_syllables(
+            &self.notes,
+            &self.syl,
+            range.clone(),
+            &self.p,
+            &self.settings,
+            &mut self.plan,
+        );
         rasterise(&self.plan, w, out, self.settings.phrasing.breath);
         shape_dynamics(&mut out.av, notes, w, &self.settings.phrasing);
 
@@ -469,15 +504,30 @@ impl<'a> Articulation<'a> {
         ];
         let c = &mut *out;
         let smoothed = zero_phase_smooth_lanes(
-            [&mut c.f1, &mut c.f2, &mut c.f3, &mut c.nas, &mut c.av, &mut c.ah, &mut c.af, &mut c.b1x, &mut c.ff, &mut c.fbw],
+            [
+                &mut c.f1, &mut c.f2, &mut c.f3, &mut c.nas, &mut c.av, &mut c.ah, &mut c.af,
+                &mut c.b1x, &mut c.ff, &mut c.fbw,
+            ],
             taus.map(|t| one_pole_coeff_tau(t, FRAME_RATE)),
         );
         // Every ControlTracks track has the window's frame count.
         debug_assert!(smoothed.is_ok(), "control tracks of unequal length");
 
-        pitch_track(&self.notes, &self.syl, range, &self.settings, w, &mut out.midi);
+        pitch_track(
+            &self.notes,
+            &self.syl,
+            range,
+            &self.settings,
+            w,
+            &mut out.midi,
+        );
         self.vibrato.add(&mut out.midi, notes, w);
-        add_drift(&mut out.midi, &mut self.drift, &mut self.rng, self.settings.detune);
+        add_drift(
+            &mut out.midi,
+            &mut self.drift,
+            &mut self.rng,
+            self.settings.detune,
+        );
     }
 }
 
@@ -492,7 +542,11 @@ pub fn control_tracks(
     rng: Rng,
 ) -> ControlTracks {
     let mut out = ControlTracks::default();
-    Articulation::new(notes, p, settings, rng).phrase(0..notes.len(), Window::song(frames), &mut out);
+    Articulation::new(notes, p, settings, rng).phrase(
+        0..notes.len(),
+        Window::song(frames),
+        &mut out,
+    );
     out
 }
 
@@ -546,16 +600,27 @@ mod tests {
     fn tracks_are_finite_for_every_voice() {
         let notes = song();
         let n = frames_for(&notes);
-        for voice in [Voice::Bass, Voice::Baritone, Voice::Tenor, Voice::Alto, Voice::Soprano] {
+        for voice in [
+            Voice::Bass,
+            Voice::Baritone,
+            Voice::Tenor,
+            Voice::Alto,
+            Voice::Soprano,
+        ] {
             let settings = VoiceSettings::default();
             let p = settings.apply(voice_params(voice));
             let c = control_tracks(&notes, &p, &settings, n, Rng::from_seed(7));
-            for t in [&c.av, &c.ah, &c.af, &c.ff, &c.fbw, &c.f1, &c.f2, &c.f3, &c.nas, &c.midi, &c.b1x] {
+            for t in [
+                &c.av, &c.ah, &c.af, &c.ff, &c.fbw, &c.f1, &c.f2, &c.f3, &c.nas, &c.midi, &c.b1x,
+            ] {
                 assert_eq!(t.len(), n);
                 assert!(t.iter().all(|x| x.is_finite()), "{voice:?}");
             }
             assert!(c.av.iter().any(|&x| x > 0.5));
-            assert!(c.midi.iter().all(|&m| (40.0..65.0).contains(&m)), "{voice:?}");
+            assert!(
+                c.midi.iter().all(|&m| (40.0..65.0).contains(&m)),
+                "{voice:?}"
+            );
         }
     }
 
@@ -567,7 +632,10 @@ mod tests {
         assert_eq!(c.len(), 10);
         let c = control_tracks(&song(), &p, &settings, 0, Rng::from_seed(1));
         assert!(c.is_empty());
-        let bad = [note(-3.0, -1.0, 50.0, &[]), note(1e6, 1e6 + 1.0, 50.0, &[Phoneme::T])];
+        let bad = [
+            note(-3.0, -1.0, 50.0, &[]),
+            note(1e6, 1e6 + 1.0, 50.0, &[Phoneme::T]),
+        ];
         let c = control_tracks(&bad, &p, &settings, 100, Rng::from_seed(1));
         assert!(c.midi.iter().chain(&c.av).all(|x| x.is_finite()));
     }
@@ -581,19 +649,37 @@ mod tests {
         let p = voice_params(Voice::Baritone);
         let syl = syllables(&notes, &p, &settings.phrasing);
         let mut m = vec![0.0; frames_for(&notes)];
-        pitch_track(&notes, &syl, 0..notes.len(), &settings, Window::song(m.len()), &mut m);
-        for n in notes.iter().filter(|n| n.t1 - n.t0 >= 0.4 && n.grace.is_none()) {
+        pitch_track(
+            &notes,
+            &syl,
+            0..notes.len(),
+            &settings,
+            Window::song(m.len()),
+            &mut m,
+        );
+        for n in notes
+            .iter()
+            .filter(|n| n.t1 - n.t0 >= 0.4 && n.grace.is_none())
+        {
             let d = n.t1 - n.t0;
             let (a, b) = (frame(n.t0 + 0.2 * d), frame(n.t1 - 0.2 * d));
             for (i, &mi) in m[a..b].iter().enumerate() {
-                assert!((mi - n.midi).abs() < 0.05, "note {} frame {}: {mi}", n.midi, a + i);
+                assert!(
+                    (mi - n.midi).abs() < 0.05,
+                    "note {} frame {}: {mi}",
+                    n.midi,
+                    a + i
+                );
             }
         }
         // The scoop starts the first phrase below the note; the grace note
         // starts at its grace pitch and ends on the note.
         assert!(m[frame(notes[0].t0)] < notes[0].midi - 0.3);
         let g = &notes[4];
-        let low = m[frame(g.t0)..frame(g.t0 + 0.11)].iter().copied().fold(f32::MAX, f32::min);
+        let low = m[frame(g.t0)..frame(g.t0 + 0.11)]
+            .iter()
+            .copied()
+            .fold(f32::MAX, f32::min);
         assert!(low < g.midi - 1.5, "grace low {low}");
         assert!((m[frame(g.t1 - 0.15)] - g.midi).abs() < 0.05);
     }
@@ -607,7 +693,11 @@ mod tests {
         let mut m = vec![52.0f32; frames];
         let w = Window::song(frames);
         Vibrato::new(0.3, 5.5, 0.0).add(&mut m, std::slice::from_ref(&n), w);
-        let dev = |a: f64, b: f64| (frame(a)..frame(b)).map(|i| (m[i] - 52.0).abs()).fold(0.0f32, f32::max);
+        let dev = |a: f64, b: f64| {
+            (frame(a)..frame(b))
+                .map(|i| (m[i] - 52.0).abs())
+                .fold(0.0f32, f32::max)
+        };
         assert!(dev(0.5, 0.65) < 0.03, "early {}", dev(0.5, 0.65));
         let late = dev(1.4, 2.3);
         assert!((late - 0.3).abs() < 0.02, "sustain {late}");
@@ -626,7 +716,10 @@ mod tests {
     /// only over rendered frames).
     fn check_spans(notes: &[VocalNote], voice: Voice) {
         let n = frames_for(notes);
-        let settings = VoiceSettings { vibrato_scale: 0.0, ..VoiceSettings::default() };
+        let settings = VoiceSettings {
+            vibrato_scale: 0.0,
+            ..VoiceSettings::default()
+        };
         let p = settings.apply(voice_params(voice));
         let whole = control_tracks(notes, &p, &settings, n, Rng::from_seed(9));
         let mut art = Articulation::new(notes, &p, &settings, Rng::from_seed(9));
@@ -634,7 +727,10 @@ mod tests {
         assert!(spans.len() > 1);
         let mut c = ControlTracks::default();
         for (g, s) in spans {
-            let w = Window { start: s.start, len: s.len() };
+            let w = Window {
+                start: s.start,
+                len: s.len(),
+            };
             art.phrase(g, w, &mut c);
             for i in 0..w.len {
                 let j = w.start + i;
@@ -651,9 +747,19 @@ mod tests {
                     if !heard && matches!(name, "f1" | "f2" | "nas") {
                         continue;
                     }
-                    assert!((a[i] - b[j]).abs() <= tol, "{voice:?} {name} frame {j} (span {s:?}): {} vs {}", a[i], b[j]);
+                    assert!(
+                        (a[i] - b[j]).abs() <= tol,
+                        "{voice:?} {name} frame {j} (span {s:?}): {} vs {}",
+                        a[i],
+                        b[j]
+                    );
                 }
-                assert!((c.midi[i] - whole.midi[j]).abs() < 0.25, "midi frame {j}: {} vs {}", c.midi[i], whole.midi[j]);
+                assert!(
+                    (c.midi[i] - whole.midi[j]).abs() < 0.25,
+                    "midi frame {j}: {} vs {}",
+                    c.midi[i],
+                    whole.midi[j]
+                );
             }
         }
     }

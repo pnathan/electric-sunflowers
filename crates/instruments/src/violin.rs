@@ -161,7 +161,10 @@ impl BowedString {
         BowedString {
             nut: DelayLine::new(MAX_DELAY),
             bridge: DelayLine::new(MAX_DELAY),
-            reflect: OnePole { a: 1.0 - BRIDGE_POLE, z: 0.0 },
+            reflect: OnePole {
+                a: 1.0 - BRIDGE_POLE,
+                z: 0.0,
+            },
             reflect_gain: BRIDGE_REFLECTION,
         }
     }
@@ -288,7 +291,13 @@ pub struct Phrase {
 pub fn plan_strokes(notes: &[BowNote], rng: &mut Rng) -> Vec<Phrase> {
     let mut src: Vec<&BowNote> = notes
         .iter()
-        .filter(|n| n.t0.is_finite() && n.t1.is_finite() && n.midi.is_finite() && n.vel.is_finite() && n.t1 > n.t0)
+        .filter(|n| {
+            n.t0.is_finite()
+                && n.t1.is_finite()
+                && n.midi.is_finite()
+                && n.vel.is_finite()
+                && n.t1 > n.t0
+        })
         .collect();
     src.sort_by(|a, b| a.t0.total_cmp(&b.t0));
 
@@ -312,9 +321,15 @@ pub fn plan_strokes(notes: &[BowNote], rng: &mut Rng) -> Vec<Phrase> {
             work.push((base, false));
             continue;
         }
-        let k = (d / (SPLIT_STROKE_MIN + SPLIT_STROKE_SPREAD * rng.uniform())).ceil().max(1.0) as usize;
+        let k = (d / (SPLIT_STROKE_MIN + SPLIT_STROKE_SPREAD * rng.uniform()))
+            .ceil()
+            .max(1.0) as usize;
         for j in 0..k {
-            let s = Stroke { t0: n.t0 + d * j as f64 / k as f64, t1: n.t0 + d * (j + 1) as f64 / k as f64, ..base };
+            let s = Stroke {
+                t0: n.t0 + d * j as f64 / k as f64,
+                t1: n.t0 + d * (j + 1) as f64 / k as f64,
+                ..base
+            };
             work.push((s, j > 0));
         }
     }
@@ -336,10 +351,17 @@ pub fn plan_strokes(notes: &[BowNote], rng: &mut Rng) -> Vec<Phrase> {
             for (k, (mut s, split)) in g.into_iter().enumerate() {
                 s.vib_rate = VIBRATO_RATE_MIN + VIBRATO_RATE_SPREAD * rng.uniform();
                 s.vib_depth *= VIBRATO_DEPTH_MIN + VIBRATO_DEPTH_SPREAD * rng.uniform();
-                s.vib_delay = if split { 0.0 } else { VIBRATO_DELAY_MIN + VIBRATO_DELAY_SPREAD * rng.uniform() };
-                s.rebow = k == 0 || split || s.t1 - s.t0 > LONG_NOTE_REBOW || rng.uniform() < REBOW_PROB;
+                s.vib_delay = if split {
+                    0.0
+                } else {
+                    VIBRATO_DELAY_MIN + VIBRATO_DELAY_SPREAD * rng.uniform()
+                };
+                s.rebow =
+                    k == 0 || split || s.t1 - s.t0 > LONG_NOTE_REBOW || rng.uniform() < REBOW_PROB;
                 s.slide = match strokes.last() {
-                    Some(p) => (s.midi - p.midi).abs() >= SLIDE_INTERVAL && rng.uniform() < SLIDE_PROB,
+                    Some(p) => {
+                        (s.midi - p.midi).abs() >= SLIDE_INTERVAL && rng.uniform() < SLIDE_PROB
+                    }
                     None => false,
                 };
                 strokes.push(s);
@@ -353,7 +375,11 @@ pub fn plan_strokes(notes: &[BowNote], rng: &mut Rng) -> Vec<Phrase> {
             }
             let beta = BOW_BETA_MIN + BOW_BETA_SPREAD * rng.uniform();
             let vib_phase = TAU * rng.uniform();
-            Phrase { strokes, beta, vib_phase }
+            Phrase {
+                strokes,
+                beta,
+                vib_phase,
+            }
         })
         .collect()
 }
@@ -554,7 +580,8 @@ impl<'a> Bowing<'a> {
             self.vib_phase -= TAU;
         }
         let wander = self.wander.step(rng);
-        let f_played = note_hz(self.pitch) * (depth * self.vib_phase.sin() * LN_2 / 12.0 + wander).exp();
+        let f_played =
+            note_hz(self.pitch) * (depth * self.vib_phase.sin() * LN_2 / 12.0 + wander).exp();
         let f_played = clamp(f_played, MIN_F0, MAX_F0);
         let f_finger = note_hz(self.pitch);
 
@@ -571,7 +598,15 @@ impl<'a> Bowing<'a> {
 
         // Bow speed: attack, swell, jitter.
         let first_dur = strokes[0].t1 - strokes[0].t0;
-        let attack = smoothstep(0.0, if first_dur > 1.0 { ATTACK_LONG } else { ATTACK_SHORT }, from_start);
+        let attack = smoothstep(
+            0.0,
+            if first_dur > 1.0 {
+                ATTACK_LONG
+            } else {
+                ATTACK_SHORT
+            },
+            from_start,
+        );
         let dur = (n.t1 - n.t0).max(0.25);
         let x = clamp(since / dur, 0.0, 1.0);
         let swell = if dur > SWELL_MIN_DUR {
@@ -579,19 +614,37 @@ impl<'a> Bowing<'a> {
         } else {
             FLAT_SWELL
         };
-        let speed = (SPEED_BASE + SPEED_PER_VEL * n.vel * swell) * attack * (1.0 + SPEED_JITTER * speed_n);
+        let speed =
+            (SPEED_BASE + SPEED_PER_VEL * n.vel * swell) * attack * (1.0 + SPEED_JITTER * speed_n);
         self.dir += (n.dir - self.dir) * control_coeff(BOW_DIRECTION_TAU);
 
         // Bow force.
         let midi_finger = 69.0 + 12.0 * (f_finger / 440.0).log2();
-        let high = PRESSURE_HIGH * clamp((midi_finger - PRESSURE_HIGH_FROM) / PRESSURE_HIGH_SPAN, 0.0, 1.0);
-        let rebow = if self.k > 0 && n.rebow { REBOW_ACCENT * (-since / REBOW_TAU).exp() } else { 0.0 };
-        let pressure =
-            PRESSURE_BASE + high + ONSET_ACCENT * (-from_start / ONSET_TAU).exp() + rebow + PRESSURE_JITTER * pressure_n;
+        let high = PRESSURE_HIGH
+            * clamp(
+                (midi_finger - PRESSURE_HIGH_FROM) / PRESSURE_HIGH_SPAN,
+                0.0,
+                1.0,
+            );
+        let rebow = if self.k > 0 && n.rebow {
+            REBOW_ACCENT * (-since / REBOW_TAU).exp()
+        } else {
+            0.0
+        };
+        let pressure = PRESSURE_BASE
+            + high
+            + ONSET_ACCENT * (-from_start / ONSET_TAU).exp()
+            + rebow
+            + PRESSURE_JITTER * pressure_n;
         let slope = clamp(slope_for_pressure(pressure), SLOPE_MIN, SLOPE_MAX);
 
-        let lift = if after_end > 0.0 { 1.0 - smoothstep(0.0, LIFT_TIME, after_end) } else { 1.0 };
-        let reflect = BRIDGE_REFLECTION - RELEASE_DAMPING * smoothstep(DAMP_START, DAMP_END, after_end);
+        let lift = if after_end > 0.0 {
+            1.0 - smoothstep(0.0, LIFT_TIME, after_end)
+        } else {
+            1.0
+        };
+        let reflect =
+            BRIDGE_REFLECTION - RELEASE_DAMPING * smoothstep(DAMP_START, DAMP_END, after_end);
 
         Targets {
             velocity: speed * self.dir,
@@ -613,7 +666,9 @@ fn note_hz(m: f64) -> f64 {
 
 /// Render one phrase into `out` (added). `string` is reset first.
 fn render_phrase(ph: &Phrase, string: &mut BowedString, rng: &mut Rng, out: &mut [f32]) {
-    let Some(first) = ph.strokes.first() else { return };
+    let Some(first) = ph.strokes.first() else {
+        return;
+    };
     string.reset();
     let mut bowing = Bowing::new(ph, first);
     let s0 = sample_at(bowing.t_start);

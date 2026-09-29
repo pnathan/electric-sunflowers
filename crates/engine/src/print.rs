@@ -35,13 +35,24 @@ pub fn mix_gain(stems: &Stems, band: &Band, seed: u64, settings: &MixSettings) -
 /// for this render, computed once and shared across every `print_stem`
 /// call. `None` when `id` does not sound: muted, soloed out, off in `band`,
 /// or absent from the stems.
-pub fn print_stem(stems: &Stems, band: &Band, _seed: u64, settings: &MixSettings, id: TrackId, duck: Option<&[f32]>, gain: f32) -> Option<Stereo> {
+pub fn print_stem(
+    stems: &Stems,
+    band: &Band,
+    _seed: u64,
+    settings: &MixSettings,
+    id: TrackId,
+    duck: Option<&[f32]>,
+    gain: f32,
+) -> Option<Stereo> {
     if !(id.plays(band) && settings.audible(id)) || stems.get(id).is_none() {
         return None;
     }
     let routes = mix::routes(stems, band, settings);
     let slaps = mix::slap_sources(stems, band, settings);
-    let mut out = Stereo { l: vec![0.0; stems.len], r: vec![0.0; stems.len] };
+    let mut out = Stereo {
+        l: vec![0.0; stems.len],
+        r: vec![0.0; stems.len],
+    };
     mix::add_track_dry(&mut out, &routes, id, duck);
     mix::add_track_slap(&mut out, &slaps, id);
     for v in out.l.iter_mut().chain(out.r.iter_mut()) {
@@ -53,7 +64,14 @@ pub fn print_stem(stems: &Stems, band: &Band, _seed: u64, settings: &MixSettings
 /// The FDN reverb return of the send bus of every audible track (dry
 /// stems' sends plus their slapback's send, exactly as `mix::premix` builds
 /// it), times `gain`. `duck` is `mix::duck_gains` for this render.
-pub fn print_reverb(stems: &Stems, band: &Band, seed: u64, settings: &MixSettings, duck: Option<&[f32]>, gain: f32) -> Stereo {
+pub fn print_reverb(
+    stems: &Stems,
+    band: &Band,
+    seed: u64,
+    settings: &MixSettings,
+    duck: Option<&[f32]>,
+    gain: f32,
+) -> Stereo {
     let routes = mix::routes(stems, band, settings);
     let slaps = mix::slap_sources(stems, band, settings);
     let len = stems.len;
@@ -62,10 +80,17 @@ pub fn print_reverb(stems: &Stems, band: &Band, seed: u64, settings: &MixSetting
     mix::add_send_bus(&mut sl, &mut sr, &routes, duck);
     mix::add_send_slap(&mut sl, &mut sr, &slaps);
     let mut fdn = Fdn8::new(SR_F, seed, T60_DC, T60_NYQ);
-    let mut out = Stereo { l: vec![0.0; len], r: vec![0.0; len] };
+    let mut out = Stereo {
+        l: vec![0.0; len],
+        r: vec![0.0; len],
+    };
     for s in (0..len).step_by(MIX_BLOCK) {
         let n = MIX_BLOCK.min(len - s);
-        fdn.process_block([&sl[s..s + n], &sr[s..s + n]], [&mut out.l[s..s + n], &mut out.r[s..s + n]], WET);
+        fdn.process_block(
+            [&sl[s..s + n], &sr[s..s + n]],
+            [&mut out.l[s..s + n], &mut out.r[s..s + n]],
+            WET,
+        );
     }
     for v in out.l.iter_mut().chain(out.r.iter_mut()) {
         *v *= gain;

@@ -264,7 +264,11 @@ impl PluckParams {
         pick_spread: 0.15,
         detune_spread: 0.8,
         bright_vel: 0.0,
-        length: NoteLength::Ring { base: 3.0, per_hz: 400.0, max: 7.0 },
+        length: NoteLength::Ring {
+            base: 3.0,
+            per_hz: 400.0,
+            max: 7.0,
+        },
     };
 
     /// Harmony-guitar lead and fill notes: amp v, bright 0.7, damp 0.08,
@@ -320,7 +324,11 @@ impl PluckParams {
     pub fn note(&self, f0: f64, vel: f64, rng: &mut Rng) -> PluckParams {
         let pick = self.pick + self.pick_spread * rng.uniform();
         let detune = self.detune + self.detune_spread * rng.uniform();
-        let t60 = if self.t60_exp == 0.0 { self.t60 } else { self.t60 * (self.t60_ref_hz / f0).powf(self.t60_exp) };
+        let t60 = if self.t60_exp == 0.0 {
+            self.t60
+        } else {
+            self.t60 * (self.t60_ref_hz / f0).powf(self.t60_exp)
+        };
         PluckParams {
             amp: self.amp * vel,
             t60,
@@ -339,9 +347,21 @@ impl PluckParams {
 
     /// True when every field `pluck_into` reads is finite.
     pub fn is_finite(&self) -> bool {
-        [self.amp, self.t60, self.pick, self.bright, self.damp, self.noise, self.detune, self.release, self.release_t60, self.glide, self.attack_noise]
-            .iter()
-            .all(|v| v.is_finite())
+        [
+            self.amp,
+            self.t60,
+            self.pick,
+            self.bright,
+            self.damp,
+            self.noise,
+            self.detune,
+            self.release,
+            self.release_t60,
+            self.glide,
+            self.attack_noise,
+        ]
+        .iter()
+        .all(|v| v.is_finite())
     }
 
     /// Rendered length in seconds of an event from `t0` to `t1` at `f0` Hz.
@@ -370,7 +390,11 @@ impl Default for PluckScratch {
 
 impl PluckScratch {
     pub fn new() -> Self {
-        PluckScratch { exc: Vec::with_capacity(L_MAX + 1), tmp: Vec::with_capacity(L_MAX + 1), line: DelayLine::new(L_MAX + 2) }
+        PluckScratch {
+            exc: Vec::with_capacity(L_MAX + 1),
+            tmp: Vec::with_capacity(L_MAX + 1),
+            line: DelayLine::new(L_MAX + 2),
+        }
     }
 }
 
@@ -441,7 +465,17 @@ impl Loop<'_> {
     /// would repeat a sample at each step and inject DC into the loop.
     #[allow(clippy::too_many_arguments)]
     #[inline]
-    fn run_glide(&mut self, out: &mut [f32], gain: f64, mut e: f64, de: f64, mut h: f64, dh: f64, d: &mut f64, dd: f64) -> f64 {
+    fn run_glide(
+        &mut self,
+        out: &mut [f32],
+        gain: f64,
+        mut e: f64,
+        de: f64,
+        mut h: f64,
+        dh: f64,
+        d: &mut f64,
+        dd: f64,
+    ) -> f64 {
         let tap = self.tap;
         let line = (tap + 1) as f64;
         let mut pk = 0.0f64;
@@ -463,7 +497,15 @@ impl Loop<'_> {
 /// `p` (see `PluckParams::note`). Draws the excitation noise and pick noise
 /// from `rng`. Does nothing for `f0` below 20 Hz, a non-finite `f0` or
 /// parameter, or a start past the end.
-pub fn pluck_into(out: &mut [f32], start: usize, f0: f64, len: usize, p: &PluckParams, rng: &mut Rng, scratch: &mut PluckScratch) {
+pub fn pluck_into(
+    out: &mut [f32],
+    start: usize,
+    f0: f64,
+    len: usize,
+    p: &PluckParams,
+    rng: &mut Rng,
+    scratch: &mut PluckScratch,
+) {
     if start >= out.len() || !f0.is_finite() || f0 < F0_MIN || !p.is_finite() {
         return;
     }
@@ -533,13 +575,22 @@ pub fn pluck_into(out: &mut [f32], start: usize, f0: f64, len: usize, p: &PluckP
         // to about zero over a full decay (a warm filter state would inject
         // a DC step that the loop then sustains at gain g). The warm-up pass
         // absorbs the start.
-        let lp = OnePole { a: 1.0 - pole, z: 0.0 };
+        let lp = OnePole {
+            a: 1.0 - pole,
+            z: 0.0,
+        };
         let exc = &scratch.exc;
         let line = &mut scratch.line;
         for &x in &exc[..l] {
             line.push(x as f32);
         }
-        let mut lpl = Loop { line, tap: l - 1, lp, g, ap: Thiran1::with_max(n_start - tau - lf, DELTA_MAX) };
+        let mut lpl = Loop {
+            line,
+            tap: l - 1,
+            lp,
+            g,
+            ap: Thiran1::with_max(n_start - tau - lf, DELTA_MAX),
+        };
         // Warm-up: one pass round the loop with no output.
         for _ in 0..l {
             lpl.step(l - 1);
@@ -586,8 +637,16 @@ pub fn pluck_into(out: &mut [f32], start: usize, f0: f64, len: usize, p: &PluckP
                 let ctrl = (n / GLIDE_CTRL + 1) * GLIDE_CTRL;
                 end = end.min(ctrl).min(glide_end);
             }
-            let (e0, de) = if n < n_atk { (n as f64 / atk as f64, 1.0 / atk as f64) } else { (1.0, 0.0) };
-            let (h0, dh) = if n >= fade0 { ((len - n) as f64 / FADE as f64, -1.0 / FADE as f64) } else { (1.0, 0.0) };
+            let (e0, de) = if n < n_atk {
+                (n as f64 / atk as f64, 1.0 / atk as f64)
+            } else {
+                (1.0, 0.0)
+            };
+            let (h0, dh) = if n >= fade0 {
+                ((len - n) as f64 / FADE as f64, -1.0 / FADE as f64)
+            } else {
+                (1.0, 0.0)
+            };
             let span = &mut out[n..end];
             let spk = if gliding {
                 let r = lpl.run_glide(span, gain, e0, de, h0, dh, &mut d, dd);
@@ -618,7 +677,14 @@ pub fn pluck_into(out: &mut [f32], start: usize, f0: f64, len: usize, p: &PluckP
 
 /// Builds the excitation for loop length `l` in `scratch.exc` and returns
 /// its peak (at least 1e-9).
-fn excite(scratch: &mut PluckScratch, l: usize, beta: f64, bright: f64, noise: f64, rng: &mut Rng) -> f64 {
+fn excite(
+    scratch: &mut PluckScratch,
+    l: usize,
+    beta: f64,
+    bright: f64,
+    noise: f64,
+    rng: &mut Rng,
+) -> f64 {
     let exc = &mut scratch.exc;
     let tmp = &mut scratch.tmp;
     exc.clear();
@@ -628,7 +694,11 @@ fn excite(scratch: &mut PluckScratch, l: usize, beta: f64, bright: f64, noise: f
     let up = 1.0 / apex as f64;
     let down = 1.0 / (l - apex) as f64;
     for (i, x) in exc.iter_mut().enumerate() {
-        let tri = if i < apex { i as f64 * up } else { (l - i) as f64 * down };
+        let tri = if i < apex {
+            i as f64 * up
+        } else {
+            (l - i) as f64 * down
+        };
         *x = tri + rng.bipolar() * noise;
     }
     // Circular moving average of width w (finger or pick width).

@@ -16,13 +16,22 @@ use crate::{ExportError, Meta};
 const BLOCK: usize = 8192;
 
 /// Writes `l`, `r` (equal lengths, checked by the caller) to `path`.
-pub(crate) fn write(path: &Path, l: &[f32], r: &[f32], sr: u32, meta: &Meta, quality: f32) -> Result<(), ExportError> {
+pub(crate) fn write(
+    path: &Path,
+    l: &[f32],
+    r: &[f32],
+    sr: u32,
+    meta: &Meta,
+    quality: f32,
+) -> Result<(), ExportError> {
     let sr = NonZeroU32::new(sr).ok_or(ExportError::InvalidSampleRate(sr))?;
     let channels = NonZeroU8::MIN.saturating_add(1);
     let sink = std::io::BufWriter::new(std::fs::File::create(path)?);
 
     let mut builder = VorbisEncoderBuilder::new(sr, channels, sink)?;
-    builder.bitrate_management_strategy(VorbisBitrateManagementStrategy::QualityVbr { target_quality: quality });
+    builder.bitrate_management_strategy(VorbisBitrateManagementStrategy::QualityVbr {
+        target_quality: quality,
+    });
     for (tag, value) in meta.tags() {
         builder.comment_tag(tag, value)?;
     }

@@ -76,7 +76,10 @@ fn duet_not_object_is_dropped() {
         let v = song_with(duet_sections(), json!({"duet": bad}));
         let (s, r) = normalize_value(&v).unwrap();
         assert!(!s.is_duet());
-        assert!(r.iter().any(|x| matches!(x, Repair::DuetDropped { .. })), "{r:?}");
+        assert!(
+            r.iter().any(|x| matches!(x, Repair::DuetDropped { .. })),
+            "{r:?}"
+        );
     }
 }
 
@@ -86,7 +89,10 @@ fn duet_voice_absent_or_unknown_is_dropped() {
         let v = song_with(duet_sections(), json!({"duet": bad}));
         let (s, r) = normalize_value(&v).unwrap();
         assert!(!s.is_duet());
-        assert!(r.iter().any(|x| matches!(x, Repair::DuetDropped { .. })), "{r:?}");
+        assert!(
+            r.iter().any(|x| matches!(x, Repair::DuetDropped { .. })),
+            "{r:?}"
+        );
     }
 }
 
@@ -153,8 +159,19 @@ fn unknown_sing_text_on_a_section_default_is_one_repair() {
     // itself is reported once, with no line index.
     assert_eq!(parts(&s)[0], A);
     assert_eq!(parts(&s)[1], A);
-    let hits: Vec<_> =
-        r.iter().filter(|x| matches!(x, Repair::UnknownPart { section: 0, line: None, .. })).collect();
+    let hits: Vec<_> = r
+        .iter()
+        .filter(|x| {
+            matches!(
+                x,
+                Repair::UnknownPart {
+                    section: 0,
+                    line: None,
+                    ..
+                }
+            )
+        })
+        .collect();
     assert_eq!(hits.len(), 1, "{r:?}");
 }
 
@@ -170,7 +187,13 @@ fn b_or_both_in_a_solo_song_is_a() {
         let (s, r) = normalize_value(&v).unwrap();
         assert!(!s.is_duet());
         assert_eq!(parts(&s)[0], A);
-        assert!(r.contains(&Repair::PartWithoutDuet { section: 0, line: Some(0) }), "{sing}: {r:?}");
+        assert!(
+            r.contains(&Repair::PartWithoutDuet {
+                section: 0,
+                line: Some(0)
+            }),
+            "{sing}: {r:?}"
+        );
     }
 }
 
@@ -184,8 +207,18 @@ fn section_default_b_in_a_solo_song_is_one_repair_per_section() {
     );
     let (s, r) = normalize_value(&v).unwrap();
     assert!(parts(&s).iter().all(|&p| p == A));
-    let hits: Vec<_> =
-        r.iter().filter(|x| matches!(x, Repair::PartWithoutDuet { section: 0, line: None })).collect();
+    let hits: Vec<_> = r
+        .iter()
+        .filter(|x| {
+            matches!(
+                x,
+                Repair::PartWithoutDuet {
+                    section: 0,
+                    line: None
+                }
+            )
+        })
+        .collect();
     assert_eq!(hits.len(), 1, "{r:?}");
 }
 
@@ -198,8 +231,22 @@ fn lead_or_blend_on_an_unshared_line_is_ignored() {
     v["sections"][0]["lines"][0]["blend"] = json!("octave");
     let (s, r) = normalize_value(&v).unwrap();
     assert_eq!(parts(&s)[0], A);
-    assert!(r.contains(&Repair::IgnoredPartField { section: 0, line: 0, field: "lead" }), "{r:?}");
-    assert!(r.contains(&Repair::IgnoredPartField { section: 0, line: 0, field: "blend" }), "{r:?}");
+    assert!(
+        r.contains(&Repair::IgnoredPartField {
+            section: 0,
+            line: 0,
+            field: "lead"
+        }),
+        "{r:?}"
+    );
+    assert!(
+        r.contains(&Repair::IgnoredPartField {
+            section: 0,
+            line: 0,
+            field: "blend"
+        }),
+        "{r:?}"
+    );
 }
 
 #[test]
@@ -209,8 +256,18 @@ fn unknown_lead_or_blend_on_a_shared_line_defaults() {
     v["sections"][2]["lines"][0]["blend"] = json!("unison");
     let (s, r) = normalize_value(&v).unwrap();
     assert_eq!(parts(&s)[4], both(SingerId::A, Blend::Harmony));
-    assert!(r.contains(&Repair::DefaultedField { field: "lines.lead" }), "{r:?}");
-    assert!(r.contains(&Repair::DefaultedField { field: "lines.blend" }), "{r:?}");
+    assert!(
+        r.contains(&Repair::DefaultedField {
+            field: "lines.lead"
+        }),
+        "{r:?}"
+    );
+    assert!(
+        r.contains(&Repair::DefaultedField {
+            field: "lines.blend"
+        }),
+        "{r:?}"
+    );
 }
 
 // ---------------------------------------------------------------- defaults and overrides
@@ -231,7 +288,10 @@ fn section_defaults_and_line_overrides() {
 #[test]
 fn same_copies_lines_with_their_parts() {
     let mut sections = duet_sections();
-    sections.as_array_mut().unwrap().push(json!({"type": "chorus", "same": true}));
+    sections
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"type": "chorus", "same": true}));
     let v = song_with(sections, json!({"duet": {"voice": "alto"}}));
     let (s, _) = normalize_value(&v).unwrap();
     assert_eq!(s.sections[3].repeat_of, Some(2));

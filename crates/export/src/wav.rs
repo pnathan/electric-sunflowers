@@ -70,13 +70,12 @@ fn header(frames: usize, sr: u32, meta: &Meta, sample: WavSample) -> Result<Vec<
     let fmt_len: u32 = if float { 18 } else { 16 };
     let info = list_info(meta);
 
-    let riff_len = 4
-        + 8 + fmt_len as u64
-        + if float { 12 } else { 0 }
-        + 8 + info.len() as u64
-        + 8 + data_len;
+    let riff_len =
+        4 + 8 + fmt_len as u64 + if float { 12 } else { 0 } + 8 + info.len() as u64 + 8 + data_len;
     if riff_len > u32::MAX as u64 {
-        return Err(ExportError::TooLarge { bytes: riff_len + 8 });
+        return Err(ExportError::TooLarge {
+            bytes: riff_len + 8,
+        });
     }
 
     let mut h = Vec::with_capacity(64 + info.len());

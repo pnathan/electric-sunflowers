@@ -23,7 +23,10 @@ fn song_path() -> PathBuf {
 fn find(rel: &str) -> PathBuf {
     let path = Path::new(rel);
     let in_crate = path.strip_prefix("crates/sunflower").unwrap_or(path);
-    let mut tries = vec![path.to_path_buf(), Path::new(env!("CARGO_MANIFEST_DIR")).join(in_crate)];
+    let mut tries = vec![
+        path.to_path_buf(),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(in_crate),
+    ];
     for var in ["RUNFILES_DIR", "TEST_SRCDIR"] {
         if let Some(root) = std::env::var_os(var) {
             tries.push(Path::new(&root).join("_main").join(path));
@@ -57,10 +60,16 @@ fn read_wav(path: &std::path::Path) -> Wav {
     let mut at = 20 + u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as usize;
     loop {
         assert!(at + 8 <= bytes.len(), "no data chunk");
-        let len = u32::from_le_bytes([bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]]) as usize;
+        let len = u32::from_le_bytes([bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]])
+            as usize;
         if &bytes[at..at + 4] == b"data" {
             let data = bytes[at + 8..at + 8 + len].to_vec();
-            return Wav { channels, sample_rate, bits_per_sample, data };
+            return Wav {
+                channels,
+                sample_rate,
+                bits_per_sample,
+                data,
+            };
         }
         at += 8 + len + (len & 1);
     }
@@ -84,7 +93,14 @@ fn render_produces_a_valid_nonsilent_wav() {
     let out = dir.path().join("small.wav");
 
     let status = Command::new(bin())
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", out.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "-o",
+            out.to_str().unwrap(),
+        ])
         .status()
         .expect("run sunflower render");
     assert!(status.success(), "sunflower render exited with {status:?}");
@@ -95,8 +111,15 @@ fn render_produces_a_valid_nonsilent_wav() {
     assert_eq!(w.bits_per_sample, 16);
     // A few seconds of a three-section song at 96 bpm.
     let n_frames = w.data.len() / 4;
-    assert!(n_frames > 44100, "expected more than a second of audio, got {n_frames} frames");
-    assert!(pcm16_peak(&w) > 1000, "expected an audible peak, got {}", pcm16_peak(&w));
+    assert!(
+        n_frames > 44100,
+        "expected more than a second of audio, got {n_frames} frames"
+    );
+    assert!(
+        pcm16_peak(&w) > 1000,
+        "expected an audible peak, got {}",
+        pcm16_peak(&w)
+    );
 }
 
 #[test]
@@ -107,7 +130,14 @@ fn same_seed_is_byte_identical() {
 
     for out in [&out1, &out2] {
         let status = Command::new(bin())
-            .args(["render", song_path().to_str().unwrap(), "--seed", "1234", "-o", out.to_str().unwrap()])
+            .args([
+                "render",
+                song_path().to_str().unwrap(),
+                "--seed",
+                "1234",
+                "-o",
+                out.to_str().unwrap(),
+            ])
             .status()
             .expect("run sunflower render");
         assert!(status.success());
@@ -136,7 +166,10 @@ fn unknown_style_errors_without_panicking() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unknown style"), "stderr: {stderr}");
-    assert!(!out.exists(), "should not have written an output file on error");
+    assert!(
+        !out.exists(),
+        "should not have written an output file on error"
+    );
 }
 
 #[test]
@@ -155,7 +188,14 @@ fn unknown_no_track_errors_without_panicking() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("x.wav");
     let output = Command::new(bin())
-        .args(["render", song_path().to_str().unwrap(), "--no", "bogus", "-o", out.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--no",
+            "bogus",
+            "-o",
+            out.to_str().unwrap(),
+        ])
         .output()
         .expect("run sunflower render");
     assert!(!output.status.success());
@@ -165,7 +205,10 @@ fn unknown_no_track_errors_without_panicking() {
 
 #[test]
 fn styles_command_lists_known_keys() {
-    let output = Command::new(bin()).arg("styles").output().expect("run sunflower styles");
+    let output = Command::new(bin())
+        .arg("styles")
+        .output()
+        .expect("run sunflower styles");
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("cowboy"));
@@ -200,7 +243,14 @@ fn dash_o_flac_extension_picks_flac_format() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("small.flac");
     let status = Command::new(bin())
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", out.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "-o",
+            out.to_str().unwrap(),
+        ])
         .status()
         .expect("run sunflower render");
     assert!(status.success());
@@ -240,7 +290,14 @@ fn one_thread_equals_many_threads() {
         let out = dir.path().join(format!("t{threads}.wav"));
         let status = Command::new(bin())
             .env("RAYON_NUM_THREADS", threads)
-            .args(["render", song_path().to_str().unwrap(), "--seed", "99", "-o", out.to_str().unwrap()])
+            .args([
+                "render",
+                song_path().to_str().unwrap(),
+                "--seed",
+                "99",
+                "-o",
+                out.to_str().unwrap(),
+            ])
             .status()
             .expect("run sunflower render");
         assert!(status.success());
@@ -257,20 +314,42 @@ fn band_and_voice_flags() {
     let bare = dir.path().join("bare.wav");
     let song = song_path();
     let run = |out: &std::path::Path, extra: &[&str]| {
-        let mut args = vec!["render", song.to_str().unwrap(), "--seed", "5", "--voice", "tenor", "-o", out.to_str().unwrap()];
+        let mut args = vec![
+            "render",
+            song.to_str().unwrap(),
+            "--seed",
+            "5",
+            "--voice",
+            "tenor",
+            "-o",
+            out.to_str().unwrap(),
+        ];
         args.extend_from_slice(extra);
-        let status = Command::new(bin()).args(&args).status().expect("run sunflower render");
+        let status = Command::new(bin())
+            .args(&args)
+            .status()
+            .expect("run sunflower render");
         assert!(status.success());
     };
     run(&full, &[]);
-    run(&bare, &["--no", "drums", "--no", "bass", "--no", "harmonyGuitar"]);
+    run(
+        &bare,
+        &["--no", "drums", "--no", "bass", "--no", "harmonyGuitar"],
+    );
     let (a, b) = (read_wav(&full), read_wav(&bare));
     assert_eq!(a.data.len(), b.data.len());
     assert_ne!(a.data, b.data);
     assert!(pcm16_peak(&b) > 1000);
 
     let output = Command::new(bin())
-        .args(["render", song_path().to_str().unwrap(), "--voice", "kazoo", "-o", dir.path().join("x.wav").to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--voice",
+            "kazoo",
+            "-o",
+            dir.path().join("x.wav").to_str().unwrap(),
+        ])
         .output()
         .expect("run sunflower render");
     assert!(!output.status.success());
@@ -278,7 +357,10 @@ fn band_and_voice_flags() {
 
 #[test]
 fn sequential_flag_is_gone() {
-    let output = Command::new(bin()).args(["demo", "--sequential"]).output().expect("run sunflower demo");
+    let output = Command::new(bin())
+        .args(["demo", "--sequential"])
+        .output()
+        .expect("run sunflower demo");
     assert!(!output.status.success());
 }
 
@@ -289,27 +371,56 @@ fn render_writes_the_sidecars() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("tune.ogg");
     let status = Command::new(bin())
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "--voice", "tenor", "-o", out.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "--voice",
+            "tenor",
+            "-o",
+            out.to_str().unwrap(),
+        ])
         .status()
         .expect("run sunflower render");
     assert!(status.success());
-    let side: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.path().join("tune.render.json")).unwrap()).unwrap();
+    let side: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("tune.render.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(side["seed"], 7);
     assert_eq!(side["voice"], "tenor");
     assert!(side["model"].is_null());
-    assert_eq!(side["song_json"].as_str().unwrap(), std::fs::canonicalize(song_path()).unwrap().to_str().unwrap());
-    assert_eq!(side["audio"].as_str().unwrap(), std::fs::canonicalize(&out).unwrap().to_str().unwrap());
+    assert_eq!(
+        side["song_json"].as_str().unwrap(),
+        std::fs::canonicalize(song_path())
+            .unwrap()
+            .to_str()
+            .unwrap()
+    );
+    assert_eq!(
+        side["audio"].as_str().unwrap(),
+        std::fs::canonicalize(&out).unwrap().to_str().unwrap()
+    );
     let created = side["created"].as_str().unwrap();
     assert_eq!(created.len(), 20, "{created}");
-    assert!(created.ends_with('Z') && &created[10..11] == "T", "{created}");
+    assert!(
+        created.ends_with('Z') && &created[10..11] == "T",
+        "{created}"
+    );
 
     let sheet: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.path().join("tune.sheet.json")).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("tune.sheet.json")).unwrap())
+            .unwrap();
     assert_eq!(sheet["title"], "Test Tune");
     assert_eq!(sheet["seed"], 7);
     assert_eq!(sheet["voice"], "tenor");
-    let labels: Vec<&str> = sheet["sections"].as_array().unwrap().iter().map(|s| s["label"].as_str().unwrap()).collect();
+    let labels: Vec<&str> = sheet["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["label"].as_str().unwrap())
+        .collect();
     assert_eq!(labels, ["Intro", "Verse", "Outro"]);
     let verse = &sheet["sections"][1]["lines"][0];
     assert_eq!(verse["text"], "the sun goes down on one more day");
@@ -317,7 +428,15 @@ fn render_writes_the_sidecars() {
 
     // The sheet command prints the same sheet as the sidecar.
     let output = Command::new(bin())
-        .args(["sheet", song_path().to_str().unwrap(), "--seed", "7", "--voice", "tenor", "--json"])
+        .args([
+            "sheet",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "--voice",
+            "tenor",
+            "--json",
+        ])
         .output()
         .expect("run sunflower sheet");
     assert!(output.status.success());
@@ -335,11 +454,14 @@ fn demo_writes_the_song_and_the_sidecars() {
         .status()
         .expect("run sunflower demo");
     assert!(status.success());
-    let side: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.path().join("demo.render.json")).unwrap()).unwrap();
+    let side: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("demo.render.json")).unwrap(),
+    )
+    .unwrap();
     let song_json = side["song_json"].as_str().unwrap();
     assert!(song_json.ends_with("demo.json"));
-    let song: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(song_json).unwrap()).unwrap();
+    let song: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(song_json).unwrap()).unwrap();
     assert_eq!(song["title"], "Every Harbor");
     assert!(dir.path().join("demo.sheet.json").exists());
 }
@@ -357,16 +479,30 @@ fn sheet_prints_a_chord_sheet() {
     assert_eq!(lines[0], "Test Tune");
     assert!(lines.iter().any(|l| l.starts_with("[Intro]")));
     // The key moves for the voice, so check the bar row by its form.
-    assert!(lines.iter().any(|l| l.starts_with("| ") && l.matches('|').count() == 5), "{text}");
-    let k = lines.iter().position(|l| *l == "the sun goes down on one more day").expect("lyric line");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("| ") && l.matches('|').count() == 5),
+        "{text}"
+    );
+    let k = lines
+        .iter()
+        .position(|l| *l == "the sun goes down on one more day")
+        .expect("lyric line");
     let chords = lines[k - 1];
     assert_eq!(chords.split_whitespace().count(), 2, "{chords:?}");
-    assert!(chords.starts_with(' '), "the first chord sits over a stressed syllable: {chords:?}");
+    assert!(
+        chords.starts_with(' '),
+        "the first chord sits over a stressed syllable: {chords:?}"
+    );
 }
 
 #[test]
 fn sheet_of_a_missing_file_errors_without_panicking() {
-    let output = Command::new(bin()).args(["sheet", "/no/such/song.json", "--seed", "1"]).output().expect("run sunflower sheet");
+    let output = Command::new(bin())
+        .args(["sheet", "/no/such/song.json", "--seed", "1"])
+        .output()
+        .expect("run sunflower sheet");
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("reading song JSON"));
 }
@@ -382,7 +518,14 @@ fn settings_file_changes_the_default_ogg_quality_and_a_flag_beats_it() {
     let low = dir.path().join("low.ogg");
     let status = Command::new(bin())
         .env("SUNFLOWER_CONFIG", &cfg)
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", low.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "-o",
+            low.to_str().unwrap(),
+        ])
         .status()
         .expect("run sunflower render");
     assert!(status.success());
@@ -390,13 +533,28 @@ fn settings_file_changes_the_default_ogg_quality_and_a_flag_beats_it() {
     let flagged = dir.path().join("flagged.ogg");
     let status = Command::new(bin())
         .env("SUNFLOWER_CONFIG", &cfg)
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "--quality", "0.5", "-o", flagged.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "--quality",
+            "0.5",
+            "-o",
+            flagged.to_str().unwrap(),
+        ])
         .status()
         .expect("run sunflower render");
     assert!(status.success());
 
-    let (low_len, flagged_len) = (std::fs::metadata(&low).unwrap().len(), std::fs::metadata(&flagged).unwrap().len());
-    assert!(flagged_len > low_len, "a higher quality (from the flag) should produce a larger file: {low_len} vs {flagged_len}");
+    let (low_len, flagged_len) = (
+        std::fs::metadata(&low).unwrap().len(),
+        std::fs::metadata(&flagged).unwrap().len(),
+    );
+    assert!(
+        flagged_len > low_len,
+        "a higher quality (from the flag) should produce a larger file: {low_len} vs {flagged_len}"
+    );
 }
 
 /// A bad settings file value falls back to the default and warns; the
@@ -409,7 +567,14 @@ fn a_bad_settings_file_warns_and_still_renders() {
     let out = dir.path().join("x.wav");
     let output = Command::new(bin())
         .env("SUNFLOWER_CONFIG", &cfg)
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", out.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "-o",
+            out.to_str().unwrap(),
+        ])
         .output()
         .expect("run sunflower render");
     assert!(output.status.success());
@@ -425,15 +590,30 @@ fn stems_flag_writes_one_flac_per_track_plus_reverb() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("tune.wav");
     let status = Command::new(bin())
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "--stems", "-o", out.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "--stems",
+            "-o",
+            out.to_str().unwrap(),
+        ])
         .status()
         .expect("run sunflower render");
     assert!(status.success());
 
     let stems_dir = dir.path().join("tune.stems");
     assert!(stems_dir.is_dir());
-    let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(stems_dir.join("stems.json")).unwrap()).unwrap();
-    let tracks: Vec<String> = manifest["tracks"].as_array().unwrap().iter().map(|t| t.as_str().unwrap().to_string()).collect();
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(stems_dir.join("stems.json")).unwrap())
+            .unwrap();
+    let tracks: Vec<String> = manifest["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t.as_str().unwrap().to_string())
+        .collect();
     assert!(!tracks.is_empty());
     for t in &tracks {
         let p = stems_dir.join(format!("{t}.flac"));
@@ -446,7 +626,10 @@ fn stems_flag_writes_one_flac_per_track_plus_reverb() {
     assert!(manifest["gain"].as_f64().unwrap() > 0.0);
     assert!(manifest["extra_gain"].as_f64().unwrap() > 0.0);
 
-    let side: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("tune.render.json")).unwrap()).unwrap();
+    let side: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("tune.render.json")).unwrap(),
+    )
+    .unwrap();
     assert!(side["stems"].as_str().unwrap().ends_with("tune.stems"));
 }
 
@@ -458,45 +641,95 @@ fn mix_sidecar_changes_the_mix_and_is_recorded_no_mix_ignores_it() {
     let dir = tempfile::tempdir().unwrap();
     let plain = dir.path().join("plain.wav");
     let status = Command::new(bin())
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", plain.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "-o",
+            plain.to_str().unwrap(),
+        ])
         .status()
         .expect("run sunflower render");
     assert!(status.success());
 
     let mix_file = dir.path().join("mute-bass.json");
-    std::fs::write(&mix_file, r#"{"version": 1, "tracks": {"bass": {"mute": true}}}"#).unwrap();
+    std::fs::write(
+        &mix_file,
+        r#"{"version": 1, "tracks": {"bass": {"mute": true}}}"#,
+    )
+    .unwrap();
     let muted = dir.path().join("muted.wav");
     let output = Command::new(bin())
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "--mix", mix_file.to_str().unwrap(), "-o", muted.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "--mix",
+            mix_file.to_str().unwrap(),
+            "-o",
+            muted.to_str().unwrap(),
+        ])
         .output()
         .expect("run sunflower render");
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("applying mix settings from"));
-    assert_ne!(std::fs::read(&plain).unwrap(), std::fs::read(&muted).unwrap(), "muting the bass should change the mix");
+    assert_ne!(
+        std::fs::read(&plain).unwrap(),
+        std::fs::read(&muted).unwrap(),
+        "muting the bass should change the mix"
+    );
 
-    let side: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("muted.render.json")).unwrap()).unwrap();
+    let side: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join("muted.render.json")).unwrap(),
+    )
+    .unwrap();
     assert!(side["mix"].as_str().unwrap().ends_with("mute-bass.json"));
 
     // <out-stem>.mix.json is auto-applied ...
     let auto_out = dir.path().join("auto.wav");
     std::fs::copy(&mix_file, dir.path().join("auto.mix.json")).unwrap();
     let status = Command::new(bin())
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", auto_out.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "-o",
+            auto_out.to_str().unwrap(),
+        ])
         .status()
         .expect("run sunflower render");
     assert!(status.success());
-    assert_eq!(std::fs::read(&auto_out).unwrap(), std::fs::read(&muted).unwrap(), "auto-picked-up mix should match the explicit --mix run");
+    assert_eq!(
+        std::fs::read(&auto_out).unwrap(),
+        std::fs::read(&muted).unwrap(),
+        "auto-picked-up mix should match the explicit --mix run"
+    );
 
     // ... but --no-mix ignores it.
     let ignored = dir.path().join("auto.ignored.wav");
     let status = Command::new(bin())
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "--no-mix", "-o", ignored.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "--no-mix",
+            "-o",
+            ignored.to_str().unwrap(),
+        ])
         .status()
         .expect("run sunflower render");
     assert!(status.success());
     // --no-mix on a different output stem never picks up auto.mix.json anyway
     // (the candidate is <out-stem>.mix.json), so compare directly against plain.
-    assert_eq!(std::fs::read(&ignored).unwrap(), std::fs::read(&plain).unwrap(), "--no-mix should ignore any mix sidecar");
+    assert_eq!(
+        std::fs::read(&ignored).unwrap(),
+        std::fs::read(&plain).unwrap(),
+        "--no-mix should ignore any mix sidecar"
+    );
 }
 
 /// The render sidecar parses with `songwriter::sidecar::RenderSidecar`.
@@ -505,11 +738,19 @@ fn sidecar_parses_with_render_sidecar() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("tune.ogg");
     let status = Command::new(bin())
-        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", out.to_str().unwrap()])
+        .args([
+            "render",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "-o",
+            out.to_str().unwrap(),
+        ])
         .status()
         .expect("run sunflower render");
     assert!(status.success());
-    let side = songwriter::sidecar::RenderSidecar::read(&dir.path().join("tune.render.json")).expect("RenderSidecar::read");
+    let side = songwriter::sidecar::RenderSidecar::read(&dir.path().join("tune.render.json"))
+        .expect("RenderSidecar::read");
     assert_eq!(side.seed, Some(7));
     assert_eq!(side.voice.as_deref(), Some("baritone"));
     assert!(side.generation.is_none());
@@ -519,7 +760,10 @@ fn sidecar_parses_with_render_sidecar() {
 fn demo_checks_the_format_before_it_writes_the_json() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("demo.txt");
-    let st = Command::new(bin()).args(["demo", "-o", out.to_str().unwrap()]).status().unwrap();
+    let st = Command::new(bin())
+        .args(["demo", "-o", out.to_str().unwrap()])
+        .status()
+        .unwrap();
     assert!(!st.success());
     assert!(!dir.path().join("demo.json").exists());
 }
@@ -530,10 +774,16 @@ fn demo_refuses_to_overwrite_another_song_json() {
     let json = dir.path().join("demo.json");
     std::fs::write(&json, "{\"title\": \"mine\"}").unwrap();
     let out = dir.path().join("demo.wav");
-    let o = Command::new(bin()).args(["demo", "-o", out.to_str().unwrap()]).output().unwrap();
+    let o = Command::new(bin())
+        .args(["demo", "-o", out.to_str().unwrap()])
+        .output()
+        .unwrap();
     assert!(!o.status.success());
     assert!(String::from_utf8_lossy(&o.stderr).contains("--force"));
-    assert_eq!(std::fs::read_to_string(&json).unwrap(), "{\"title\": \"mine\"}");
+    assert_eq!(
+        std::fs::read_to_string(&json).unwrap(),
+        "{\"title\": \"mine\"}"
+    );
     assert!(!out.exists());
 }
 
@@ -545,7 +795,14 @@ fn write_refuses_an_existing_output_before_it_calls_claude() {
     // --via api with no key would fail too, but only after the check.
     let o = Command::new(bin())
         .env_remove("ANTHROPIC_API_KEY")
-        .args(["write", "a dry morning", "--via", "api", "-o", out.to_str().unwrap()])
+        .args([
+            "write",
+            "a dry morning",
+            "--via",
+            "api",
+            "-o",
+            out.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     assert!(!o.status.success());

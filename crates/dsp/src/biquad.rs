@@ -41,11 +41,26 @@ struct Prewarp {
 }
 
 fn prewarp(fs: f64, f: f64, q: f64) -> Prewarp {
-    let fs = if fs.is_finite() && fs > 0.0 { fs } else { 44_100.0 };
-    let f = if f.is_finite() { f.clamp(1e-3, 0.45 * fs) } else { 0.45 * fs };
-    let q = if q.is_finite() { q.max(1e-6) } else { std::f64::consts::FRAC_1_SQRT_2 };
+    let fs = if fs.is_finite() && fs > 0.0 {
+        fs
+    } else {
+        44_100.0
+    };
+    let f = if f.is_finite() {
+        f.clamp(1e-3, 0.45 * fs)
+    } else {
+        0.45 * fs
+    };
+    let q = if q.is_finite() {
+        q.max(1e-6)
+    } else {
+        std::f64::consts::FRAC_1_SQRT_2
+    };
     let w = 2.0 * PI * f / fs;
-    Prewarp { cos_w: w.cos(), alpha: w.sin() / (2.0 * q) }
+    Prewarp {
+        cos_w: w.cos(),
+        alpha: w.sin() / (2.0 * q),
+    }
 }
 
 /// A = 10^(dB/40), the cookbook's amplitude for peaking and shelving designs.
@@ -56,38 +71,69 @@ fn shelf_amp(db: f64) -> f64 {
 
 impl BiquadCoeffs {
     /// Pass-through: b0 = 1, everything else 0.
-    pub const IDENTITY: BiquadCoeffs = BiquadCoeffs { b0: 1.0, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0 };
+    pub const IDENTITY: BiquadCoeffs = BiquadCoeffs {
+        b0: 1.0,
+        b1: 0.0,
+        b2: 0.0,
+        a1: 0.0,
+        a2: 0.0,
+    };
 
     fn normalise(b0: f64, b1: f64, b2: f64, a0: f64, a1: f64, a2: f64) -> Self {
         let r = 1.0 / a0;
-        BiquadCoeffs { b0: b0 * r, b1: b1 * r, b2: b2 * r, a1: a1 * r, a2: a2 * r }
+        BiquadCoeffs {
+            b0: b0 * r,
+            b1: b1 * r,
+            b2: b2 * r,
+            a1: a1 * r,
+            a2: a2 * r,
+        }
     }
 
     /// Second-order low-pass, corner f, resonance Q.
     pub fn lowpass(fs: f64, f: f64, q: f64) -> Self {
-        let Prewarp { cos_w: c, alpha: al } = prewarp(fs, f, q);
+        let Prewarp {
+            cos_w: c,
+            alpha: al,
+        } = prewarp(fs, f, q);
         let b = (1.0 - c) / 2.0;
         Self::normalise(b, 1.0 - c, b, 1.0 + al, -2.0 * c, 1.0 - al)
     }
 
     /// Second-order high-pass, corner f, resonance Q.
     pub fn highpass(fs: f64, f: f64, q: f64) -> Self {
-        let Prewarp { cos_w: c, alpha: al } = prewarp(fs, f, q);
+        let Prewarp {
+            cos_w: c,
+            alpha: al,
+        } = prewarp(fs, f, q);
         let b = (1.0 + c) / 2.0;
         Self::normalise(b, -(1.0 + c), b, 1.0 + al, -2.0 * c, 1.0 - al)
     }
 
     /// Band-pass with 0 dB gain at the centre f; bandwidth set by Q.
     pub fn bandpass(fs: f64, f: f64, q: f64) -> Self {
-        let Prewarp { cos_w: c, alpha: al } = prewarp(fs, f, q);
+        let Prewarp {
+            cos_w: c,
+            alpha: al,
+        } = prewarp(fs, f, q);
         Self::normalise(al, 0.0, -al, 1.0 + al, -2.0 * c, 1.0 - al)
     }
 
     /// Peaking EQ: `db` of gain at f, unity far from f.
     pub fn peaking(fs: f64, f: f64, q: f64, db: f64) -> Self {
-        let Prewarp { cos_w: c, alpha: al } = prewarp(fs, f, q);
+        let Prewarp {
+            cos_w: c,
+            alpha: al,
+        } = prewarp(fs, f, q);
         let a = shelf_amp(db);
-        Self::normalise(1.0 + al * a, -2.0 * c, 1.0 - al * a, 1.0 + al / a, -2.0 * c, 1.0 - al / a)
+        Self::normalise(
+            1.0 + al * a,
+            -2.0 * c,
+            1.0 - al * a,
+            1.0 + al / a,
+            -2.0 * c,
+            1.0 - al / a,
+        )
     }
 
     /// Low shelf: `db` of gain at DC, unity at Nyquist, Q form.
@@ -102,7 +148,10 @@ impl BiquadCoeffs {
 
     /// Both cookbook shelves in one form: `sg` = +1 high shelf, -1 low shelf.
     fn shelf(fs: f64, f: f64, q: f64, db: f64, sg: f64) -> Self {
-        let Prewarp { cos_w: c, alpha: al } = prewarp(fs, f, q);
+        let Prewarp {
+            cos_w: c,
+            alpha: al,
+        } = prewarp(fs, f, q);
         let a = shelf_amp(db);
         let sq = 2.0 * a.sqrt() * al;
         Self::normalise(
@@ -181,7 +230,11 @@ impl Default for Biquad {
 impl Biquad {
     /// A section with zero state.
     pub fn new(c: BiquadCoeffs) -> Self {
-        Biquad { c, s1: 0.0, s2: 0.0 }
+        Biquad {
+            c,
+            s1: 0.0,
+            s2: 0.0,
+        }
     }
 
     pub fn coeffs(&self) -> BiquadCoeffs {
@@ -251,7 +304,10 @@ pub struct StereoBiquad {
 
 impl StereoBiquad {
     pub fn new(c: BiquadCoeffs) -> Self {
-        StereoBiquad { l: Biquad::new(c), r: Biquad::new(c) }
+        StereoBiquad {
+            l: Biquad::new(c),
+            r: Biquad::new(c),
+        }
     }
 
     pub fn set_coeffs(&mut self, c: BiquadCoeffs) {
@@ -284,7 +340,9 @@ pub struct Cascade<const N: usize> {
 
 impl<const N: usize> Cascade<N> {
     pub fn new(c: [BiquadCoeffs; N]) -> Self {
-        Cascade { stages: c.map(Biquad::new) }
+        Cascade {
+            stages: c.map(Biquad::new),
+        }
     }
 
     #[inline(always)]

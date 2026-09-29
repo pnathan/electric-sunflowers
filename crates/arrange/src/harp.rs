@@ -37,7 +37,12 @@ const GLISS_LEN: f64 = 0.62;
 const GLISS_GAP: f64 = 0.03;
 
 fn note(t: f64, midi: u8, vel: f64) -> PluckNote {
-    PluckNote { t0: t, t1: t, midi: midi as f32, vel: vel as f32 }
+    PluckNote {
+        t0: t,
+        t1: t,
+        midi: midi as f32,
+        vel: vel as f32,
+    }
 }
 
 /// The harp part.
@@ -49,7 +54,11 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> Vec<PluckNote
         let sec = &form.sections[sg.sec];
         let on = sec.is_lift()
             || match sec.kind {
-                SectionKind::Chorus | SectionKind::Bridge | SectionKind::Outro | SectionKind::Interlude | SectionKind::Intro => true,
+                SectionKind::Chorus
+                | SectionKind::Bridge
+                | SectionKind::Outro
+                | SectionKind::Interlude
+                | SectionKind::Intro => true,
                 SectionKind::Verse => sec.occ > 0,
                 SectionKind::Prechorus => false,
             };
@@ -94,7 +103,10 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> Vec<PluckNote
         let b = sec.beats(&form.meter).start;
         let t1 = tl.to_time(b) - GLISS_GAP;
         let t0 = t1 - GLISS_LEN;
-        let scale = song.mode.scale().transpose(tl.chord_at(form, b).root.get() as i32);
+        let scale = song
+            .mode
+            .scale()
+            .transpose(tl.chord_at(form, b).root.get() as i32);
         let n = scale.tones_in(GLISS_LO, GLISS_HI).count();
         for (k, m) in scale.tones_in(GLISS_LO, GLISS_HI).enumerate() {
             let x = k as f64 / n as f64;

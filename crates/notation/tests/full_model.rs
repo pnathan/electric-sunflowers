@@ -19,7 +19,8 @@ fn demo() -> Song {
 /// The wave-3 duet fixture (also used by `tests/duet.rs`).
 fn duet_song() -> Song {
     let raw: serde_json::Value =
-        serde_json::from_str(include_str!("../../compose/tests/songs/duet.json")).expect("duet.json is JSON");
+        serde_json::from_str(include_str!("../../compose/tests/songs/duet.json"))
+            .expect("duet.json is JSON");
     let (s, repairs) = song::normalize_value(&raw).expect("duet fixture normalises");
     assert!(repairs.is_empty(), "{repairs:?}");
     assert!(s.is_duet());
@@ -58,7 +59,11 @@ fn distinct_onsets(tl: &Timeline, song: &Song, times: impl Iterator<Item = f64>)
 /// Non-tied-in chords in one staff's voice `v`, across every bar (each such
 /// chord is one onset after merging).
 fn chord_starts(score: &FullScore, part: PartId, v: usize) -> usize {
-    let idx = score.staves.iter().position(|s| s.part == part).expect("staff present");
+    let idx = score
+        .staves
+        .iter()
+        .position(|s| s.part == part)
+        .expect("staff present");
     score
         .bars
         .iter()
@@ -75,15 +80,27 @@ fn onsets_match_the_arrangement_after_merging() {
     let score = FullScore::new(&song, &prep, &arr);
     let tl = &prep.timeline;
 
-    assert_eq!(chord_starts(&score, PartId::Lead, 0), distinct_onsets(tl, &song, prep.comp.lead.iter().map(|n| n.t0)), "lead");
+    assert_eq!(
+        chord_starts(&score, PartId::Lead, 0),
+        distinct_onsets(tl, &song, prep.comp.lead.iter().map(|n| n.t0)),
+        "lead"
+    );
     assert_eq!(
         chord_starts(&score, PartId::Guitar, 0),
         distinct_onsets(tl, &song, arr.guitar.iter().flatten().map(|n| n.t)),
         "guitar"
     );
-    assert_eq!(chord_starts(&score, PartId::Bass, 0), distinct_onsets(tl, &song, arr.bass.iter().map(|n| n.t0)), "bass");
+    assert_eq!(
+        chord_starts(&score, PartId::Bass, 0),
+        distinct_onsets(tl, &song, arr.bass.iter().map(|n| n.t0)),
+        "bass"
+    );
     if song.band.violin {
-        assert_eq!(chord_starts(&score, PartId::Violin, 0), distinct_onsets(tl, &song, arr.violin.iter().map(|n| n.t0)), "violin");
+        assert_eq!(
+            chord_starts(&score, PartId::Violin, 0),
+            distinct_onsets(tl, &song, arr.violin.iter().map(|n| n.t0)),
+            "violin"
+        );
     }
 }
 
@@ -122,7 +139,11 @@ fn harp_splits_at_middle_c() {
     let score = FullScore::new(&song, &prep, &arr);
 
     let steps = |part: PartId| -> Vec<i32> {
-        let idx = score.staves.iter().position(|s| s.part == part).expect("harp staff present");
+        let idx = score
+            .staves
+            .iter()
+            .position(|s| s.part == part)
+            .expect("harp staff present");
         score
             .bars
             .iter()
@@ -133,10 +154,16 @@ fn harp_splits_at_middle_c() {
     };
     // MIDI 60 (middle C) spells to step 28 (C4); the split is at that step.
     if score.staves.iter().any(|s| s.part == PartId::HarpUpper) {
-        assert!(steps(PartId::HarpUpper).iter().all(|&s| s >= 28), "upper harp below the split");
+        assert!(
+            steps(PartId::HarpUpper).iter().all(|&s| s >= 28),
+            "upper harp below the split"
+        );
     }
     if score.staves.iter().any(|s| s.part == PartId::HarpLower) {
-        assert!(steps(PartId::HarpLower).iter().all(|&s| s < 28), "lower harp above the split");
+        assert!(
+            steps(PartId::HarpLower).iter().all(|&s| s < 28),
+            "lower harp above the split"
+        );
     }
 }
 
@@ -152,11 +179,18 @@ fn notes_tie_across_a_barline() {
     let arr = arrange(&song, &prep, 1234);
     let score = FullScore::new(&song, &prep, &arr);
 
-    let choir_parts = [PartId::ChoirS, PartId::ChoirA, PartId::ChoirT, PartId::ChoirB];
+    let choir_parts = [
+        PartId::ChoirS,
+        PartId::ChoirA,
+        PartId::ChoirT,
+        PartId::ChoirB,
+    ];
     let mut found_tie = false;
     let mut found_rest_after_tie_out = false;
     for &part in &choir_parts {
-        let Some(idx) = score.staves.iter().position(|s| s.part == part) else { continue };
+        let Some(idx) = score.staves.iter().position(|s| s.part == part) else {
+            continue;
+        };
         for bar in 0..score.bars.len() {
             let voice = &score.bars[bar].cells[idx].voices[0];
             let Some(last) = voice.last() else { continue };
@@ -175,8 +209,14 @@ fn notes_tie_across_a_barline() {
             }
         }
     }
-    assert!(found_tie, "expected at least one choir note to tie across a barline");
-    assert!(!found_rest_after_tie_out, "a tie_out event must be followed by a tie_in event, never a rest");
+    assert!(
+        found_tie,
+        "expected at least one choir note to tie across a barline"
+    );
+    assert!(
+        !found_rest_after_tie_out,
+        "a tie_out event must be followed by a tie_in event, never a rest"
+    );
 }
 
 #[test]
@@ -187,7 +227,11 @@ fn drum_positions_and_noteheads() {
     let prep = prepare(&song, 1234, None);
     let arr = arrange(&song, &prep, 1234);
     let score = FullScore::new(&song, &prep, &arr);
-    let idx = score.staves.iter().position(|s| s.part == PartId::Drums).expect("drums present");
+    let idx = score
+        .staves
+        .iter()
+        .position(|s| s.part == PartId::Drums)
+        .expect("drums present");
 
     // Voice 0 (up: everything but the kick) and voice 1 (down: the kick).
     for bar in &score.bars {
@@ -196,7 +240,11 @@ fn drum_positions_and_noteheads() {
         for e in &cell.voices[1] {
             if let Some(c) = &e.chord {
                 for h in &c.heads {
-                    assert_eq!((h.step, h.notehead), (31, Notehead::Normal), "kick: F4 normal");
+                    assert_eq!(
+                        (h.step, h.notehead),
+                        (31, Notehead::Normal),
+                        "kick: F4 normal"
+                    );
                 }
             }
         }
@@ -271,7 +319,10 @@ fn staves_absent_when_the_band_is_off() {
         PartId::Drums,
         PartId::LeadB,
     ] {
-        assert!(!score.staves.iter().any(|s| s.part == part), "{part:?} should be absent");
+        assert!(
+            !score.staves.iter().any(|s| s.part == part),
+            "{part:?} should be absent"
+        );
     }
     // Lead and guitar always play.
     assert!(score.staves.iter().any(|s| s.part == PartId::Lead));
@@ -289,7 +340,11 @@ fn lead_b_carries_its_own_lyric_syllables() {
     let prep = prepare_voices(&song, 3, VoiceChoice::default());
     let arr = arrange(&song, &prep, 3);
     let score = FullScore::new(&song, &prep, &arr);
-    let idx = score.staves.iter().position(|s| s.part == PartId::LeadB).expect("LeadB staff present in a duet");
+    let idx = score
+        .staves
+        .iter()
+        .position(|s| s.part == PartId::LeadB)
+        .expect("LeadB staff present in a duet");
 
     let expected: std::collections::HashSet<&str> = prep
         .comp
@@ -335,9 +390,15 @@ fn part_view_folds_silent_runs_into_multi_rests() {
             PartBar::MultiRest { bars } => *bars,
         })
         .sum();
-    assert_eq!(covered, total_bars, "part view must cover every bar exactly once");
+    assert_eq!(
+        covered, total_bars,
+        "part view must cover every bar exactly once"
+    );
     assert!(
-        harmony.bars.iter().any(|b| matches!(b, PartBar::MultiRest { bars } if *bars >= 2)),
+        harmony
+            .bars
+            .iter()
+            .any(|b| matches!(b, PartBar::MultiRest { bars } if *bars >= 2)),
         "expected at least one multi-bar rest in the harmony part"
     );
 }

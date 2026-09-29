@@ -41,7 +41,10 @@ fn fonts() -> Arc<usvg::fontdb::Database> {
 
 /// Parses and renders `svg`; returns the pixmap.
 fn render(svg: &str) -> tiny_skia::Pixmap {
-    let opt = usvg::Options { fontdb: fonts(), ..usvg::Options::default() };
+    let opt = usvg::Options {
+        fontdb: fonts(),
+        ..usvg::Options::default()
+    };
     let tree = usvg::Tree::from_str(svg, &opt).expect("SVG parses");
     let size = tree.size().to_int_size();
     let mut pm = tiny_skia::Pixmap::new(size.width(), size.height()).expect("page has a size");
@@ -50,7 +53,10 @@ fn render(svg: &str) -> tiny_skia::Pixmap {
 }
 
 fn unescape(s: &str) -> String {
-    s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&amp;", "&")
 }
 
 /// Text of every `<text class="lyric">` element, in document order.
@@ -75,10 +81,18 @@ fn check(song: &Song, seed: u64, voice: Option<Voice>) -> String {
 
     let want: Vec<String> = prep.comp.lead.iter().map(|n| n.syl.text.clone()).collect();
     assert!(!want.is_empty(), "{at}: no sung notes");
-    assert_eq!(lyrics(&svg), want, "{at}: lyrics differ from the sung syllables");
+    assert_eq!(
+        lyrics(&svg),
+        want,
+        "{at}: lyrics differ from the sung syllables"
+    );
 
     let boxes = note_boxes(&score);
-    assert_eq!(boxes.len(), svg.matches(r#"<g class="note""#).count(), "{at}");
+    assert_eq!(
+        boxes.len(),
+        svg.matches(r#"<g class="note""#).count(),
+        "{at}"
+    );
     assert!(boxes.len() >= want.len(), "{at}");
     for w in boxes.windows(2) {
         assert!(w[0].0 <= w[1].0 + 1e-9, "{at}: note times out of order");
@@ -90,9 +104,15 @@ fn check(song: &Song, seed: u64, voice: Option<Voice>) -> String {
     assert!(!sys.is_empty(), "{at}");
     for w in sys.windows(2) {
         assert!(w[0].1 <= w[1].0 + 1e-6, "{at}: systems overlap in time");
-        assert!(w[0].3 + w[0].5 <= w[1].3 + 1e-6, "{at}: systems overlap on the page");
+        assert!(
+            w[0].3 + w[0].5 <= w[1].3 + 1e-6,
+            "{at}: systems overlap on the page"
+        );
     }
-    let (t_first, t_last) = (prep.comp.lead[0].t0, prep.comp.lead[prep.comp.lead.len() - 1].t1);
+    let (t_first, t_last) = (
+        prep.comp.lead[0].t0,
+        prep.comp.lead[prep.comp.lead.len() - 1].t1,
+    );
     assert!((boxes[0].0 - t_first).abs() < 1e-3, "{at}");
     assert!((boxes[boxes.len() - 1].1 - t_last).abs() < 1e-3, "{at}");
     svg
@@ -151,7 +171,10 @@ fn narrow_page_wraps_lines() {
     let narrow = Score::new(song, &prep).with_width(360.0);
     assert!(system_boxes(&narrow).len() > system_boxes(&wide).len());
     for b in note_boxes(&narrow) {
-        assert!(b.2 >= 0.0 && b.2 + b.4 <= 360.0 + 1e-6, "box {b:?} leaves the page");
+        assert!(
+            b.2 >= 0.0 && b.2 + b.4 <= 360.0 + 1e-6,
+            "box {b:?} leaves the page"
+        );
     }
     write_png(&engrave(&narrow), "demo-narrow");
 }

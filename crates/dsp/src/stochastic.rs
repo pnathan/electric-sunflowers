@@ -50,13 +50,31 @@ impl RandomWalk {
     /// Walk with a clamped position and no position leak (formant wobble,
     /// violin wander).
     pub fn bounded(step: f64, leak: f64, gain: f64, limit: f64) -> Self {
-        RandomWalk { v: 0.0, w: 0.0, step, leak, gain, w_leak: 1.0, limit: limit.abs(), clamp: WalkClamp::Position }
+        RandomWalk {
+            v: 0.0,
+            w: 0.0,
+            step,
+            leak,
+            gain,
+            w_leak: 1.0,
+            limit: limit.abs(),
+            clamp: WalkClamp::Position,
+        }
     }
 
     /// Walk with a leaky position and a clamp on the output only (voice
     /// pitch drift). `gain` is 1.
     pub fn leaky(step: f64, leak: f64, w_leak: f64, limit: f64) -> Self {
-        RandomWalk { v: 0.0, w: 0.0, step, leak, gain: 1.0, w_leak, limit: limit.abs(), clamp: WalkClamp::Output }
+        RandomWalk {
+            v: 0.0,
+            w: 0.0,
+            step,
+            leak,
+            gain: 1.0,
+            w_leak,
+            limit: limit.abs(),
+            clamp: WalkClamp::Output,
+        }
     }
 
     /// Advance one control tick with one normal deviate from `gauss`; returns
@@ -121,7 +139,14 @@ impl OuProcess {
     /// tick interval `dt` (s). Starts at `mu`. A non-positive or non-finite
     /// `theta` or `dt` gives a process frozen at `mu`.
     pub fn new(mu: f64, theta: f64, sigma: f64, dt: f64) -> Self {
-        let mut p = OuProcess { x: mu, mu, theta, sigma, a: 1.0, b: 0.0 };
+        let mut p = OuProcess {
+            x: mu,
+            mu,
+            theta,
+            sigma,
+            a: 1.0,
+            b: 0.0,
+        };
         p.set_dt(dt);
         p
     }

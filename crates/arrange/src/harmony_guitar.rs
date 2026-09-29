@@ -55,8 +55,22 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> HarmonyGuitar {
             vel: LEAD_VEL,
         }));
     }
-    let fl = fills(form, tl, 59, 79, |s| s.kind == SectionKind::Verse, song, seed, HG_FILL);
-    lead.extend(fl.iter().map(|n| PluckNote { t0: n.t0, t1: n.t1, midi: n.midi as f32, vel: n.vel }));
+    let fl = fills(
+        form,
+        tl,
+        59,
+        79,
+        |s| s.kind == SectionKind::Verse,
+        song,
+        seed,
+        HG_FILL,
+    );
+    lead.extend(fl.iter().map(|n| PluckNote {
+        t0: n.t0,
+        t1: n.t1,
+        midi: n.midi as f32,
+        vel: n.vel,
+    }));
 
     let mut arp: Vec<PluckNote> = Vec::new();
     let step = 1.0 / form.sub() as f64;
@@ -79,7 +93,12 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> HarmonyGuitar {
         while b < sg.b1 - 1e-6 {
             let t = tl.to_time(b) + ARP_JITTER * r.bipolar();
             let m = tones[ARP_ORDER[k % 4] % n];
-            arp.push(PluckNote { t0: t, t1: t, midi: m as f32, vel: 1.0 });
+            arp.push(PluckNote {
+                t0: t,
+                t1: t,
+                midi: m as f32,
+                vel: 1.0,
+            });
             b += step;
             k += 1;
         }

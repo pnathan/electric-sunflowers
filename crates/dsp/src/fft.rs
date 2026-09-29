@@ -44,8 +44,15 @@ impl Fft {
         let mut planner = FftPlanner::<f32>::new();
         let fwd = planner.plan_fft_forward(n);
         let inv = planner.plan_fft_inverse(n);
-        let scratch_len = fwd.get_inplace_scratch_len().max(inv.get_inplace_scratch_len());
-        Fft { n, fwd, inv, scratch_len }
+        let scratch_len = fwd
+            .get_inplace_scratch_len()
+            .max(inv.get_inplace_scratch_len());
+        Fft {
+            n,
+            fwd,
+            inv,
+            scratch_len,
+        }
     }
 
     /// Transform length n.
@@ -71,14 +78,16 @@ impl Fft {
     /// In-place forward DFT of `data` (length n), unscaled.
     pub fn forward(&self, data: &mut [C32], scratch: &mut [C32]) -> Result<(), FftError> {
         self.check(data, scratch)?;
-        self.fwd.process_with_scratch(data, &mut scratch[..self.scratch_len]);
+        self.fwd
+            .process_with_scratch(data, &mut scratch[..self.scratch_len]);
         Ok(())
     }
 
     /// In-place inverse DFT of `data` (length n), scaled by 1/n.
     pub fn inverse(&self, data: &mut [C32], scratch: &mut [C32]) -> Result<(), FftError> {
         self.check(data, scratch)?;
-        self.inv.process_with_scratch(data, &mut scratch[..self.scratch_len]);
+        self.inv
+            .process_with_scratch(data, &mut scratch[..self.scratch_len]);
         let s = 1.0 / self.n as f32;
         for v in data.iter_mut() {
             *v *= s;
@@ -114,7 +123,12 @@ impl RealFft {
         let fwd = planner.plan_fft_forward(n);
         let inv = planner.plan_fft_inverse(n);
         let scratch_len = fwd.get_scratch_len().max(inv.get_scratch_len());
-        RealFft { n, fwd, inv, scratch_len }
+        RealFft {
+            n,
+            fwd,
+            inv,
+            scratch_len,
+        }
     }
 
     /// Real length n.
@@ -144,7 +158,12 @@ impl RealFft {
 
     /// Forward DFT of `input` (length n) into `output` (n/2 + 1 bins),
     /// unscaled. `input` is used as work space and is garbage afterwards.
-    pub fn forward(&self, input: &mut [f32], output: &mut [C32], scratch: &mut [C32]) -> Result<(), FftError> {
+    pub fn forward(
+        &self,
+        input: &mut [f32],
+        output: &mut [C32],
+        scratch: &mut [C32],
+    ) -> Result<(), FftError> {
         self.fwd.process_with_scratch(input, output, scratch)
     }
 
@@ -152,7 +171,12 @@ impl RealFft {
     /// (length n), without the 1/n scale. The imaginary parts of the DC and
     /// Nyquist bins are set to zero first (a real signal has none; rounding
     /// in a spectral product can leave a trace). `input` is garbage afterwards.
-    pub fn inverse_unscaled(&self, input: &mut [C32], output: &mut [f32], scratch: &mut [C32]) -> Result<(), FftError> {
+    pub fn inverse_unscaled(
+        &self,
+        input: &mut [C32],
+        output: &mut [f32],
+        scratch: &mut [C32],
+    ) -> Result<(), FftError> {
         if let Some(v) = input.first_mut() {
             v.im = 0.0;
         }
@@ -166,7 +190,12 @@ impl RealFft {
 
     /// `inverse_unscaled` followed by the 1/n scale, so that
     /// `inverse(forward(x)) == x`.
-    pub fn inverse(&self, input: &mut [C32], output: &mut [f32], scratch: &mut [C32]) -> Result<(), FftError> {
+    pub fn inverse(
+        &self,
+        input: &mut [C32],
+        output: &mut [f32],
+        scratch: &mut [C32],
+    ) -> Result<(), FftError> {
         self.inverse_unscaled(input, output, scratch)?;
         let s = 1.0 / self.n as f32;
         for v in output.iter_mut() {

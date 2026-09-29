@@ -6,7 +6,9 @@ use sfcore::random::{tag, Rng};
 use sfcore::{HOP, SR_F};
 use song::events::VocalNote;
 use song::{Phoneme, Voice};
-use voice::glottal::{level_max_harmonic, level_top_hz, lf_table, GlottalSource, LfParams, N_LEVELS, TABLE_LEN};
+use voice::glottal::{
+    level_max_harmonic, level_top_hz, lf_table, GlottalSource, LfParams, N_LEVELS, TABLE_LEN,
+};
 use voice::tract::{Formants, Tract};
 use voice::{render_phrases, voice_params, VoiceSettings};
 
@@ -19,7 +21,11 @@ const RDS: [f64; 6] = [0.3, 0.6, 1.0, 1.5, 1.91, 2.7];
 fn lf_zero_net_flow() {
     for rd in RDS {
         let p = LfParams::from_rd(rd);
-        assert!(p.net_flow().abs() < 1e-6, "rd {rd}: closed form {}", p.net_flow());
+        assert!(
+            p.net_flow().abs() < 1e-6,
+            "rd {rd}: closed form {}",
+            p.net_flow()
+        );
         // Simpson on [0, te] and [te, 1] separately (E has a corner at te).
         let simpson = |a: f64, b: f64, n: usize| {
             let h = (b - a) / n as f64;
@@ -31,7 +37,11 @@ fn lf_zero_net_flow() {
         };
         let q = simpson(0.0, p.te, 100_000) + simpson(p.te, 1.0, 100_000);
         assert!(q.abs() < 1e-6, "rd {rd}: quadrature {q}");
-        assert!((p.eval(p.te) + 1.0).abs() < 1e-12, "rd {rd}: E(te) = {}", p.eval(p.te));
+        assert!(
+            (p.eval(p.te) + 1.0).abs() < 1e-12,
+            "rd {rd}: E(te) = {}",
+            p.eval(p.te)
+        );
     }
 }
 
@@ -59,7 +69,12 @@ fn rd_to_rg_identity() {
         let p = LfParams::from_rd(rd);
         let back = LfParams::rd_from_ratios(p.ra, p.rk, p.rg);
         assert!((back - rd).abs() < 1e-12, "rd {rd} -> {back}");
-        assert!(p.tp > 0.0 && p.tp < p.te && p.te < 1.0, "rd {rd}: tp {} te {}", p.tp, p.te);
+        assert!(
+            p.tp > 0.0 && p.tp < p.te && p.te < 1.0,
+            "rd {rd}: tp {} te {}",
+            p.tp,
+            p.te
+        );
     }
 }
 
@@ -74,7 +89,8 @@ fn band_limited_tables_do_not_alias() {
         let t = lf_table(rd);
         for j in 0..N_LEVELS {
             let mut x: Vec<f32> = t.level(j)[..TABLE_LEN].to_vec();
-            fft.forward(&mut x, &mut spec, &mut scratch).expect("sized from the plan");
+            fft.forward(&mut x, &mut spec, &mut scratch)
+                .expect("sized from the plan");
             let top = level_top_hz(j);
             let (mut above, mut total) = (0.0f64, 0.0f64);
             for (h, c) in spec.iter().enumerate().skip(1) {
@@ -85,7 +101,11 @@ fn band_limited_tables_do_not_alias() {
                 }
             }
             let db = 10.0 * (above / total + 1e-300).log10();
-            assert!(db < -90.0, "rd {rd} level {j} (top {top:.1} Hz, {} harmonics): {db:.1} dB", level_max_harmonic(j));
+            assert!(
+                db < -90.0,
+                "rd {rd} level {j} (top {top:.1} Hz, {} harmonics): {db:.1} dB",
+                level_max_harmonic(j)
+            );
         }
     }
 }
@@ -94,12 +114,25 @@ fn band_limited_tables_do_not_alias() {
 /// DC gain: by coefficients, and a unit step settles at 1.
 #[test]
 fn tract_unity_dc() {
-    for v in [Voice::Bass, Voice::Baritone, Voice::Tenor, Voice::Alto, Voice::Soprano] {
+    for v in [
+        Voice::Bass,
+        Voice::Baritone,
+        Voice::Tenor,
+        Voice::Alto,
+        Voice::Soprano,
+    ] {
         let p = voice_params(v);
         let mut t = Tract::new(&p, 4);
-        let f = Formants { f: [700.0, 1200.0, 2600.0], bw: [80.0, 90.0, 130.0] };
+        let f = Formants {
+            f: [700.0, 1200.0, 2600.0],
+            bw: [80.0, 90.0, 130.0],
+        };
         t.set_formants(&f, &f);
-        assert!((t.cascade_dc_gain() - 1.0).abs() < 1e-9, "{v:?}: {}", t.cascade_dc_gain());
+        assert!(
+            (t.cascade_dc_gain() - 1.0).abs() < 1e-9,
+            "{v:?}: {}",
+            t.cascade_dc_gain()
+        );
         let mut y = 0.0;
         for _ in 0..2000 {
             t.set_formants(&f, &f);
@@ -139,19 +172,39 @@ fn ramped_coefficients_stay_stable() {
 }
 
 fn note(t0: f64, t1: f64, midi: f32, phones: Vec<Phoneme>) -> VocalNote {
-    VocalNote { t0, t1, midi, phones, amp: 1.0, stress: true, phrase_start: true, phrase_end: true, grace: None }
+    VocalNote {
+        t0,
+        t1,
+        midi,
+        phones,
+        amp: 1.0,
+        stress: true,
+        phrase_start: true,
+        phrase_end: true,
+        grace: None,
+    }
 }
 
 /// A sustained /aa/ renders finite, audible, bounded output for every
 /// voice, including the soprano top where the mip levels matter.
 #[test]
 fn sustained_aa_is_finite() {
-    for (v, midi) in [(Voice::Bass, 40.0), (Voice::Baritone, 52.0), (Voice::Alto, 67.0), (Voice::Soprano, 84.0)] {
+    for (v, midi) in [
+        (Voice::Bass, 40.0),
+        (Voice::Baritone, 52.0),
+        (Voice::Alto, 67.0),
+        (Voice::Soprano, 84.0),
+    ] {
         let len = (3.0 * SR_F) as usize;
         let notes = [note(0.5, 2.3, midi, vec![Phoneme::Aa])];
         let mut out = vec![0.0f32; len];
-        render_phrases(&notes, v, &VoiceSettings::default(), 11, len, |s, x| out[s..s + x.len()].copy_from_slice(x));
-        assert!(out.iter().all(|x| x.is_finite()), "{v:?}: non-finite sample");
+        render_phrases(&notes, v, &VoiceSettings::default(), 11, len, |s, x| {
+            out[s..s + x.len()].copy_from_slice(x)
+        });
+        assert!(
+            out.iter().all(|x| x.is_finite()),
+            "{v:?}: non-finite sample"
+        );
         let mid = &out[(1.0 * SR_F) as usize..(2.0 * SR_F) as usize];
         let rms = (mid.iter().map(|&x| x as f64 * x as f64).sum::<f64>() / mid.len() as f64).sqrt();
         let peak = out.iter().fold(0.0f32, |m, x| m.max(x.abs()));
@@ -174,10 +227,17 @@ fn phrases_are_disjoint_and_ordered() {
     let len = (5.0 * SR_F) as usize;
     let mut spans = Vec::new();
     let mut out = vec![0.0f32; len];
-    render_phrases(&notes, Voice::Tenor, &VoiceSettings::default(), 5, len, |s, x| {
-        spans.push(s..s + x.len());
-        out[s..s + x.len()].copy_from_slice(x);
-    });
+    render_phrases(
+        &notes,
+        Voice::Tenor,
+        &VoiceSettings::default(),
+        5,
+        len,
+        |s, x| {
+            spans.push(s..s + x.len());
+            out[s..s + x.len()].copy_from_slice(x);
+        },
+    );
     for w in spans.windows(2) {
         assert!(w[0].end <= w[1].start, "{spans:?}");
     }
@@ -230,16 +290,28 @@ fn short_gap_keeps_the_sounding_note() {
         phrase_end: false,
         grace: None,
     };
-    let mut notes = vec![n(0.5, 1.5, 50.0), n(1.5, 1.7, 52.0), n(1.7, 1.9, 53.0), n(2.25, 3.0, 55.0)];
+    let mut notes = vec![
+        n(0.5, 1.5, 50.0),
+        n(1.5, 1.7, 52.0),
+        n(1.7, 1.9, 53.0),
+        n(2.25, 3.0, 55.0),
+    ];
     notes[0].phrase_start = true;
     notes[2].phrase_end = true;
     notes[3].phrase_start = true;
     notes[3].phrase_end = true;
     let len = (3.6 * SR_F) as usize;
     let mut out = vec![0.0f32; len];
-    render_phrases(&notes, Voice::Baritone, &VoiceSettings::default(), 1, len, |s0, b| {
-        out[s0..s0 + b.len()].copy_from_slice(b);
-    });
+    render_phrases(
+        &notes,
+        Voice::Baritone,
+        &VoiceSettings::default(),
+        1,
+        len,
+        |s0, b| {
+            out[s0..s0 + b.len()].copy_from_slice(b);
+        },
+    );
     let rms = |a: f64, b: f64| {
         let r = &out[(a * SR_F) as usize..(b * SR_F) as usize];
         (r.iter().map(|&x| (x as f64).powi(2)).sum::<f64>() / r.len() as f64).sqrt()
@@ -247,14 +319,18 @@ fn short_gap_keeps_the_sounding_note() {
     let before = rms(1.50, 1.55);
     let after = rms(1.56, 1.66);
     let last = rms(1.75, 1.85);
-    assert!(after > 0.5 * before && after > 0.5 * last, "rms 1.50-1.55 {before}, 1.56-1.66 {after}, 1.75-1.85 {last}");
+    assert!(
+        after > 0.5 * before && after > 0.5 * last,
+        "rms 1.50-1.55 {before}, 1.56-1.66 {after}, 1.75-1.85 {last}"
+    );
 }
 
 /// The demo song's lead melody as sung notes (`compose::prepare` plus the
 /// `arrange::vocals::notes` conversion, duplicated here so `voice` need not
 /// depend on `arrange` for a test).
 fn demo_lead_notes(seed: u64) -> (Voice, Vec<VocalNote>) {
-    let raw: serde_json::Value = serde_json::from_str(include_str!("../../engine/src/demo.json")).expect("demo.json is JSON");
+    let raw: serde_json::Value = serde_json::from_str(include_str!("../../engine/src/demo.json"))
+        .expect("demo.json is JSON");
     let (song, _) = song::normalize_value(&raw).expect("demo.json normalises");
     let p = compose::prepare::prepare(&song, seed, None);
     let notes = compose::prepare::vocal_notes(&p.comp.lead, 1.0)
@@ -299,7 +375,18 @@ fn demo_lead_render_is_bit_identical_at_default_phrasing() {
     let (voice, notes) = demo_lead_notes(1234);
     let len = (notes.last().map_or(0.0, |n| n.t1) * SR_F) as usize + (2.0 * SR_F) as usize;
     let mut out = vec![0.0f32; len];
-    render_phrases(&notes, voice, &VoiceSettings::default(), 1234, len, |s0, b| out[s0..s0 + b.len()].copy_from_slice(b));
+    render_phrases(
+        &notes,
+        voice,
+        &VoiceSettings::default(),
+        1234,
+        len,
+        |s0, b| out[s0..s0 + b.len()].copy_from_slice(b),
+    );
     let bytes: Vec<u8> = out.iter().flat_map(|x| x.to_le_bytes()).collect();
-    assert_eq!(fnv1a(&bytes), 0x08a630ed57eeb7de, "demo lead render changed at the default phrasing");
+    assert_eq!(
+        fnv1a(&bytes),
+        0x08a630ed57eeb7de,
+        "demo lead render changed at the default phrasing"
+    );
 }

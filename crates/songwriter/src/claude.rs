@@ -85,7 +85,13 @@ pub enum Effort {
 }
 
 impl Effort {
-    pub const ALL: &'static [Effort] = &[Effort::Low, Effort::Medium, Effort::High, Effort::XHigh, Effort::Max];
+    pub const ALL: &'static [Effort] = &[
+        Effort::Low,
+        Effort::Medium,
+        Effort::High,
+        Effort::XHigh,
+        Effort::Max,
+    ];
 
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -112,7 +118,11 @@ impl std::str::FromStr for Effort {
             .iter()
             .copied()
             .find(|e| t.eq_ignore_ascii_case(e.as_str()))
-            .ok_or_else(|| ClaudeError::Config(format!("unknown effort {s:?} (want low, medium, high, xhigh, max)")))
+            .ok_or_else(|| {
+                ClaudeError::Config(format!(
+                    "unknown effort {s:?} (want low, medium, high, xhigh, max)"
+                ))
+            })
     }
 }
 
@@ -211,7 +221,10 @@ impl fmt::Display for ClaudeError {
             ClaudeError::Spawn(e) => write!(f, "could not run the claude CLI: {e}"),
             ClaudeError::Transport(s) => write!(f, "transport failure: {s}"),
             ClaudeError::Status { code, body, .. } => write!(f, "status {code}: {body}"),
-            ClaudeError::Refusal { category, explanation } => write!(
+            ClaudeError::Refusal {
+                category,
+                explanation,
+            } => write!(
                 f,
                 "refusal (category {}): {}",
                 category.as_deref().unwrap_or("none"),
@@ -279,7 +292,8 @@ impl Backoff {
         let base = self.first.saturating_mul(1u32 << k.min(16));
         let hint = match err {
             ClaudeError::Status {
-                retry_after: Some(d), ..
+                retry_after: Some(d),
+                ..
             } => (*d).min(self.max_hint),
             _ => Duration::ZERO,
         };
@@ -378,11 +392,12 @@ impl Claude for ClaudeCli {
             .spawn()
             .map_err(ClaudeError::Spawn)?;
         {
-            let mut stdin = child
-                .stdin
-                .take()
-                .ok_or_else(|| ClaudeError::Spawn(std::io::Error::other("no stdin pipe to the CLI")))?;
-            stdin.write_all(req.prompt.as_bytes()).map_err(ClaudeError::Spawn)?;
+            let mut stdin = child.stdin.take().ok_or_else(|| {
+                ClaudeError::Spawn(std::io::Error::other("no stdin pipe to the CLI"))
+            })?;
+            stdin
+                .write_all(req.prompt.as_bytes())
+                .map_err(ClaudeError::Spawn)?;
         }
         let output = child.wait_with_output().map_err(ClaudeError::Spawn)?;
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -413,10 +428,18 @@ fn get_u64(v: &Value, key: &str) -> Option<u64> {
 /// entries, else the first tied entry by model id (`per_model` is already
 /// sorted by id).
 fn pick_answering_model(per_model: &[ModelUsage], requested: &str) -> Option<String> {
-    let max = per_model.iter().map(|m| m.usage.output_tokens.unwrap_or(0)).max()?;
-    let mut tied = per_model.iter().filter(|m| m.usage.output_tokens.unwrap_or(0) == max);
+    let max = per_model
+        .iter()
+        .map(|m| m.usage.output_tokens.unwrap_or(0))
+        .max()?;
+    let mut tied = per_model
+        .iter()
+        .filter(|m| m.usage.output_tokens.unwrap_or(0) == max);
     let first = tied.next()?;
-    if let Some(m) = std::iter::once(first).chain(tied.clone()).find(|m| m.model == requested) {
+    if let Some(m) = std::iter::once(first)
+        .chain(tied.clone())
+        .find(|m| m.model == requested)
+    {
         return Some(m.model.clone());
     }
     Some(first.model.clone())
@@ -429,8 +452,13 @@ fn pick_answering_model(per_model: &[ModelUsage], requested: &str) -> Option<Str
 /// fields are all optional: a missing or non-numeric one never fails the
 /// parse, it just reads as `None`.
 fn parse_cli_envelope(stdout: &str, requested_model: &str) -> Result<Reply, ClaudeError> {
-    let v: Value = serde_json::from_str(stdout).map_err(|e| ClaudeError::Parse(format!("{e}: {stdout}")))?;
-    let text = v.get("result").and_then(Value::as_str).unwrap_or("").to_string();
+    let v: Value =
+        serde_json::from_str(stdout).map_err(|e| ClaudeError::Parse(format!("{e}: {stdout}")))?;
+    let text = v
+        .get("result")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let subtype = v.get("subtype").and_then(Value::as_str);
     let stop_reason = v.get("stop_reason").and_then(Value::as_str);
     if v.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
@@ -458,7 +486,8 @@ fn parse_cli_envelope(stdout: &str, requested_model: &str) -> Result<Reply, Clau
         input_tokens: usage_obj.and_then(|u| get_u64(u, "input_tokens")),
         output_tokens: usage_obj.and_then(|u| get_u64(u, "output_tokens")),
         cache_read_input_tokens: usage_obj.and_then(|u| get_u64(u, "cache_read_input_tokens")),
-        cache_creation_input_tokens: usage_obj.and_then(|u| get_u64(u, "cache_creation_input_tokens")),
+        cache_creation_input_tokens: usage_obj
+            .and_then(|u| get_u64(u, "cache_creation_input_tokens")),
         thinking_tokens: usage_obj
             .and_then(|u| u.get("output_tokens_details"))
             .and_then(|d| get_u64(d, "thinking_tokens")),
@@ -515,7 +544,9 @@ impl ClaudeApi {
     pub fn from_env() -> Result<Self, ClaudeError> {
         match std::env::var("ANTHROPIC_API_KEY") {
             Ok(k) if !k.trim().is_empty() => Ok(Self::new(k.trim())),
-            _ => Err(ClaudeError::Config("ANTHROPIC_API_KEY is not set".to_string())),
+            _ => Err(ClaudeError::Config(
+                "ANTHROPIC_API_KEY is not set".to_string(),
+            )),
         }
     }
 
@@ -552,7 +583,8 @@ impl ClaudeApi {
 impl Claude for ClaudeApi {
     fn complete(&self, req: &Request) -> Result<Reply, ClaudeError> {
         let body = request_body(req);
-        self.backoff.run(&mut std::thread::sleep, || self.post(&body))
+        self.backoff
+            .run(&mut std::thread::sleep, || self.post(&body))
     }
 
     fn transport(&self) -> Transport {
@@ -591,7 +623,10 @@ pub fn request_body(req: &Request) -> Value {
 /// input, output and cache token counts; the API does not break out
 /// thinking tokens or report cost, so those stay `None`.
 fn parse_api_reply(v: &Value) -> Result<Reply, ClaudeError> {
-    let stop_reason = v.get("stop_reason").and_then(Value::as_str).map(str::to_string);
+    let stop_reason = v
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     if stop_reason.as_deref() == Some("refusal") {
         let field = |k: &str| {
             v.get("stop_details")
@@ -625,7 +660,8 @@ fn parse_api_reply(v: &Value) -> Result<Reply, ClaudeError> {
         input_tokens: usage_obj.and_then(|u| get_u64(u, "input_tokens")),
         output_tokens: usage_obj.and_then(|u| get_u64(u, "output_tokens")),
         cache_read_input_tokens: usage_obj.and_then(|u| get_u64(u, "cache_read_input_tokens")),
-        cache_creation_input_tokens: usage_obj.and_then(|u| get_u64(u, "cache_creation_input_tokens")),
+        cache_creation_input_tokens: usage_obj
+            .and_then(|u| get_u64(u, "cache_creation_input_tokens")),
         thinking_tokens: None,
     };
     let per_model = match &model {
@@ -667,7 +703,10 @@ mod tests {
         assert_eq!(b["system"], "sys");
         assert_eq!(b["output_config"]["effort"], "xhigh");
         assert_eq!(b["output_config"]["format"]["type"], "json_schema");
-        assert_eq!(b["output_config"]["format"]["schema"], json!({"type": "object"}));
+        assert_eq!(
+            b["output_config"]["format"]["schema"],
+            json!({"type": "object"})
+        );
     }
 
     #[test]
@@ -703,7 +742,10 @@ mod tests {
             "stop_details": {"type": "refusal", "category": "cyber", "explanation": "no"},
         });
         match parse_api_reply(&v) {
-            Err(ClaudeError::Refusal { category, explanation }) => {
+            Err(ClaudeError::Refusal {
+                category,
+                explanation,
+            }) => {
                 assert_eq!(category.as_deref(), Some("cyber"));
                 assert_eq!(explanation.as_deref(), Some("no"));
             }
@@ -760,14 +802,17 @@ mod tests {
         for e in [
             status(400, None),
             status(401, None),
-            ClaudeError::MaxTokens { partial: String::new() },
+            ClaudeError::MaxTokens {
+                partial: String::new(),
+            },
         ] {
             let calls = Cell::new(0);
             let mut e = Some(e);
-            let r: Result<(), _> = Backoff::default().run(&mut |_| panic!("no wait expected"), || {
-                calls.set(calls.get() + 1);
-                Err(e.take().unwrap_or(ClaudeError::Parse("second call".into())))
-            });
+            let r: Result<(), _> =
+                Backoff::default().run(&mut |_| panic!("no wait expected"), || {
+                    calls.set(calls.get() + 1);
+                    Err(e.take().unwrap_or(ClaudeError::Parse("second call".into())))
+                });
             assert!(r.is_err());
             assert_eq!(calls.get(), 1);
         }
@@ -779,28 +824,49 @@ mod tests {
         req.effort = Effort::Max;
         req.json_schema = Some(json!({"type": "object"}));
         let a = ClaudeCli::args(&req);
-        let after = |flag: &str| a.iter().position(|x| x == flag).and_then(|i| a.get(i + 1)).cloned();
+        let after = |flag: &str| {
+            a.iter()
+                .position(|x| x == flag)
+                .and_then(|i| a.get(i + 1))
+                .cloned()
+        };
         assert_eq!(after("--model").as_deref(), Some(DEFAULT_MODEL));
         assert_eq!(after("--effort").as_deref(), Some("max"));
-        assert_eq!(after("--json-schema").as_deref(), Some(r#"{"type":"object"}"#));
+        assert_eq!(
+            after("--json-schema").as_deref(),
+            Some(r#"{"type":"object"}"#)
+        );
         assert!(!a.iter().any(|x| x == "--bare"));
     }
 
     #[test]
     fn parses_cli_envelopes() {
-        let ok = parse_cli_envelope(r#"{"is_error":false,"result":"PONG","subtype":"success"}"#, "claude-opus-5-5").unwrap();
+        let ok = parse_cli_envelope(
+            r#"{"is_error":false,"result":"PONG","subtype":"success"}"#,
+            "claude-opus-5-5",
+        )
+        .unwrap();
         assert_eq!(ok.text, "PONG");
         assert_eq!(ok.usage, Usage::default());
         assert!(ok.per_model.is_empty());
         assert!(matches!(
-            parse_cli_envelope(r#"{"is_error":true,"result":"boom","subtype":"error_during_execution"}"#, "m"),
+            parse_cli_envelope(
+                r#"{"is_error":true,"result":"boom","subtype":"error_during_execution"}"#,
+                "m"
+            ),
             Err(ClaudeError::Status { .. })
         ));
         assert!(matches!(
-            parse_cli_envelope(r#"{"is_error":false,"result":"{","stop_reason":"max_tokens"}"#, "m"),
+            parse_cli_envelope(
+                r#"{"is_error":false,"result":"{","stop_reason":"max_tokens"}"#,
+                "m"
+            ),
             Err(ClaudeError::MaxTokens { .. })
         ));
-        assert!(matches!(parse_cli_envelope("not json", "m"), Err(ClaudeError::Parse(_))));
+        assert!(matches!(
+            parse_cli_envelope("not json", "m"),
+            Err(ClaudeError::Parse(_))
+        ));
     }
 
     #[test]
@@ -854,14 +920,21 @@ mod tests {
                 cost_usd: None,
             },
         ];
-        assert_eq!(pick_answering_model(&per_model, "claude-b").as_deref(), Some("claude-b"));
-        assert_eq!(pick_answering_model(&per_model, "claude-z").as_deref(), Some("claude-a"));
+        assert_eq!(
+            pick_answering_model(&per_model, "claude-b").as_deref(),
+            Some("claude-b")
+        );
+        assert_eq!(
+            pick_answering_model(&per_model, "claude-z").as_deref(),
+            Some("claude-a")
+        );
         assert_eq!(pick_answering_model(&[], "claude-a"), None);
     }
 
     #[test]
     fn parses_a_minimal_cli_envelope() {
-        let r = parse_cli_envelope(r#"{"is_error":false,"result":"x"}"#, "claude-opus-5-5").unwrap();
+        let r =
+            parse_cli_envelope(r#"{"is_error":false,"result":"x"}"#, "claude-opus-5-5").unwrap();
         assert_eq!(r.usage, Usage::default());
         assert!(r.per_model.is_empty());
         assert_eq!(r.cost_usd, None);
@@ -901,12 +974,18 @@ mod tests {
         assert_eq!("api".parse::<Transport>().unwrap(), Transport::Api);
         assert!("ftp".parse::<Transport>().is_err());
         assert_eq!(serde_json::to_string(&Transport::Api).unwrap(), "\"api\"");
-        assert_eq!(serde_json::from_str::<Transport>("\"cli\"").unwrap(), Transport::Cli);
+        assert_eq!(
+            serde_json::from_str::<Transport>("\"cli\"").unwrap(),
+            Transport::Cli
+        );
     }
 
     #[test]
     fn effort_parses_by_name() {
         assert_eq!("XHigh".parse::<Effort>().ok(), Some(Effort::XHigh));
-        assert!(matches!("extreme".parse::<Effort>(), Err(ClaudeError::Config(_))));
+        assert!(matches!(
+            "extreme".parse::<Effort>(),
+            Err(ClaudeError::Config(_))
+        ));
     }
 }

@@ -16,7 +16,8 @@ pub struct Output {
 
 impl Output {
     pub fn open() -> Result<Output, String> {
-        let mut sink = DeviceSinkBuilder::open_default_sink().map_err(|e| format!("could not open the audio output: {e}"))?;
+        let mut sink = DeviceSinkBuilder::open_default_sink()
+            .map_err(|e| format!("could not open the audio output: {e}"))?;
         sink.log_on_drop(false);
         Ok(Output { sink })
     }
@@ -47,12 +48,20 @@ impl Track {
     /// decoder does not know it.
     pub fn open(out: &Output, path: &Path, fallback: f64, volume: f32) -> Result<Track, String> {
         let dec = decoder(path)?;
-        let duration = dec.total_duration().map(|d| d.as_secs_f64()).filter(|d| *d > 0.0).unwrap_or(fallback);
+        let duration = dec
+            .total_duration()
+            .map(|d| d.as_secs_f64())
+            .filter(|d| *d > 0.0)
+            .unwrap_or(fallback);
         let player = Player::connect_new(out.sink.mixer());
         player.pause();
         player.set_volume(volume);
         player.append(dec);
-        Ok(Track { player, media: Media::File(path.to_path_buf()), duration })
+        Ok(Track {
+            player,
+            media: Media::File(path.to_path_buf()),
+            duration,
+        })
     }
 
     /// Loads an in-memory stereo mix (see `stereo_buffer`) paused at 0.
@@ -62,13 +71,22 @@ impl Track {
         player.pause();
         player.set_volume(volume);
         player.append(buf.clone());
-        Track { player, media: Media::Memory(buf), duration }
+        Track {
+            player,
+            media: Media::Memory(buf),
+            duration,
+        }
     }
 
     /// A track for `buf` that takes over from `old`: at `old`'s position,
     /// and playing if `old` was. The caller drops `old` after this returns,
     /// so the new player is running before the old one stops.
-    pub fn take_over(out: &Output, old: Option<&Track>, buf: SamplesBuffer, volume: f32) -> Result<Track, String> {
+    pub fn take_over(
+        out: &Output,
+        old: Option<&Track>,
+        buf: SamplesBuffer,
+        volume: f32,
+    ) -> Result<Track, String> {
         let (pos, playing) = old.map_or((0.0, false), |t| (t.position(), t.playing()));
         let mut t = Track::from_memory(out, buf, volume);
         if pos > 0.0 {
@@ -124,7 +142,9 @@ impl Track {
             }
         }
         let t = t.clamp(0.0, (self.duration - 0.05).max(0.0));
-        self.player.try_seek(Duration::from_secs_f64(t)).map_err(|e| format!("seek failed: {e}"))
+        self.player
+            .try_seek(Duration::from_secs_f64(t))
+            .map_err(|e| format!("seek failed: {e}"))
     }
 
     pub fn set_volume(&self, v: f32) {
@@ -156,7 +176,10 @@ mod tests {
 
     #[test]
     fn interleaves_left_then_right() {
-        assert_eq!(interleave(&[1.0, 2.0, 3.0], &[-1.0, -2.0]), vec![1.0, -1.0, 2.0, -2.0]);
+        assert_eq!(
+            interleave(&[1.0, 2.0, 3.0], &[-1.0, -2.0]),
+            vec![1.0, -1.0, 2.0, -2.0]
+        );
     }
 
     #[test]
@@ -181,7 +204,9 @@ mod tests {
             eprintln!("no audio output: take_over not exercised");
             return;
         };
-        let silent = |secs: usize| stereo_buffer(&vec![0.0; 48_000 * secs], &vec![0.0; 48_000 * secs], 48_000);
+        let silent = |secs: usize| {
+            stereo_buffer(&vec![0.0; 48_000 * secs], &vec![0.0; 48_000 * secs], 48_000)
+        };
         let mut old = Track::from_memory(&out, silent(10), 0.0);
         old.seek(4.0).unwrap();
         assert!((old.position() - 4.0).abs() < 0.05, "{}", old.position());

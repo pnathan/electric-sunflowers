@@ -107,7 +107,13 @@ mod tests {
 
     #[test]
     fn consonant_scale_rises_with_the_voice() {
-        let order = [Voice::Bass, Voice::Baritone, Voice::Tenor, Voice::Alto, Voice::Soprano];
+        let order = [
+            Voice::Bass,
+            Voice::Baritone,
+            Voice::Tenor,
+            Voice::Alto,
+            Voice::Soprano,
+        ];
         let cs: Vec<f64> = order.iter().map(|&v| voice_params(v).cons_scale).collect();
         assert_eq!(cs, vec![1.15, 1.2, 1.25, 1.35, 1.4]);
     }

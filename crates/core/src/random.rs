@@ -197,8 +197,14 @@ mod tests {
     /// rand_xoshiro crate's tests.
     #[test]
     fn xoshiro128pp_reference_vector() {
-        let mut r = Rng { s: [1, 2, 3, 4], spare: None };
-        let want = [641, 1573767, 3222811527, 3517856514, 836907274, 4247214768, 3867114732, 1355841295, 495546011, 621204420];
+        let mut r = Rng {
+            s: [1, 2, 3, 4],
+            spare: None,
+        };
+        let want = [
+            641, 1573767, 3222811527, 3517856514, 836907274, 4247214768, 3867114732, 1355841295,
+            495546011, 621204420,
+        ];
         for w in want {
             assert_eq!(r.next_u32(), w);
         }

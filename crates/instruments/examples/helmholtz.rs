@@ -17,5 +17,9 @@ fn main() {
     println!("stable {ok}/{total} {}", bad.join(" "));
     let (ok, total, bad) = phrase_sweep();
     let bad: Vec<String> = bad.iter().map(|(p, i, m)| format!("{p}.{i}:{m}")).collect();
-    println!("phrase notes {ok}/{total} ({:.1}%) {}", 100.0 * ok as f64 / total as f64, bad.join(" "));
+    println!(
+        "phrase notes {ok}/{total} ({:.1}%) {}",
+        100.0 * ok as f64 / total as f64,
+        bad.join(" ")
+    );
 }

@@ -38,7 +38,12 @@ pub struct RhythmStyle {
 impl Default for RhythmStyle {
     /// The neutral style used for instrumental lines.
     fn default() -> Self {
-        RhythmStyle { dot: 0.3, even: 0.3, sync: 0.0, noise: 0.6 }
+        RhythmStyle {
+            dot: 0.3,
+            even: 0.3,
+            sync: 0.0,
+            noise: 0.6,
+        }
     }
 }
 
@@ -113,7 +118,13 @@ pub const RHYTHM_WEIGHTS: RhythmWeights = RhythmWeights {
 /// unstressed syllable. Stressed syllables prefer 1-2 slots (and dotted 1.5
 /// and 3 by `dot`); unstressed ones prefer 1 slot. `sub3` marks compound
 /// meters, where a 3-slot gap is a full beat.
-fn gap_score(h: usize, after_stress: bool, style: &RhythmStyle, sub3: bool, w: &RhythmWeights) -> f64 {
+fn gap_score(
+    h: usize,
+    after_stress: bool,
+    style: &RhythmStyle,
+    sub3: bool,
+    w: &RhythmWeights,
+) -> f64 {
     if h <= 1 {
         return w.crowded;
     }
@@ -168,12 +179,26 @@ struct LineGrid {
 }
 
 impl LineGrid {
-    fn new(n: usize, n_bars: usize, grid: &MeterGrid, lead_unstressed: usize, wt: &RhythmWeights) -> LineGrid {
+    fn new(
+        n: usize,
+        n_bars: usize,
+        grid: &MeterGrid,
+        lead_unstressed: usize,
+        wt: &RhythmWeights,
+    ) -> LineGrid {
         let bar_slots = grid.slots();
-        let res = if n as f64 > (n_bars * bar_slots) as f64 * wt.dense_fraction { 2 } else { 1 };
+        let res = if n as f64 > (n_bars * bar_slots) as f64 * wt.dense_fraction {
+            2
+        } else {
+            1
+        };
         let total = n_bars * bar_slots * res;
         let beat = grid.sub as usize * res;
-        let pickup = if lead_unstressed > 0 { beat.min(lead_unstressed * res) } else { 0 };
+        let pickup = if lead_unstressed > 0 {
+            beat.min(lead_unstressed * res)
+        } else {
+            0
+        };
         let w = (0..pickup + total)
             .map(|g| {
                 if g < pickup {
@@ -192,7 +217,13 @@ impl LineGrid {
                 }
             })
             .collect();
-        LineGrid { res, total, beat, pickup, w }
+        LineGrid {
+            res,
+            total,
+            beat,
+            pickup,
+            w,
+        }
     }
 
     fn line_beats(&self) -> f64 {
@@ -208,10 +239,18 @@ impl LineGrid {
     /// Onsets (beats), durations and weights for syllables at positions `pos`.
     fn result(&self, pos: &[usize], wt: &RhythmWeights) -> RhythmResult {
         let beat = self.beat as f64;
-        let onsets: Vec<f64> = pos.iter().map(|&g| (g as f64 - self.pickup as f64) / beat).collect();
+        let onsets: Vec<f64> = pos
+            .iter()
+            .map(|&g| (g as f64 - self.pickup as f64) / beat)
+            .collect();
         let durs = durations(&onsets, |o| self.last_dur(o, wt));
         let weights = pos.iter().map(|&g| self.w[g]).collect();
-        RhythmResult { onsets, durs, weights, line_beats: self.line_beats() }
+        RhythmResult {
+            onsets,
+            durs,
+            weights,
+            line_beats: self.line_beats(),
+        }
     }
 
     /// Fallback when no alignment exists (more syllables than positions):
@@ -232,20 +271,36 @@ impl LineGrid {
             let (g, frac) = (k / q, k % q);
             onsets.push((k as f64 / q as f64) / beat);
             weights.push(if frac == 0 {
-                self.w.get(self.pickup + g).copied().unwrap_or(wt.half_slot_weight)
+                self.w
+                    .get(self.pickup + g)
+                    .copied()
+                    .unwrap_or(wt.half_slot_weight)
             } else {
                 wt.half_slot_weight
             });
         }
         let durs = durations(&onsets, |o| self.last_dur(o, wt));
-        RhythmResult { onsets, durs, weights, line_beats: self.line_beats() }
+        RhythmResult {
+            onsets,
+            durs,
+            weights,
+            line_beats: self.line_beats(),
+        }
     }
 }
 
 /// Inter-onset durations; the last from `last`.
 fn durations(onsets: &[f64], last: impl Fn(f64) -> f64) -> Vec<f64> {
     let n = onsets.len();
-    (0..n).map(|i| if i + 1 < n { onsets[i + 1] - onsets[i] } else { last(onsets[i]) }).collect()
+    (0..n)
+        .map(|i| {
+            if i + 1 < n {
+                onsets[i + 1] - onsets[i]
+            } else {
+                last(onsets[i])
+            }
+        })
+        .collect()
 }
 
 /// Sets `stresses.len()` syllables over `n_bars` bars of `grid` (see the
@@ -253,7 +308,13 @@ fn durations(onsets: &[f64], last: impl Fn(f64) -> f64) -> Vec<f64> {
 /// of up to one beat before the line. The last syllable must start at least
 /// one beat before the line's end and is rewarded in the line's second
 /// half on a strong position.
-pub fn set_text(stresses: &[bool], n_bars: usize, grid: &MeterGrid, style: &RhythmStyle, rng: &mut Rng) -> RhythmResult {
+pub fn set_text(
+    stresses: &[bool],
+    n_bars: usize,
+    grid: &MeterGrid,
+    style: &RhythmStyle,
+    rng: &mut Rng,
+) -> RhythmResult {
     set_text_with(stresses, n_bars, grid, style, &RHYTHM_WEIGHTS, rng)
 }
 
@@ -272,7 +333,12 @@ pub fn set_text_with(
     let lead0 = stresses.iter().position(|&s| s).unwrap_or(n);
     let lg = LineGrid::new(n, n_bars, grid, lead0, wt);
     if n == 0 {
-        return RhythmResult { onsets: vec![], durs: vec![], weights: vec![], line_beats: lg.line_beats() };
+        return RhythmResult {
+            onsets: vec![],
+            durs: vec![],
+            weights: vec![],
+            line_beats: lg.line_beats(),
+        };
     }
     let size = lg.pickup + lg.total;
     // Latest position of the last syllable (line positions).
@@ -290,7 +356,11 @@ pub fn set_text_with(
         let wg = lg.w[g];
         let base = if stresses[i] {
             wt.stress_accent * wg
-                + if wg > wt.sync_lo && wg < wt.sync_hi { style.sync * wt.sync_bonus } else { 0.0 }
+                + if wg > wt.sync_lo && wg < wt.sync_hi {
+                    style.sync * wt.sync_bonus
+                } else {
+                    0.0
+                }
         } else {
             wt.unstress_accent * wg
         };
@@ -460,7 +530,13 @@ mod tests {
 
     #[test]
     fn empty_line() {
-        let r = set_text(&[], 1, Meter::Three4.grid(), &RhythmStyle::default(), &mut rng(3));
+        let r = set_text(
+            &[],
+            1,
+            Meter::Three4.grid(),
+            &RhythmStyle::default(),
+            &mut rng(3),
+        );
         assert!(r.onsets.is_empty());
         assert_eq!(r.line_beats, 3.0);
     }

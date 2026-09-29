@@ -73,7 +73,11 @@ impl Resonator {
             return;
         }
         let k = 1.0 / n as f64;
-        self.step = ((target.0 - self.a) * k, (target.1 - self.b) * k, (target.2 - self.c) * k);
+        self.step = (
+            (target.0 - self.a) * k,
+            (target.1 - self.b) * k,
+            (target.2 - self.c) * k,
+        );
         self.target = target;
         self.left = n;
     }

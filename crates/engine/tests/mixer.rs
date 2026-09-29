@@ -15,7 +15,10 @@
 use dsp::dynamics::{Compressor, GainComputer, Link, PeakDetector};
 use dsp::pan::{balance, equal_power};
 use dsp::reverb::{Fdn8, T60_DC, T60_NYQ};
-use engine::{demo_song, mix, mix_gain, mix_with, premix, print_reverb, print_stem, render, MixSettings, NoProgress, SparseBuf, Stem, Stems, Stereo, TrackId};
+use engine::{
+    demo_song, mix, mix_gain, mix_with, premix, print_reverb, print_stem, render, MixSettings,
+    NoProgress, SparseBuf, Stem, Stems, Stereo, TrackId,
+};
 use sfcore::math::{db_to_gain, gain_to_db};
 use sfcore::SR_F;
 use song::{Band, Song};
@@ -46,7 +49,10 @@ fn old_duck_gains(stems: &Stems, band: &Band) -> Option<Vec<f32>> {
     let lead = p.audio.channels().first()?;
     let full = 0.5 * engine::track::TARGET_RMS * k;
     let depth = 1.0 - db_to_gain(-DUCK_DB);
-    let (up, down) = (sfcore::math::one_pole_coeff_tau(DUCK_ATTACK, SR_F), sfcore::math::one_pole_coeff_tau(DUCK_RELEASE, SR_F));
+    let (up, down) = (
+        sfcore::math::one_pole_coeff_tau(DUCK_ATTACK, SR_F),
+        sfcore::math::one_pole_coeff_tau(DUCK_RELEASE, SR_F),
+    );
     let mut ms = 0.0f64;
     let mut out = vec![1.0f32; stems.len];
     let mut buf = vec![0.0f32; MIX_BLOCK];
@@ -89,7 +95,11 @@ fn old_routes<'a>(stems: &'a Stems, band: &Band) -> Vec<OldRoute<'a>> {
         let send = strip.send;
         let mut push = |src, gl: f32, gr: f32| {
             let (gl, gr) = (gl * k, gr * k);
-            out.push(OldRoute { src, g: [gl, gr, gl * send, gr * send], ducked: id != TrackId::Lead });
+            out.push(OldRoute {
+                src,
+                g: [gl, gr, gl * send, gr * send],
+                ducked: id != TrackId::Lead,
+            });
         };
         match &p.audio {
             Stem::Mono(x) => {
@@ -110,9 +120,16 @@ fn old_mix(stems: &Stems, band: &Band, seed: u64) -> Stereo {
     let len = stems.len;
     let routes = old_routes(stems, band);
     let duck = old_duck_gains(stems, band);
-    let slap = if TrackId::Lead.plays(band) { stems.get(TrackId::Lead).and_then(|p| p.slap.as_ref()) } else { None };
+    let slap = if TrackId::Lead.plays(band) {
+        stems.get(TrackId::Lead).and_then(|p| p.slap.as_ref())
+    } else {
+        None
+    };
     let mut fdn = Fdn8::new(SR_F, seed, T60_DC, T60_NYQ);
-    let mut out = Stereo { l: vec![0.0; len], r: vec![0.0; len] };
+    let mut out = Stereo {
+        l: vec![0.0; len],
+        r: vec![0.0; len],
+    };
     let (mut ml, mut mr) = ([0.0f32; MIX_BLOCK], [0.0f32; MIX_BLOCK]);
     let (mut sl, mut sr) = ([0.0f32; MIX_BLOCK], [0.0f32; MIX_BLOCK]);
     let (mut energy, mut count) = (0.0f64, 0usize);
@@ -160,7 +177,11 @@ fn old_mix(stems: &Stems, band: &Band, seed: u64) -> Stereo {
     let bus_rms = (energy / count.max(1) as f64).sqrt();
     let mut comp = Compressor::new(
         PeakDetector::new(BUS_ATTACK, BUS_RELEASE, SR_F),
-        GainComputer { thr_db: gain_to_db(bus_rms) + BUS_OVER_RMS_DB, ratio: BUS_RATIO, knee_db: BUS_KNEE_DB },
+        GainComputer {
+            thr_db: gain_to_db(bus_rms) + BUS_OVER_RMS_DB,
+            ratio: BUS_RATIO,
+            knee_db: BUS_KNEE_DB,
+        },
         Link::StereoMax,
     );
     let mut pk = 1e-9f64;
@@ -199,7 +220,9 @@ fn blues(drums: &str) -> Song {
             {"type":"verse","same":true}
         ]
     });
-    song::normalize_value(&raw).expect("blues literal normalises").0
+    song::normalize_value(&raw)
+        .expect("blues literal normalises")
+        .0
 }
 
 // --- Tests ------------------------------------------------------------------
@@ -211,7 +234,10 @@ fn default_mix_is_bit_identical_to_the_old_mixer() {
         let (_, stems) = render(song, seed, None, &NoProgress);
         let a = old_mix(&stems, &song.band, seed);
         let b = mix(&stems, &song.band, seed);
-        assert!(bits(&a) == bits(&b), "seed {seed}: default mix differs from the old mixer");
+        assert!(
+            bits(&a) == bits(&b),
+            "seed {seed}: default mix differs from the old mixer"
+        );
     }
 }
 
@@ -229,7 +255,10 @@ fn muting_a_non_lead_track_equals_switching_off_its_band_part() {
     band_off.bass = false;
     let b = mix_with(&stems, &band_off, 11, &settings);
 
-    assert!(bits(&a) == bits(&b), "muting bass should equal switching off its band part");
+    assert!(
+        bits(&a) == bits(&b),
+        "muting bass should equal switching off its band part"
+    );
 }
 
 #[test]
@@ -250,7 +279,10 @@ fn solo_equals_muting_everything_else() {
 
     let a = mix_with(&stems, &song.band, 11, &solo);
     let b = mix_with(&stems, &song.band, 11, &muted);
-    assert!(bits(&a) == bits(&b), "soloing bass should equal muting every other track");
+    assert!(
+        bits(&a) == bits(&b),
+        "soloing bass should equal muting every other track"
+    );
 }
 
 #[test]
@@ -265,15 +297,36 @@ fn duck_db_zero_turns_the_ducker_off() {
 
     // With the ducker off, an accompaniment track's own printed contribution
     // does not depend on whether the lead sings.
-    let with_lead = print_stem(&stems, &song.band, 1234, &settings, TrackId::Guitar, duck.as_deref(), 1.0).expect("guitar plays");
+    let with_lead = print_stem(
+        &stems,
+        &song.band,
+        1234,
+        &settings,
+        TrackId::Guitar,
+        duck.as_deref(),
+        1.0,
+    )
+    .expect("guitar plays");
 
     let mut lead_muted = settings;
     lead_muted.tracks[TrackId::Lead.index()].mute = true;
     let duck2 = engine::mix::duck_gains(&stems, &song.band, &lead_muted);
     assert!(duck2.is_none());
-    let without_lead = print_stem(&stems, &song.band, 1234, &lead_muted, TrackId::Guitar, duck2.as_deref(), 1.0).expect("guitar plays");
+    let without_lead = print_stem(
+        &stems,
+        &song.band,
+        1234,
+        &lead_muted,
+        TrackId::Guitar,
+        duck2.as_deref(),
+        1.0,
+    )
+    .expect("guitar plays");
 
-    assert!(bits(&with_lead) == bits(&without_lead), "guitar should be unaffected by the lead when duck_db is 0");
+    assert!(
+        bits(&with_lead) == bits(&without_lead),
+        "guitar should be unaffected by the lead when duck_db is 0"
+    );
 }
 
 #[test]
@@ -285,16 +338,25 @@ fn a_quieter_lead_fader_ducks_the_band_less() {
     let song = demo_song();
     let (_, stems) = render(song, 1234, None, &NoProgress);
     let full = MixSettings::default_for(&stems);
-    let full_min = engine::mix::duck_gains(&stems, &song.band, &full).expect("lead sings").into_iter().fold(1.0f32, f32::min);
+    let full_min = engine::mix::duck_gains(&stems, &song.band, &full)
+        .expect("lead sings")
+        .into_iter()
+        .fold(1.0f32, f32::min);
 
     // The demo's lead sings well above the full-scale point, so the ducker
     // saturates at full depth (amount clamped to 1.0) over a wide fader
     // range; -40 dB is comfortably past where it comes off that clamp.
     let mut quiet = full;
     quiet.tracks[TrackId::Lead.index()].gain_db = -40.0;
-    let quiet_min = engine::mix::duck_gains(&stems, &song.band, &quiet).expect("lead sings").into_iter().fold(1.0f32, f32::min);
+    let quiet_min = engine::mix::duck_gains(&stems, &song.band, &quiet)
+        .expect("lead sings")
+        .into_iter()
+        .fold(1.0f32, f32::min);
 
-    assert!(quiet_min > full_min, "a -40 dB lead fader should duck less: full {full_min}, quiet {quiet_min}");
+    assert!(
+        quiet_min > full_min,
+        "a -40 dB lead fader should duck less: full {full_min}, quiet {quiet_min}"
+    );
 }
 
 #[test]
@@ -334,9 +396,20 @@ fn printed_stems_and_reverb_sum_to_the_premix_times_gain() {
     let duck = engine::mix::duck_gains(&stems, &song.band, &settings);
     let gain = mix_gain(&stems, &song.band, seed, &settings);
 
-    let mut total = Stereo { l: vec![0.0; stems.len], r: vec![0.0; stems.len] };
+    let mut total = Stereo {
+        l: vec![0.0; stems.len],
+        r: vec![0.0; stems.len],
+    };
     for id in TrackId::ALL {
-        if let Some(s) = print_stem(&stems, &song.band, seed, &settings, id, duck.as_deref(), gain) {
+        if let Some(s) = print_stem(
+            &stems,
+            &song.band,
+            seed,
+            &settings,
+            id,
+            duck.as_deref(),
+            gain,
+        ) {
             for i in 0..stems.len {
                 total.l[i] += s.l[i];
                 total.r[i] += s.r[i];
@@ -350,7 +423,11 @@ fn printed_stems_and_reverb_sum_to_the_premix_times_gain() {
     }
 
     let pre = premix(&stems, &song.band, seed, &settings);
-    let peak = pre.l.iter().chain(&pre.r).fold(0.0f32, |a, &v| a.max(v.abs())) as f64;
+    let peak = pre
+        .l
+        .iter()
+        .chain(&pre.r)
+        .fold(0.0f32, |a, &v| a.max(v.abs())) as f64;
     let tol = 1e-5 * peak;
     let mut worst = 0.0f64;
     for i in 0..stems.len {
@@ -368,5 +445,14 @@ fn print_stem_of_a_muted_track_is_none() {
     let mut settings = MixSettings::default_for(&stems);
     settings.tracks[TrackId::Violin.index()].mute = true;
     let duck = engine::mix::duck_gains(&stems, &song.band, &settings);
-    assert!(print_stem(&stems, &song.band, seed, &settings, TrackId::Violin, duck.as_deref(), 1.0).is_none());
+    assert!(print_stem(
+        &stems,
+        &song.band,
+        seed,
+        &settings,
+        TrackId::Violin,
+        duck.as_deref(),
+        1.0
+    )
+    .is_none());
 }

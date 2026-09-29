@@ -47,8 +47,13 @@ pub enum Status {
     NoStems,
     /// A render for this song is running and will bring its stems.
     WaitRender,
-    Loading { stage: String, frac: Option<f32> },
-    Ready { remixing: bool },
+    Loading {
+        stage: String,
+        frac: Option<f32>,
+    },
+    Ready {
+        remixing: bool,
+    },
 }
 
 /// What the window shows besides the settings.
@@ -109,7 +114,11 @@ pub fn slider_from_fader(db: f32) -> f32 {
 /// Whether a song opened with a mix sidecar should play the re-mix: the
 /// sidecar changes something and is newer than the audio file (an unknown
 /// time counts as newer, so the saved mix wins).
-pub fn sidecar_needs_remix(file: Option<&Value>, mix_time: Option<SystemTime>, audio_time: Option<SystemTime>) -> bool {
+pub fn sidecar_needs_remix(
+    file: Option<&Value>,
+    mix_time: Option<SystemTime>,
+    audio_time: Option<SystemTime>,
+) -> bool {
     let changes = file.is_some_and(jobs::mix_changes_anything);
     let newer = match (mix_time, audio_time) {
         (Some(m), Some(a)) => m > a,
@@ -180,7 +189,8 @@ impl MixerPanel {
             Err(e) => self.notes.push(format!("{e}; using the default mix")),
         }
         // No audio: the render that makes it applies the sidecar.
-        self.auto_load = audio.is_some() && sidecar_needs_remix(self.file.as_ref(), mtime(&path), audio.and_then(mtime));
+        self.auto_load = audio.is_some()
+            && sidecar_needs_remix(self.file.as_ref(), mtime(&path), audio.and_then(mtime));
     }
 
     /// Takes in the song's stems. The first time, the settings come from
@@ -195,7 +205,8 @@ impl MixerPanel {
             None => {
                 let defaults = MixSettings::default_for(stems);
                 let (settings, warn) = jobs::settings_from(self.file.as_ref(), stems);
-                self.notes.extend(warn.into_iter().map(|w| format!("mix sidecar: {w}")));
+                self.notes
+                    .extend(warn.into_iter().map(|w| format!("mix sidecar: {w}")));
                 let l = Live { settings, defaults };
                 self.live = Some(l);
                 l
@@ -242,7 +253,9 @@ impl MixerPanel {
 
     /// Writes the settings to `<stem>.mix.json`.
     pub fn save(&self) -> Result<(), String> {
-        let (Some(stem), Some(l)) = (&self.stem, self.live) else { return Ok(()) };
+        let (Some(stem), Some(l)) = (&self.stem, self.live) else {
+            return Ok(());
+        };
         jobs::write_mix(&jobs::mix_path(stem), &l.settings, &l.defaults)
     }
 
@@ -320,37 +333,60 @@ impl MixerPanel {
 /// The track strips, the ducking slider and Reset. Returns true on an edit.
 fn strips(ui: &mut egui::Ui, live: &mut Live, present: &[bool], lead_voice: &str) -> bool {
     let mut changed = false;
-    egui::Grid::new("mixer-grid").num_columns(5).spacing([10.0, 6.0]).striped(true).show(ui, |ui| {
-        ui.label(RichText::new("Track").strong());
-        ui.label(RichText::new("Fader").strong());
-        ui.label(RichText::new("Pan").strong());
-        ui.label(RichText::new("Mute").strong());
-        ui.label(RichText::new("Solo").strong());
-        ui.end_row();
-        for id in TrackId::ALL.into_iter().filter(|id| present[id.index()]) {
-            let t = &mut live.settings.tracks[id.index()];
-            let label = if id == TrackId::Lead { format!("Lead ({lead_voice})") } else { track_label(id).to_string() };
-            ui.label(label);
-            let mut g = slider_from_fader(t.gain_db);
-            // No `step_by` on these sliders: egui snaps the value to the
-            // step when it draws it and reports that as a change, which
-            // moved strip pans such as 0.28 and started a re-mix unasked.
-            let fader = egui::Slider::new(&mut g, FADER_MIN_DB..=FADER_MAX_DB)
-                .custom_formatter(|v, _| if v as f32 <= FADER_MIN_DB { "-inf".into() } else { format!("{v:+.1} dB") });
-            if ui.add(fader).changed() {
-                t.gain_db = fader_from_slider(g);
-                changed = true;
-            }
-            let pan = egui::Slider::new(&mut t.pan, PAN_MIN..=PAN_MAX).custom_formatter(|v, _| pan_text(v as f32));
-            changed |= ui.add(pan).changed();
-            changed |= ui.toggle_value(&mut t.mute, "M").changed();
-            changed |= ui.toggle_value(&mut t.solo, "S").changed();
+    egui::Grid::new("mixer-grid")
+        .num_columns(5)
+        .spacing([10.0, 6.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label(RichText::new("Track").strong());
+            ui.label(RichText::new("Fader").strong());
+            ui.label(RichText::new("Pan").strong());
+            ui.label(RichText::new("Mute").strong());
+            ui.label(RichText::new("Solo").strong());
             ui.end_row();
-        }
-    });
-    let absent: Vec<&str> = TrackId::ALL.into_iter().filter(|id| !present[id.index()]).map(track_label).collect();
+            for id in TrackId::ALL.into_iter().filter(|id| present[id.index()]) {
+                let t = &mut live.settings.tracks[id.index()];
+                let label = if id == TrackId::Lead {
+                    format!("Lead ({lead_voice})")
+                } else {
+                    track_label(id).to_string()
+                };
+                ui.label(label);
+                let mut g = slider_from_fader(t.gain_db);
+                // No `step_by` on these sliders: egui snaps the value to the
+                // step when it draws it and reports that as a change, which
+                // moved strip pans such as 0.28 and started a re-mix unasked.
+                let fader = egui::Slider::new(&mut g, FADER_MIN_DB..=FADER_MAX_DB)
+                    .custom_formatter(|v, _| {
+                        if v as f32 <= FADER_MIN_DB {
+                            "-inf".into()
+                        } else {
+                            format!("{v:+.1} dB")
+                        }
+                    });
+                if ui.add(fader).changed() {
+                    t.gain_db = fader_from_slider(g);
+                    changed = true;
+                }
+                let pan = egui::Slider::new(&mut t.pan, PAN_MIN..=PAN_MAX)
+                    .custom_formatter(|v, _| pan_text(v as f32));
+                changed |= ui.add(pan).changed();
+                changed |= ui.toggle_value(&mut t.mute, "M").changed();
+                changed |= ui.toggle_value(&mut t.solo, "S").changed();
+                ui.end_row();
+            }
+        });
+    let absent: Vec<&str> = TrackId::ALL
+        .into_iter()
+        .filter(|id| !present[id.index()])
+        .map(track_label)
+        .collect();
     if !absent.is_empty() {
-        ui.label(RichText::new(format!("Not in this arrangement: {}.", absent.join(", "))).small().weak());
+        ui.label(
+            RichText::new(format!("Not in this arrangement: {}.", absent.join(", ")))
+                .small()
+                .weak(),
+        );
     }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
@@ -362,7 +398,10 @@ fn strips(ui: &mut egui::Ui, live: &mut Live, present: &[bool], lead_voice: &str
             changed = true;
         }
         ui.separator();
-        if ui.add_enabled(live.settings != live.defaults, egui::Button::new("Reset")).clicked() {
+        if ui
+            .add_enabled(live.settings != live.defaults, egui::Button::new("Reset"))
+            .clicked()
+        {
             live.settings = live.defaults;
             changed = true;
         }
@@ -384,7 +423,10 @@ mod tests {
     use super::*;
 
     fn stub_stems() -> Stems {
-        Stems { len: 0, tracks: Default::default() }
+        Stems {
+            len: 0,
+            tracks: Default::default(),
+        }
     }
 
     fn temp(name: &str) -> PathBuf {
@@ -476,7 +518,12 @@ mod tests {
         let audio = dir.join("song.ogg");
         std::fs::write(&audio, b"x").unwrap();
         let old = SystemTime::now() - Duration::from_secs(60);
-        std::fs::File::options().write(true).open(&audio).unwrap().set_modified(old).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&audio)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
         let mut r = MixerPanel::new();
         r.reset_for(&stem, Some(&audio));
         assert!(r.auto_load);

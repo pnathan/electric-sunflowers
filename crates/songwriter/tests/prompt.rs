@@ -5,7 +5,9 @@ use std::cell::RefCell;
 use songwriter::claude::{Claude, ClaudeError, Effort, Reply, Request};
 use songwriter::prompt::{persona_age, song_prompt, song_prompt_with, REGISTERS};
 use songwriter::styles::{style_direction, DuetFit, FormId, StyleId, STYLES};
-use songwriter::{write_song, write_song_with, DuetRequest, Rng, WriteOptions, WriteRequest, WRITE_TAG};
+use songwriter::{
+    write_song, write_song_with, DuetRequest, Rng, WriteOptions, WriteRequest, WRITE_TAG,
+};
 
 fn rng(seed: u64) -> Rng {
     Rng::stream(seed, WRITE_TAG)
@@ -174,9 +176,14 @@ fn solo_and_duet_requests_are_fixed_choices_verbatim() {
         &dir,
         "devotional",
         2026,
-        &DuetRequest::Duet { a: Some(song::Voice::Tenor), b: Some(song::Voice::Alto) },
+        &DuetRequest::Duet {
+            a: Some(song::Voice::Tenor),
+            b: Some(song::Voice::Alto),
+        },
     );
-    assert!(p.contains("The choice is fixed: write this as a duet. Singer A is tenor, singer B is alto."));
+    assert!(p.contains(
+        "The choice is fixed: write this as a duet. Singer A is tenor, singer B is alto."
+    ));
 
     let p = song_prompt_with(
         "a hymn",
@@ -192,7 +199,17 @@ fn solo_and_duet_requests_are_fixed_choices_verbatim() {
 #[test]
 fn every_style_has_a_duet_fit_and_a_phrasing() {
     use songwriter::styles::StyleId::*;
-    let welcome = [Bakersfield, Nashville, Texas, Cajun, Zydeco, Americana, Laurel, Revival, Gospel];
+    let welcome = [
+        Bakersfield,
+        Nashville,
+        Texas,
+        Cajun,
+        Zydeco,
+        Americana,
+        Laurel,
+        Revival,
+        Gospel,
+    ];
     let rare = [Appalachian, Broadside, IrishAir, Scottish, Welsh, Blues];
     for s in &STYLES {
         let want = if welcome.contains(&s.id) {
@@ -241,7 +258,10 @@ fn style_apply_fills_phrasing_only_when_none() {
     let (mut song, _) = song::normalize_value(&raw).expect("song normalises");
     assert_eq!(song.phrasing, None);
     songwriter::styles::apply_style("gospel", &mut song).expect("gospel exists");
-    assert_eq!(song.phrasing, Some(songwriter::styles::style("gospel").unwrap().phrasing));
+    assert_eq!(
+        song.phrasing,
+        Some(songwriter::styles::style("gospel").unwrap().phrasing)
+    );
 
     // A written phrasing survives the style's own default.
     let (mut song, _) = song::normalize_value(&raw).expect("song normalises");
@@ -285,19 +305,31 @@ fn reply_template_field_names_appear_verbatim() {
     assert!(p.contains("\"sing\":\"A|B|both\""));
     assert!(p.contains("\"lead\":\"A|B\""));
     assert!(p.contains("\"blend\":\"harmony|octave\""));
-    assert!(p.contains("\"type\":\"chorus\",\"sing\":\"both\",\"lead\":\"B\",\"blend\":\"harmony\""));
+    assert!(
+        p.contains("\"type\":\"chorus\",\"sing\":\"both\",\"lead\":\"B\",\"blend\":\"harmony\"")
+    );
 }
 
 #[test]
 fn a_duet_reply_parses_and_normalises_with_zero_repairs() {
-    let mock = Mock { reply: duet_reply(), seen: RefCell::new(None) };
+    let mock = Mock {
+        reply: duet_reply(),
+        seen: RefCell::new(None),
+    };
     let mut req = WriteRequest::new("a duet", 2026);
     req.style = Some(StyleId::Americana);
-    let opts = WriteOptions { duet: DuetRequest::Duet { a: None, b: Some(song::Voice::Alto) } };
+    let opts = WriteOptions {
+        duet: DuetRequest::Duet {
+            a: None,
+            b: Some(song::Voice::Alto),
+        },
+    };
     let w = write_song_with(&mock, &req, &opts, &mut rng(5)).expect("mock reply parses");
 
     let seen = mock.seen.borrow().clone().expect("request sent");
-    assert!(seen.prompt.contains("Singer A is your choice of voice, singer B is alto."));
+    assert!(seen
+        .prompt
+        .contains("Singer A is your choice of voice, singer B is alto."));
 
     let (song, repairs) = song::normalize_value(&w.raw).expect("valid song JSON");
     assert!(repairs.is_empty(), "{repairs:?}");
@@ -344,10 +376,20 @@ fn fixed_duet_does_not_also_say_sung_by_one_voice() {
         &dir,
         "playful",
         2026,
-        &DuetRequest::Duet { a: None, b: Some(song::Voice::Alto) },
+        &DuetRequest::Duet {
+            a: None,
+            b: Some(song::Voice::Alto),
+        },
     );
     assert!(!p.contains("It will be sung by a"), "{p}");
     assert!(p.contains("Singer A is tenor, singer B is alto"), "{p}");
-    let p = song_prompt_with("a solo", Some(song::Voice::Tenor), &dir, "playful", 2026, &DuetRequest::Solo);
+    let p = song_prompt_with(
+        "a solo",
+        Some(song::Voice::Tenor),
+        &dir,
+        "playful",
+        2026,
+        &DuetRequest::Solo,
+    );
     assert!(p.contains("It will be sung by a tenor."));
 }

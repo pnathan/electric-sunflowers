@@ -70,16 +70,35 @@ impl Timeline {
             for (k, &c) in chords.iter().enumerate() {
                 let bar0 = bi * bpb;
                 let b0 = (bar0 + if k != 0 { split } else { 0 }) as f64;
-                let b1 = (bar0 + if chords.len() == 1 || k != 0 { bpb } else { split }) as f64;
+                let b1 = (bar0
+                    + if chords.len() == 1 || k != 0 {
+                        bpb
+                    } else {
+                        split
+                    }) as f64;
                 match segs.last_mut() {
-                    Some(last) if last.chord == c && last.b1 == b0 && last.sec == bar.sec => last.b1 = b1,
-                    _ => segs.push(Seg { chord: c, b0, b1, sec: bar.sec, bar: bi }),
+                    Some(last) if last.chord == c && last.b1 == b0 && last.sec == bar.sec => {
+                        last.b1 = b1
+                    }
+                    _ => segs.push(Seg {
+                        chord: c,
+                        b0,
+                        b1,
+                        sec: bar.sec,
+                        bar: bi,
+                    }),
                 }
             }
         }
 
         let end = t[nb] + TAIL;
-        Timeline { t, nb, base, segs, end }
+        Timeline {
+            t,
+            nb,
+            base,
+            segs,
+            end,
+        }
     }
 
     /// Seconds at `beat`; past the end, beats keep the final ritard length.
@@ -109,7 +128,11 @@ impl Timeline {
             return (t - self.t[0]) / self.base;
         }
         // self.t is nondecreasing; find i with t[i] <= t <= t[i+1].
-        let i = self.t.partition_point(|&x| x <= t).saturating_sub(1).min(nb - 1);
+        let i = self
+            .t
+            .partition_point(|&x| x <= t)
+            .saturating_sub(1)
+            .min(nb - 1);
         let (a, b) = (self.t[i], self.t[i + 1]);
         let frac = if b > a { (t - a) / (b - a) } else { 0.0 };
         i as f64 + frac
@@ -121,7 +144,9 @@ impl Timeline {
     /// not empty.
     pub fn seg_at(&self, beat: f64) -> usize {
         debug_assert!(!self.segs.is_empty(), "timeline without segments");
-        self.segs.partition_point(|s| s.b1 <= beat).min(self.segs.len().saturating_sub(1))
+        self.segs
+            .partition_point(|s| s.b1 <= beat)
+            .min(self.segs.len().saturating_sub(1))
     }
 
     /// The chord sounding at `beat` (clamped to the song). `form` is the

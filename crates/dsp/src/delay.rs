@@ -27,7 +27,11 @@ impl DelayLine {
     /// needs taps out to `floor(d) + 2`.
     pub fn new(max_delay: usize) -> Self {
         let len = max_delay.saturating_add(3).next_power_of_two();
-        DelayLine { buf: vec![0.0; len], mask: len - 1, w: 0 }
+        DelayLine {
+            buf: vec![0.0; len],
+            mask: len - 1,
+            w: 0,
+        }
     }
 
     /// Buffer length (a power of two). The largest meaningful integer delay
@@ -124,7 +128,11 @@ impl SchroederAllpass {
     /// `delay` is clamped to >= 1; `g` to [-0.999, 0.999] so the loop is stable.
     pub fn new(delay: usize, g: f32) -> Self {
         let delay = delay.max(1);
-        SchroederAllpass { line: DelayLine::new(delay), delay, g: g.clamp(-0.999, 0.999) }
+        SchroederAllpass {
+            line: DelayLine::new(delay),
+            delay,
+            g: g.clamp(-0.999, 0.999),
+        }
     }
 
     #[inline]
@@ -173,7 +181,12 @@ pub const THIRAN_MAX: f64 = 1.5;
 
 impl Default for Thiran1 {
     fn default() -> Self {
-        Thiran1 { c: 0.0, x1: 0.0, y1: 0.0, max: THIRAN_MAX }
+        Thiran1 {
+            c: 0.0,
+            x1: 0.0,
+            y1: 0.0,
+            max: THIRAN_MAX,
+        }
     }
 }
 
@@ -185,7 +198,10 @@ impl Thiran1 {
 
     /// Delta clamped to [0.5, `max`]; `max` below 0.5 is raised to 0.5.
     pub fn with_max(delta: f64, max: f64) -> Self {
-        let mut t = Thiran1 { max: max.max(THIRAN_MIN), ..Thiran1::default() };
+        let mut t = Thiran1 {
+            max: max.max(THIRAN_MIN),
+            ..Thiran1::default()
+        };
         t.set_delay(delta);
         t
     }
@@ -193,7 +209,11 @@ impl Thiran1 {
     /// Set the fractional delay. Clamped to [0.5, max]; NaN maps to 1.
     #[inline]
     pub fn set_delay(&mut self, delta: f64) {
-        let d = if delta.is_nan() { 1.0 } else { delta.clamp(THIRAN_MIN, self.max) };
+        let d = if delta.is_nan() {
+            1.0
+        } else {
+            delta.clamp(THIRAN_MIN, self.max)
+        };
         self.c = (1.0 - d) / (1.0 + d);
     }
 

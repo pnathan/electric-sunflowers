@@ -24,7 +24,9 @@ pub fn range_penalty(notes_midi: &[i32], voice: Voice, t: i32) -> f64 {
     let l = lo + t;
     let h = hi + t;
     let m = med + t;
-    (0.0f64).max((lo_r - l) as f64) * 3.0 + (0.0f64).max((h - hi_r) as f64) * 3.0 + ((m as f64) - c).abs() * 0.8
+    (0.0f64).max((lo_r - l) as f64) * 3.0
+        + (0.0f64).max((h - hi_r) as f64) * 3.0
+        + ((m as f64) - c).abs() * 0.8
 }
 
 /// Octave-distance term of a shift `t`: 0.55 per semitone from a whole
@@ -79,8 +81,16 @@ pub fn choose_transpose_duet(lead: &[LeadNote], voice_a: Voice, voice_b: Voice) 
     if lead.is_empty() {
         return 0;
     }
-    let a_notes: Vec<i32> = lead.iter().filter(|n| n.singer == SingerId::A).map(|n| n.midi).collect();
-    let b_notes: Vec<i32> = lead.iter().filter(|n| n.singer == SingerId::B).map(|n| n.midi).collect();
+    let a_notes: Vec<i32> = lead
+        .iter()
+        .filter(|n| n.singer == SingerId::A)
+        .map(|n| n.midi)
+        .collect();
+    let b_notes: Vec<i32> = lead
+        .iter()
+        .filter(|n| n.singer == SingerId::B)
+        .map(|n| n.midi)
+        .collect();
     let total = lead.len() as f64;
     let share_a = a_notes.len() as f64 / total;
     let share_b = b_notes.len() as f64 / total;
@@ -88,7 +98,9 @@ pub fn choose_transpose_duet(lead: &[LeadNote], voice_a: Voice, voice_b: Voice) 
     let mut best = 0i32;
     let mut bs = 1e9f64;
     for t in -30..=30 {
-        let s = share_a * range_penalty(&a_notes, voice_a, t) + share_b * range_penalty(&b_notes, voice_b, t) + octave_term(t);
+        let s = share_a * range_penalty(&a_notes, voice_a, t)
+            + share_b * range_penalty(&b_notes, voice_b, t)
+            + octave_term(t);
         if s < bs {
             bs = s;
             best = t;
@@ -151,7 +163,14 @@ mod tests {
 
     #[test]
     fn choose_transpose_duet_reduces_to_solo_with_one_singer() {
-        let syl = song::Syllable { text: String::new(), word: 0, stress: false, word_start: false, word_end: false, phones: vec![] };
+        let syl = song::Syllable {
+            text: String::new(),
+            word: 0,
+            stress: false,
+            word_start: false,
+            word_end: false,
+            phones: vec![],
+        };
         let melody: Vec<LeadNote> = (0..20)
             .map(|i| LeadNote {
                 beat: 0.0,

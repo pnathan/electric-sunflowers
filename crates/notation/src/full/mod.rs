@@ -5,5 +5,6 @@ pub(crate) mod layout;
 mod model;
 
 pub use model::{
-    BarCol, Cell, Clef, Ev, FullScore, Group, Head, NoteChord, Notehead, PartBar, PartId, PartScore, StaffDef,
+    BarCol, Cell, Clef, Ev, FullScore, Group, Head, NoteChord, Notehead, PartBar, PartId,
+    PartScore, StaffDef,
 };
