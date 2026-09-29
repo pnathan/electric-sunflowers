@@ -333,3 +333,21 @@ fn random_draws_are_unchanged_for_seeds_0_to_100() {
 fn rng_from_seed(seed: u64) -> Rng {
     Rng::from_seed(seed)
 }
+
+#[test]
+fn fixed_duet_does_not_also_say_sung_by_one_voice() {
+    let mut r = rng(1);
+    let dir = style_direction(None, &mut r);
+    let p = song_prompt_with(
+        "a duet",
+        Some(song::Voice::Tenor),
+        &dir,
+        "playful",
+        2026,
+        &DuetRequest::Duet { a: None, b: Some(song::Voice::Alto) },
+    );
+    assert!(!p.contains("It will be sung by a"), "{p}");
+    assert!(p.contains("Singer A is tenor, singer B is alto"), "{p}");
+    let p = song_prompt_with("a solo", Some(song::Voice::Tenor), &dir, "playful", 2026, &DuetRequest::Solo);
+    assert!(p.contains("It will be sung by a tenor."));
+}

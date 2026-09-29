@@ -287,6 +287,15 @@ pub fn syllables(notes: &[VocalNote], p: &VoiceParams, ph: &PhrasingParams) -> V
         let dd = d * s;
         syl[k].onset_start = n.t0 - ph.lead_in * dd;
         syl[k].vowel_start = n.t0 + (1.0 - ph.lead_in) * dd;
+        // The vowel may not be pushed past half the note: on a short note
+        // (or the first note's long onset) it would start after the note
+        // ends. The span keeps length `dd`. Inactive at lead_in 1.0.
+        let shift = syl[k].vowel_start - n.t0;
+        let cap = 0.5 * (n.t1 - n.t0).max(0.0);
+        if shift > cap {
+            syl[k].vowel_start = n.t0 + cap;
+            syl[k].onset_start = syl[k].vowel_start - dd;
+        }
     }
     syl
 }

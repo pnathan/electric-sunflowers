@@ -14,7 +14,7 @@
 //! (`settings::load`) and fill in anything a flag left unset: flag beats
 //! settings file beats built-in default.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use engine::{BandPart, MixSettings, Progress, Stems, TrackId};
 use export::{BitDepth, Format, Meta};
@@ -81,6 +81,9 @@ struct MixArgs {
 enum Cmd {
     /// Render the built-in demo song. Output defaults to song.ogg.
     Demo {
+        /// Overwrite an existing <out-stem>.json that is not the demo song.
+        #[arg(long)]
+        force: bool,
         #[command(flatten)]
         render: RenderArgs,
         #[command(flatten)]
@@ -106,9 +109,15 @@ enum Cmd {
         mix: MixArgs,
     },
     /// Write a new song with Claude, then render and mix it. Output
-    /// defaults to <title-slug>.ogg.
+    /// defaults to <title-slug>.ogg, or <title-slug>-2.ogg, -3, ... when
+    /// that name is taken.
     Write {
         mood: String,
+        /// Overwrite the files of an existing song with the same name
+        /// (with -o, or the plain title slug) instead of refusing or
+        /// picking a free name.
+        #[arg(long)]
+        force: bool,
         #[arg(long)]
         style: Option<String>,
         /// cli | api. Defaults to settings claude.transport.
@@ -203,11 +212,15 @@ fn run() -> Result<()> {
     let settings = &loaded.settings;
 
     match Cli::parse().cmd {
-        Cmd::Demo { render, export, mix } => {
+        Cmd::Demo { force, render, export, mix } => {
             let song = engine::demo_song();
             let out = export.out.clone().unwrap_or_else(|| PathBuf::from("song.ogg"));
+            check_format(&out, &export, settings)?;
             // The demo has no file of its own; save it so the sidecar can name one.
             let json_path = stem_path(&out, "json");
+            if !force && json_path.exists() && std::fs::read_to_string(&json_path).ok().as_deref() != Some(engine::DEMO_JSON) {
+                bail!("{} exists and is not the demo song; use --force to overwrite it, or -o to name another output", json_path.display());
+            }
             std::fs::write(&json_path, engine::DEMO_JSON)
                 .with_context(|| format!("saving the demo song JSON to {}", json_path.display()))?;
             pipeline(song, &render, song.band, &out, &export, &mix, settings, Source { song_json: json_path, model: None, generation: None })
@@ -232,11 +245,11 @@ fn run() -> Result<()> {
             }
             Ok(())
         }
-        Cmd::Write { mood, style, via, model, effort, render, export, mix } => {
+        Cmd::Write { mood, force, style, via, model, effort, render, export, mix } => {
             let via = via.unwrap_or(settings.claude.transport);
             let model = model.unwrap_or_else(|| settings.claude.model.clone());
             let effort = effort.unwrap_or(settings.claude.effort);
-            cmd_write(&mood, style.as_deref(), via, &model, effort, &render, &export, &mix, settings)
+            cmd_write(&mood, force, style.as_deref(), via, &model, effort, &render, &export, &mix, settings)
         }
         Cmd::Styles => cmd_styles(),
     }
@@ -264,6 +277,32 @@ fn sheet_of(song: &Song, seed: u64, voice: Option<Voice>) -> engine::SongSheet {
 /// `ext` may itself contain dots.
 fn stem_path(out: &Path, ext: &str) -> PathBuf {
     out.with_extension(ext)
+}
+
+/// Fails, before any work is done, when `out` names no audio format.
+fn check_format(out: &Path, export: &ExportArgs, settings: &settings::Settings) -> Result<()> {
+    let quality = export.quality.unwrap_or(settings.export.ogg_quality);
+    Format::from_path(out, quality, export.flac16, export.float).with_context(|| format!("output {}", out.display()))?;
+    Ok(())
+}
+
+/// The files a rendering command writes for output `out`: the song JSON,
+/// the audio and the sidecars.
+fn song_files(out: &Path) -> Vec<PathBuf> {
+    let mut v = vec![stem_path(out, "json"), out.to_path_buf()];
+    v.extend(["render.json", "sheet.json"].map(|e| stem_path(out, e)));
+    v
+}
+
+/// `dir/<slug>.ogg` for a new song, with `-2`, `-3`, ... added until none
+/// of its files exists (as the studio's `library::fresh_stem` does).
+fn fresh_out(dir: &Path, title: &str) -> PathBuf {
+    let base = slugify(title);
+    (1..)
+        .map(|k| if k == 1 { base.clone() } else { format!("{base}-{k}") })
+        .map(|name| dir.join(format!("{name}.ogg")))
+        .find(|out| !song_files(out).iter().any(|p| p.exists()))
+        .expect("an unbounded search finds a free name")
 }
 
 /// Where a rendered song came from, for the render sidecar.
@@ -535,6 +574,7 @@ fn song_meta(song: &Song) -> Meta {
 
 fn cmd_write(
     mood: &str,
+    force: bool,
     style: Option<&str>,
     via: Transport,
     model: &str,
@@ -544,6 +584,15 @@ fn cmd_write(
     mix_args: &MixArgs,
     settings: &settings::Settings,
 ) -> Result<()> {
+    // Check -o before the (paid) call to Claude, not after it.
+    if let Some(out) = &export.out {
+        check_format(out, export, settings)?;
+        if !force {
+            if let Some(p) = song_files(out).into_iter().find(|p| p.exists()) {
+                bail!("{} exists; use --force to overwrite it, or -o to name another output", p.display());
+            }
+        }
+    }
     let seed = resolve_seed(render.seed);
     let render = RenderArgs { seed: Some(seed), voice: render.voice };
     let claude: Box<dyn songwriter::claude::Claude> = match via {
@@ -559,7 +608,9 @@ fn cmd_write(
     let mut rng = songwriter::Rng::stream(seed, songwriter::WRITE_TAG);
     let req = songwriter::WriteRequest {
         mood,
-        voice: render.voice.voice(),
+        // Flag beats settings: `--voice auto` (the default) falls back to
+        // settings songwriter.voice.
+        voice: render.voice.voice().or(settings.songwriter.voice),
         style: style_id,
         year,
         model: Some(model.to_string()),
@@ -576,7 +627,11 @@ fn cmd_write(
 
     // Save the model's reply before validating it, so a rejected song is kept.
     let title = raw.get("title").and_then(|t| t.as_str()).unwrap_or("song");
-    let out = export.out.clone().unwrap_or_else(|| PathBuf::from(format!("{}.ogg", slugify(title))));
+    let out = match &export.out {
+        Some(out) => out.clone(),
+        None if force => PathBuf::from(format!("{}.ogg", slugify(title))),
+        None => fresh_out(Path::new(""), title),
+    };
     let json_path = stem_path(&out, "json");
     std::fs::write(&json_path, serde_json::to_string_pretty(&raw)?)
         .with_context(|| format!("saving raw song JSON to {}", json_path.display()))?;
@@ -674,5 +729,17 @@ mod tests {
     fn slugs() {
         assert_eq!(slugify("  Dust & Rain! "), "dust-rain");
         assert_eq!(slugify("!!!"), "song");
+    }
+
+    #[test]
+    fn fresh_out_skips_taken_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        assert_eq!(fresh_out(d, "Dust"), d.join("dust.ogg"));
+        std::fs::write(d.join("dust.json"), "{}").unwrap();
+        assert_eq!(fresh_out(d, "Dust"), d.join("dust-2.ogg"));
+        std::fs::write(d.join("dust-2.render.json"), "{}").unwrap();
+        assert_eq!(fresh_out(d, "Dust"), d.join("dust-3.ogg"));
+        assert_eq!(fresh_out(Path::new(""), "Dust"), PathBuf::from("dust.ogg"));
     }
 }
