@@ -66,7 +66,12 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
 }
 
 fn main() -> ExitCode {
-    let opt = match parse_args(std::env::args().skip(1)) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    let opt = match parse_args(args.into_iter()) {
         Ok(o) => o,
         Err(e) => {
             eprintln!("{e}");

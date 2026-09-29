@@ -116,9 +116,14 @@ impl Entry {
         } else {
             self.render.as_ref().and_then(|r| r.audio.clone()).filter(|a| a.is_file())
         };
+        // A sidecar's song_json names a take's own song when the stem has
+        // none of its own (the stem's own JSON always wins).
         if self.source != Source::Demo {
-            if let Some(p) = self.render.as_ref().and_then(|r| r.song_json.clone()).filter(|p| p.is_file()) {
-                self.source = Source::File(p);
+            let own = matches!(&self.source, Source::File(p) if p.is_file());
+            if !own {
+                if let Some(p) = self.render.as_ref().and_then(|r| r.song_json.clone()).filter(|p| p.is_file()) {
+                    self.source = Source::File(p);
+                }
             }
         }
     }

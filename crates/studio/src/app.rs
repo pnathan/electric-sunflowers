@@ -130,7 +130,7 @@ impl StudioApp {
             errors: Vec::new(),
             info: None,
             new_song: NewSong { open: opt.new_song, mood: String::new(), style: String::new(), voice: None, via: Via::Cli, model: String::new(), seed: String::new() },
-            step: if opt.screenshot.is_some() || opt.play > 0.0 { Step::WaitReady } else { Step::Done },
+            step: if opt.screenshot.is_some() || opt.play > 0.0 || opt.seek.is_some() { Step::WaitReady } else { Step::Done },
             start: std::time::Instant::now(),
             opt,
         };
@@ -394,7 +394,7 @@ impl StudioApp {
                 }
                 ui.label(RichText::new(sub.join(", ")).small().weak());
                 ui.add_space(3.0);
-                if r.clicked() && !sel {
+                if r.clicked() {
                     pick = Some(i);
                 }
             }
@@ -407,8 +407,12 @@ impl StudioApp {
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let busy = self.work.is_some();
-            if ui.add_enabled(!busy, egui::Button::new("New song...")).on_disabled_hover_text("A render is running").clicked() {
+            let busy_msg = match &self.work {
+                Some(Work::Write { .. }) => Some("Claude is writing a song"),
+                Some(Work::Render { .. }) => Some("A render is running"),
+                None => None,
+            };
+            if ui.add_enabled(busy_msg.is_none(), egui::Button::new("New song...")).on_disabled_hover_text(busy_msg.unwrap_or_default()).clicked() {
                 self.new_song.open = true;
             }
             ui.separator();
@@ -671,9 +675,16 @@ impl StudioApp {
         }
         match self.step {
             Step::WaitReady => {
-                let sheet_ready = self.view == View::Lyrics || self.sheet.as_ref().is_some_and(SheetView::ready);
-                let audio_ready = self.track.is_some() || self.audio_error.is_some();
-                if self.loaded.is_some() && sheet_ready && audio_ready && self.work.is_none() {
+                // With no song to open (--new and no SONG.json), the form
+                // itself is what the screenshot should show.
+                let ready = if self.loaded.is_none() && self.opt.song.is_none() && self.opt.open.is_none() {
+                    self.new_song.open
+                } else {
+                    let sheet_ready = self.view == View::Lyrics || self.sheet.as_ref().is_some_and(SheetView::ready);
+                    let audio_ready = self.track.is_some() || self.audio_error.is_some();
+                    self.loaded.is_some() && sheet_ready && audio_ready && self.work.is_none()
+                };
+                if ready {
                     if let Some(s) = self.opt.seek {
                         self.seek(s);
                         eprintln!("studio: seek to {s:.2} s -> position {:.3} s", self.pos());
