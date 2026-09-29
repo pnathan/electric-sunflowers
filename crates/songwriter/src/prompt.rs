@@ -79,9 +79,16 @@ pub fn song_prompt_with(
     let form = dir.form.form();
     // The newline after the voice clause is part of the template, so an
     // absent clause leaves a blank line.
-    let voice_line = match voice {
-        Some(v) => format!("It will be sung by a {v}."),
-        None => String::new(),
+    // A fixed duet names its own singers; a lone "sung by" clause would
+    // contradict it, so a requested voice becomes singer A's.
+    let duet_a = match (duet, voice) {
+        (DuetRequest::Duet { a: None, b }, Some(v)) => DuetRequest::Duet { a: Some(v), b: *b },
+        _ => *duet,
+    };
+    let duet = &duet_a;
+    let voice_line = match (voice, duet) {
+        (Some(v), DuetRequest::Auto | DuetRequest::Solo) => format!("It will be sung by a {v}."),
+        _ => String::new(),
     };
     let world_line = match dir.world {
         Some(w) => format!(" A touch of {w} may season it."),

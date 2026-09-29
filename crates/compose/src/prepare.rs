@@ -596,6 +596,34 @@ mod tests {
         }
     }
 
+    /// Claude's duet JSON is user input: empty lines, unknown singer
+    /// names, a duet on one voice type and a duet override in a solo song
+    /// must not panic.
+    #[test]
+    fn duet_prepare_survives_odd_input() {
+        let mut raw: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/songs/duet.json")).expect("duet.json is JSON");
+        raw["duet"] = json!({"voice": "baritone"});
+        for sec in raw["sections"].as_array_mut().unwrap() {
+            if sec.get("lines").is_some() {
+                sec["sing"] = json!("nobody");
+            }
+        }
+        let secs = raw["sections"].as_array_mut().unwrap();
+        secs.push(json!({"type": "verse", "sing": "both", "lines": []}));
+        secs.push(json!({"type": "chorus", "sing": "B", "lines": [{"syl": "", "ph": "", "chords": ["C"]}]}));
+        if let Ok((s, _)) = song::normalize_value(&raw) {
+            for seed in 0..3u64 {
+                let p = prepare_voices(&s, seed, VoiceChoice { a: Some(Voice::Soprano), b: Some(Voice::Baritone) });
+                assert_eq!(p.voice_b.is_some(), s.is_duet());
+                assert!(p.comp.lead.iter().chain(&p.comp.second).all(|n| n.t1 >= n.t0));
+            }
+        }
+        let same = duet_song();
+        let p = prepare_voices(&same, 1, VoiceChoice { a: Some(Voice::Tenor), b: Some(Voice::Tenor) });
+        assert_eq!(p.voice_b, Some(Voice::Tenor));
+    }
+
     #[test]
     fn prepare_produces_ordered_note_times() {
         let s = song();
