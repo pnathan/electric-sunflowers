@@ -63,7 +63,9 @@ pub fn render(id: TrackId, arr: &Arrangement, seed: u64, len: usize) -> Option<S
         TrackId::Harp => render_plucks(&arr.harp, &PluckParams::HARP, seed, HARP_NOTE, len),
         TrackId::Violin => render_violin(&arr.violin, len, seed),
         TrackId::Drums => return drums(arr.drums.as_deref()?, seed, len),
-        TrackId::Lead | TrackId::LeadB | TrackId::Doubles | TrackId::Harmony | TrackId::Choir => return None,
+        TrackId::Lead | TrackId::LeadB | TrackId::Doubles | TrackId::Harmony | TrackId::Choir => {
+            return None
+        }
     };
     if mono.iter().all(|&v| v == 0.0) {
         return None;

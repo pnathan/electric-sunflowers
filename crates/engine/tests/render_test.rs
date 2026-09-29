@@ -66,7 +66,11 @@ fn demo_mix_is_finite_and_normalised() {
     for id in TrackId::ALL {
         if id == TrackId::LeadB {
             // The demo song is solo: no singer B, so no lead B stem.
-            assert!(stems.get(id).is_none(), "solo demo has a {} stem", id.name());
+            assert!(
+                stems.get(id).is_none(),
+                "solo demo has a {} stem",
+                id.name()
+            );
             continue;
         }
         assert!(stems.get(id).is_some(), "demo has no {} stem", id.name());

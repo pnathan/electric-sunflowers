@@ -72,8 +72,16 @@ pub struct Options {
 
 /// A render or a write running in the background.
 enum Work {
-    Render { job: Job<jobs::Rendered>, stem: PathBuf, seed: u64, select: bool },
-    Write { job: Job<jobs::Written>, seed: u64 },
+    Render {
+        job: Job<jobs::Rendered>,
+        stem: PathBuf,
+        seed: u64,
+        select: bool,
+    },
+    Write {
+        job: Job<jobs::Written>,
+        seed: u64,
+    },
 }
 
 /// The result of a finished `Work`.
@@ -155,7 +163,13 @@ pub struct StudioApp {
 }
 
 pub(crate) fn voices() -> [Voice; 5] {
-    [Voice::Bass, Voice::Baritone, Voice::Tenor, Voice::Alto, Voice::Soprano]
+    [
+        Voice::Bass,
+        Voice::Baritone,
+        Voice::Tenor,
+        Voice::Alto,
+        Voice::Soprano,
+    ]
 }
 
 fn via_of(t: songwriter::claude::Transport) -> Via {
@@ -202,20 +216,31 @@ impl StudioApp {
             errors: Vec::new(),
             info: None,
             new_song,
-            take: TakeForm { open: false, seed: String::new(), voice: None },
+            take: TakeForm {
+                open: false,
+                seed: String::new(),
+                voice: None,
+            },
             settings,
             settings_form: SettingsForm::new(),
             mixer: MixerPanel::new(),
             stems: None,
             stems_job: None,
             remix_job: None,
-            step: if opt.screenshot.is_some() || opt.play > 0.0 || opt.seek.is_some() { Step::WaitReady } else { Step::Done },
+            step: if opt.screenshot.is_some() || opt.play > 0.0 || opt.seek.is_some() {
+                Step::WaitReady
+            } else {
+                Step::Done
+            },
             start: std::time::Instant::now(),
             opt,
         };
         app.mixer.open = app.opt.mixer;
         if let Err(e) = std::fs::create_dir_all(&app.opt.dir) {
-            app.errors.push(format!("cannot create the library {}: {e}", app.opt.dir.display()));
+            app.errors.push(format!(
+                "cannot create the library {}: {e}",
+                app.opt.dir.display()
+            ));
         }
         app.rescan();
         let ctx = cc.egui_ctx.clone();
@@ -223,17 +248,33 @@ impl StudioApp {
             let i = app.find_or_add(&p);
             app.select(&ctx, i);
         } else if let Some(name) = app.opt.open.clone() {
-            match app.entries.iter().position(|e| e.name == name || e.stem.file_name().is_some_and(|f| f.to_string_lossy() == name)) {
+            match app.entries.iter().position(|e| {
+                e.name == name
+                    || e.stem
+                        .file_name()
+                        .is_some_and(|f| f.to_string_lossy() == name)
+            }) {
                 Some(i) => app.select(&ctx, i),
-                None => app.errors.push(format!("no song named {name:?} in {}", app.opt.dir.display())),
+                None => app.errors.push(format!(
+                    "no song named {name:?} in {}",
+                    app.opt.dir.display()
+                )),
             }
         }
         app
     }
 
     fn rescan(&mut self) {
-        let keep = self.selected.and_then(|i| self.entries.get(i)).map(|e| e.stem.clone());
-        let extra: Vec<Entry> = self.entries.iter().filter(|e| e.stem.parent() != Some(self.opt.dir.as_path()) && e.source != Source::Demo).cloned().collect();
+        let keep = self
+            .selected
+            .and_then(|i| self.entries.get(i))
+            .map(|e| e.stem.clone());
+        let extra: Vec<Entry> = self
+            .entries
+            .iter()
+            .filter(|e| e.stem.parent() != Some(self.opt.dir.as_path()) && e.source != Source::Demo)
+            .cloned()
+            .collect();
         match library::scan(&self.opt.dir) {
             Ok(v) => self.entries = v,
             Err(e) => {
@@ -252,7 +293,9 @@ impl StudioApp {
     fn find_or_add(&mut self, path: &Path) -> usize {
         let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         let c = canon(path);
-        if let Some(i) = self.entries.iter().position(|e| canon(&e.stem.with_extension("json")) == c || canon(&e.sibling("json")) == c) {
+        if let Some(i) = self.entries.iter().position(|e| {
+            canon(&e.stem.with_extension("json")) == c || canon(&e.sibling("json")) == c
+        }) {
             return i;
         }
         self.entries.push(Entry::for_song(path));
@@ -260,7 +303,9 @@ impl StudioApp {
     }
 
     fn select(&mut self, ctx: &egui::Context, i: usize) {
-        let Some(entry) = self.entries.get(i).cloned() else { return };
+        let Some(entry) = self.entries.get(i).cloned() else {
+            return;
+        };
         self.selected = Some(i);
         self.flush_mix();
         self.track = None;
@@ -275,12 +320,16 @@ impl StudioApp {
         }
         self.mixer.reset_for(&entry.stem, entry.audio.as_deref());
         eprintln!("studio: opening {}", entry.name);
-        self.load = Some(Job::spawn(ctx, "Composing the melody", move |_| jobs::load(entry)));
+        self.load = Some(Job::spawn(ctx, "Composing the melody", move |_| {
+            jobs::load(entry)
+        }));
     }
 
     fn open_audio(&mut self) {
         let Some(l) = &self.loaded else { return };
-        let Some(path) = l.entry.audio.clone() else { return };
+        let Some(path) = l.entry.audio.clone() else {
+            return;
+        };
         if self.output.is_none() {
             self.output = Some(Output::open());
         }
@@ -301,7 +350,13 @@ impl StudioApp {
     /// Starts rendering the loaded song. `take` renders to a new stem
     /// beside it instead of the entry's own, using `seed`/`voice` when
     /// given (else the song's own).
-    fn start_render_as(&mut self, ctx: &egui::Context, take: bool, seed: Option<u64>, voice: Option<Option<Voice>>) {
+    fn start_render_as(
+        &mut self,
+        ctx: &egui::Context,
+        take: bool,
+        seed: Option<u64>,
+        voice: Option<Option<Voice>>,
+    ) {
         if self.work.is_some() {
             return;
         }
@@ -322,7 +377,12 @@ impl StudioApp {
             }
             Source::File(p) => {
                 let stem = if take {
-                    let dir = l.entry.stem.parent().map(Path::to_path_buf).unwrap_or_else(|| self.opt.dir.clone());
+                    let dir = l
+                        .entry
+                        .stem
+                        .parent()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| self.opt.dir.clone());
                     library::fresh_stem(&dir, &format!("{}-seed{}", l.entry.name, seed))
                 } else {
                     l.entry.stem.clone()
@@ -330,13 +390,25 @@ impl StudioApp {
                 (stem, p.clone())
             }
         };
-        let plan = RenderPlan { song: l.song.clone(), seed, voice, stem: stem.clone(), song_json, model: None };
+        let plan = RenderPlan {
+            song: l.song.clone(),
+            seed,
+            voice,
+            stem: stem.clone(),
+            song_json,
+            model: None,
+        };
         // The render reads <stem>.mix.json; make it current first.
         self.flush_mix();
         self.tried.push(stem.clone());
         eprintln!("studio: rendering {} (seed {})", stem.display(), plan.seed);
         let job = Job::spawn(ctx, "Rendering", move |rep| jobs::render(&plan, rep));
-        self.work = Some(Work::Render { job, stem, seed, select: take });
+        self.work = Some(Work::Render {
+            job,
+            stem,
+            seed,
+            select: take,
+        });
     }
 
     /// Starts rendering the loaded song. `take` renders to a new stem
@@ -356,12 +428,17 @@ impl StudioApp {
             match f.seed.trim().parse() {
                 Ok(s) => s,
                 Err(_) => {
-                    self.errors.push(format!("seed {:?} is not a whole number", f.seed));
+                    self.errors
+                        .push(format!("seed {:?} is not a whole number", f.seed));
                     return;
                 }
             }
         };
-        let style = if f.style.is_empty() { None } else { f.style.parse::<songwriter::styles::StyleId>().ok() };
+        let style = if f.style.is_empty() {
+            None
+        } else {
+            f.style.parse::<songwriter::styles::StyleId>().ok()
+        };
         let plan = WritePlan {
             mood: f.mood.trim().to_string(),
             style,
@@ -372,7 +449,12 @@ impl StudioApp {
             seed,
         };
         eprintln!("studio: writing a song (seed {seed})");
-        self.work = Some(Work::Write { job: Job::spawn(ctx, "Claude is writing the song", move |rep| jobs::write(&plan, rep)), seed });
+        self.work = Some(Work::Write {
+            job: Job::spawn(ctx, "Claude is writing the song", move |rep| {
+                jobs::write(&plan, rep)
+            }),
+            seed,
+        });
         self.new_song.open = false;
     }
 
@@ -382,11 +464,20 @@ impl StudioApp {
             self.load = None;
             match r {
                 Ok(l) => {
-                    eprintln!("studio: loaded {} (seed {}, {} sections, {:.1} s)", l.entry.name, l.seed, l.sheet.sections.len(), l.sheet.duration_s);
+                    eprintln!(
+                        "studio: loaded {} (seed {}, {} sections, {:.1} s)",
+                        l.entry.name,
+                        l.seed,
+                        l.sheet.sections.len(),
+                        l.sheet.duration_s
+                    );
                     for n in &l.notes {
                         eprintln!("studio: {n}");
                     }
-                    self.sheet = Some(SheetView::new(sheet_of(self.sheet_kind, &l), self.svg_opt.clone()));
+                    self.sheet = Some(SheetView::new(
+                        sheet_of(self.sheet_kind, &l),
+                        self.svg_opt.clone(),
+                    ));
                     // With the seed unknown, stems would be another take:
                     // play the file until the user opens the mixer.
                     if !l.seed_known {
@@ -400,7 +491,8 @@ impl StudioApp {
         }
         // A song without audio gets rendered once.
         if let Some(l) = &self.loaded {
-            if l.entry.audio.is_none() && self.work.is_none() && !self.tried.contains(&l.entry.stem) {
+            if l.entry.audio.is_none() && self.work.is_none() && !self.tried.contains(&l.entry.stem)
+            {
                 self.start_render(ctx, false);
             }
         }
@@ -412,10 +504,26 @@ impl StudioApp {
         if let Some(r) = done {
             let work = self.work.take();
             match (work, r) {
-                (Some(Work::Render { stem, seed, select, job }), Ok(Finished::Rendered(rendered))) => {
-                    eprintln!("studio: rendered {} in {:.1} s", rendered.audio.display(), job.elapsed());
+                (
+                    Some(Work::Render {
+                        stem,
+                        seed,
+                        select,
+                        job,
+                    }),
+                    Ok(Finished::Rendered(rendered)),
+                ) => {
+                    eprintln!(
+                        "studio: rendered {} in {:.1} s",
+                        rendered.audio.display(),
+                        job.elapsed()
+                    );
                     if select || self.loaded.as_ref().is_some_and(|l| l.entry.stem == stem) {
-                        self.stems = Some(StemCache { stem: stem.clone(), seed, stems: rendered.stems });
+                        self.stems = Some(StemCache {
+                            stem: stem.clone(),
+                            seed,
+                            stems: rendered.stems,
+                        });
                     }
                     self.rescan();
                     if select {
@@ -436,14 +544,26 @@ impl StudioApp {
                     }
                 }
                 (Some(Work::Write { job, seed }), Ok(Finished::Written(w))) => {
-                    eprintln!("studio: wrote {} in {:.1} s", w.json.display(), job.elapsed());
-                    self.stems = Some(StemCache { stem: w.stem, seed, stems: w.rendered.stems });
+                    eprintln!(
+                        "studio: wrote {} in {:.1} s",
+                        w.json.display(),
+                        job.elapsed()
+                    );
+                    self.stems = Some(StemCache {
+                        stem: w.stem,
+                        seed,
+                        stems: w.rendered.stems,
+                    });
                     self.rescan();
                     let i = self.find_or_add(&w.json);
                     self.select(ctx, i);
                 }
-                (Some(Work::Render { .. }), Err(e)) => self.errors.push(format!("render failed: {e}")),
-                (Some(Work::Write { .. }), Err(e)) => self.errors.push(format!("new song failed: {e}")),
+                (Some(Work::Render { .. }), Err(e)) => {
+                    self.errors.push(format!("render failed: {e}"))
+                }
+                (Some(Work::Write { .. }), Err(e)) => {
+                    self.errors.push(format!("new song failed: {e}"))
+                }
                 (_, Ok(_)) | (None, Err(_)) => {}
             }
         }
@@ -481,7 +601,11 @@ impl StudioApp {
             let current = self.loaded.as_ref().is_some_and(|l| l.entry.stem == stem);
             match r {
                 Ok(stems) if current => {
-                    eprintln!("studio: stems for {} in {:.1} s", stem.display(), job.elapsed());
+                    eprintln!(
+                        "studio: stems for {} in {:.1} s",
+                        stem.display(),
+                        job.elapsed()
+                    );
                     self.stems = Some(StemCache { stem, seed, stems });
                     // Play the sidecar's mix: the file may not hold it.
                     if self.attach_stems() == Some(true) {
@@ -492,7 +616,8 @@ impl StudioApp {
                 Err(e) if current => {
                     self.mixer.stems_failed = true;
                     self.mixer.auto_load = false;
-                    self.errors.push(format!("could not load stems for the mixer: {e}"));
+                    self.errors
+                        .push(format!("could not load stems for the mixer: {e}"));
                 }
                 Err(_) => {}
             }
@@ -503,7 +628,11 @@ impl StudioApp {
             let current = self.loaded.as_ref().is_some_and(|l| l.entry.stem == stem);
             match r {
                 Ok(m) if current => {
-                    eprintln!("studio: re-mix in {:.2} s (mix {:.2} s)", job.elapsed(), m.mix_s);
+                    eprintln!(
+                        "studio: re-mix in {:.2} s (mix {:.2} s)",
+                        job.elapsed(),
+                        m.mix_s
+                    );
                     self.play_remix(m.buf);
                 }
                 Ok(_) => {}
@@ -521,7 +650,9 @@ impl StudioApp {
         if want && !have && self.stems_job.is_none() && self.work.is_none() {
             let (song, seed, voice, stem) = (l.song.clone(), l.seed, l.voice, l.entry.stem.clone());
             eprintln!("studio: loading stems for {} (seed {seed})", stem.display());
-            let job = Job::spawn(ctx, "Loading stems for the mixer", move |rep| Ok(jobs::stems(&song, seed, voice, rep)));
+            let job = Job::spawn(ctx, "Loading stems for the mixer", move |rep| {
+                Ok(jobs::stems(&song, seed, voice, rep))
+            });
             self.stems_job = Some(MixJob { stem, seed, job });
             return;
         }
@@ -529,13 +660,17 @@ impl StudioApp {
         if !have || self.remix_job.is_some() {
             return;
         }
-        let Some(settings) = self.mixer.take_due(now) else { return };
+        let Some(settings) = self.mixer.take_due(now) else {
+            return;
+        };
         if let Err(e) = self.mixer.save() {
             self.errors.push(format!("could not save the mix: {e}"));
         }
         let c = self.stems.as_ref().expect("have");
         let (stems, seed, stem, band) = (c.stems.clone(), c.seed, c.stem.clone(), l.song.band);
-        let job = Job::spawn(ctx, "Re-mixing", move |_| Ok(jobs::remix(&stems, &band, seed, &settings)));
+        let job = Job::spawn(ctx, "Re-mixing", move |_| {
+            Ok(jobs::remix(&stems, &band, seed, &settings))
+        });
         self.remix_job = Some(MixJob { stem, seed, job });
     }
 
@@ -555,7 +690,11 @@ impl StudioApp {
         };
         match Track::take_over(out, self.track.as_ref(), buf, self.opt.volume) {
             Ok(t) => {
-                eprintln!("studio: playing the re-mix from {:.3} s (playing={})", t.position(), t.playing());
+                eprintln!(
+                    "studio: playing the re-mix from {:.3} s (playing={})",
+                    t.position(),
+                    t.playing()
+                );
                 // The old player stops when dropped here, after the new one runs.
                 self.track = Some(t);
                 self.audio_error = None;
@@ -565,7 +704,9 @@ impl StudioApp {
     }
 
     fn pos(&self) -> f64 {
-        self.scrub.or_else(|| self.track.as_ref().map(Track::position)).unwrap_or(0.0)
+        self.scrub
+            .or_else(|| self.track.as_ref().map(Track::position))
+            .unwrap_or(0.0)
     }
 
     fn playing(&self) -> bool {
@@ -596,37 +737,49 @@ impl StudioApp {
                 self.rescan();
             }
         });
-        ui.label(RichText::new(self.opt.dir.display().to_string()).small().weak());
+        ui.label(
+            RichText::new(self.opt.dir.display().to_string())
+                .small()
+                .weak(),
+        );
         ui.separator();
         let mut pick = None;
-        egui::ScrollArea::vertical().id_salt("library").show(ui, |ui| {
-            for (i, e) in self.entries.iter().enumerate() {
-                let sel = self.selected == Some(i);
-                let r = ui.selectable_label(sel, RichText::new(&e.name).strong());
-                let mut sub = Vec::new();
-                sub.push(if e.audio.is_some() { "ogg".to_string() } else { "no audio".to_string() });
-                match &e.render {
-                    Some(r) => {
-                        if let Some(s) = r.seed {
-                            sub.push(format!("seed {s}"));
+        egui::ScrollArea::vertical()
+            .id_salt("library")
+            .show(ui, |ui| {
+                for (i, e) in self.entries.iter().enumerate() {
+                    let sel = self.selected == Some(i);
+                    let r = ui.selectable_label(sel, RichText::new(&e.name).strong());
+                    let mut sub = Vec::new();
+                    sub.push(if e.audio.is_some() {
+                        "ogg".to_string()
+                    } else {
+                        "no audio".to_string()
+                    });
+                    match &e.render {
+                        Some(r) => {
+                            if let Some(s) = r.seed {
+                                sub.push(format!("seed {s}"));
+                            }
+                            if let Some(v) = r.voice {
+                                sub.push(v.as_str().to_string());
+                            }
+                            if let Some(s) = &r.style {
+                                sub.push(s.clone());
+                            }
                         }
-                        if let Some(v) = r.voice {
-                            sub.push(v.as_str().to_string());
+                        None if e.audio.is_some() && e.source != Source::Demo => {
+                            sub.push("seed unknown".into())
                         }
-                        if let Some(s) = &r.style {
-                            sub.push(s.clone());
-                        }
+                        None => {}
                     }
-                    None if e.audio.is_some() && e.source != Source::Demo => sub.push("seed unknown".into()),
-                    None => {}
+                    ui.label(RichText::new(sub.join(", ")).small().weak());
+                    ui.add_space(3.0);
+                    if r.clicked() {
+                        pick = Some(i);
+                    }
                 }
-                ui.label(RichText::new(sub.join(", ")).small().weak());
-                ui.add_space(3.0);
-                if r.clicked() {
-                    pick = Some(i);
-                }
-            }
-        });
+            });
         if let Some(i) = pick {
             let ctx = ui.ctx().clone();
             self.select(&ctx, i);
@@ -640,14 +793,24 @@ impl StudioApp {
                 Some(Work::Render { .. }) => Some("A render is running"),
                 None => None,
             };
-            if ui.add_enabled(busy_msg.is_none(), egui::Button::new("New song...")).on_disabled_hover_text(busy_msg.unwrap_or_default()).clicked() {
+            if ui
+                .add_enabled(busy_msg.is_none(), egui::Button::new("New song..."))
+                .on_disabled_hover_text(busy_msg.unwrap_or_default())
+                .clicked()
+            {
                 self.new_song.voice = self.settings.songwriter.voice;
                 self.new_song.via = via_of(self.settings.claude.transport);
                 self.new_song.model = self.settings.claude.model.clone();
                 self.new_song.open = true;
             }
             ui.separator();
-            if ui.add_enabled(self.loaded.is_some() && busy_msg.is_none(), egui::Button::new("Render a new take...")).clicked() {
+            if ui
+                .add_enabled(
+                    self.loaded.is_some() && busy_msg.is_none(),
+                    egui::Button::new("Render a new take..."),
+                )
+                .clicked()
+            {
                 self.take.seed.clear();
                 self.take.voice = None;
                 self.take.open = true;
@@ -656,7 +819,10 @@ impl StudioApp {
             if ui.button("Settings...").clicked() {
                 self.settings_form.open_from(&self.settings);
             }
-            if ui.add_enabled(self.loaded.is_some(), egui::Button::new("Mixer...")).clicked() {
+            if ui
+                .add_enabled(self.loaded.is_some(), egui::Button::new("Mixer..."))
+                .clicked()
+            {
                 self.mixer.open = true;
             }
             ui.separator();
@@ -700,7 +866,11 @@ impl StudioApp {
                 let text = format!("{}  ({:.0} s)", st.stage, el);
                 match st.frac {
                     Some(f) => {
-                        ui.add(egui::ProgressBar::new(f).text(text).desired_width(ui.available_width().min(600.0)));
+                        ui.add(
+                            egui::ProgressBar::new(f)
+                                .text(text)
+                                .desired_width(ui.available_width().min(600.0)),
+                        );
                     }
                     None => {
                         ui.label(text);
@@ -738,16 +908,31 @@ impl StudioApp {
             let has = self.track.is_some();
             let playing = self.playing();
             let label = if playing { "Pause" } else { "Play" };
-            if ui.add_enabled(has, egui::Button::new(RichText::new(label).size(16.0)).min_size(egui::vec2(70.0, 28.0))).clicked() {
+            if ui
+                .add_enabled(
+                    has,
+                    egui::Button::new(RichText::new(label).size(16.0))
+                        .min_size(egui::vec2(70.0, 28.0)),
+                )
+                .clicked()
+            {
                 self.toggle();
             }
-            let dur = self.track.as_ref().map(|t| t.duration).or(self.loaded.as_ref().map(|l| l.sheet.duration_s)).unwrap_or(0.0);
+            let dur = self
+                .track
+                .as_ref()
+                .map(|t| t.duration)
+                .or(self.loaded.as_ref().map(|l| l.sheet.duration_s))
+                .unwrap_or(0.0);
             let pos = self.pos();
             ui.label(RichText::new(format!("{} / {}", clock(pos), clock(dur))).monospace());
             let vol_w = 160.0;
             ui.spacing_mut().slider_width = (ui.available_width() - vol_w - 90.0).max(80.0);
             let mut p = pos;
-            let r = ui.add_enabled(has, egui::Slider::new(&mut p, 0.0..=dur.max(0.01)).show_value(false));
+            let r = ui.add_enabled(
+                has,
+                egui::Slider::new(&mut p, 0.0..=dur.max(0.01)).show_value(false),
+            );
             if r.dragged() {
                 self.scrub = Some(p);
             } else if r.drag_stopped() || r.changed() {
@@ -759,7 +944,10 @@ impl StudioApp {
             }
             ui.spacing_mut().slider_width = vol_w - 40.0;
             ui.label("Vol");
-            if ui.add(egui::Slider::new(&mut self.opt.volume, 0.0..=1.0).show_value(false)).changed() {
+            if ui
+                .add(egui::Slider::new(&mut self.opt.volume, 0.0..=1.0).show_value(false))
+                .changed()
+            {
                 if let Some(t) = &self.track {
                     t.set_volume(self.opt.volume);
                 }
@@ -786,7 +974,11 @@ impl StudioApp {
             });
         }
         if !l.notes.is_empty() {
-            egui::CollapsingHeader::new(RichText::new(format!("{} normaliser notes", l.notes.len())).small()).id_salt("notes").show(ui, |ui| {
+            egui::CollapsingHeader::new(
+                RichText::new(format!("{} normaliser notes", l.notes.len())).small(),
+            )
+            .id_salt("notes")
+            .show(ui, |ui| {
                 for n in &l.notes {
                     ui.label(RichText::new(n).small());
                 }
@@ -795,7 +987,11 @@ impl StudioApp {
         if let Some(g) = l.entry.render.as_ref().and_then(|r| r.generation.as_ref()) {
             ui.label(RichText::new(g.summary()).small().weak());
         }
-        if l.entry.audio.is_none() && self.track.is_none() && self.work.is_none() && self.tried.contains(&l.entry.stem) {
+        if l.entry.audio.is_none()
+            && self.track.is_none()
+            && self.work.is_none()
+            && self.tried.contains(&l.entry.stem)
+        {
             ui.horizontal(|ui| {
                 ui.label("No audio.");
                 if ui.button("Render audio").clicked() {
@@ -839,9 +1035,15 @@ impl StudioApp {
                 let lyrics = &mut self.lyrics;
                 let sv = &mut self.sheet;
                 let full = ui.available_rect_before_wrap();
-                let wl = (full.width() * 0.38).max(260.0).min(full.width() - 200.0).max(0.0);
+                let wl = (full.width() * 0.38)
+                    .max(260.0)
+                    .min(full.width() - 200.0)
+                    .max(0.0);
                 let left = egui::Rect::from_min_size(full.min, egui::vec2(wl, full.height()));
-                let right = egui::Rect::from_min_max(egui::pos2(full.left() + wl + 12.0, full.top()), full.max);
+                let right = egui::Rect::from_min_max(
+                    egui::pos2(full.left() + wl + 12.0, full.top()),
+                    full.max,
+                );
                 let down = egui::Layout::top_down(egui::Align::Min);
                 ui.scope_builder(egui::UiBuilder::new().max_rect(left).layout(down), |ui| {
                     if let Some(t) = lyrics.ui(ui, sheet, pos, playing) {
@@ -849,7 +1051,11 @@ impl StudioApp {
                     }
                 });
                 let x = full.left() + wl + 6.0;
-                ui.painter().vline(x, full.y_range(), ui.visuals().widgets.noninteractive.bg_stroke);
+                ui.painter().vline(
+                    x,
+                    full.y_range(),
+                    ui.visuals().widgets.noninteractive.bg_stroke,
+                );
                 ui.scope_builder(egui::UiBuilder::new().max_rect(right).layout(down), |ui| {
                     if let Some(s) = sv.as_mut() {
                         if let Some(t) = s.ui(ui, pos, playing) {
@@ -870,55 +1076,100 @@ impl StudioApp {
         }
         let mut open = true;
         let mut submit = false;
-        egui::Window::new("New song").open(&mut open).collapsible(false).default_width(460.0).show(ctx, |ui| {
-            let f = &mut self.new_song;
-            ui.label("What should the song be about? (mood, subject, a line, a place)");
-            ui.add(egui::TextEdit::multiline(&mut f.mood).desired_rows(4).desired_width(f32::INFINITY));
-            egui::Grid::new("new-song-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                ui.label("Style");
-                let cur = if f.style.is_empty() {
-                    "Songwriter's choice".to_string()
-                } else {
-                    songwriter::styles::style(&f.style).map(|s| s.label.to_string()).unwrap_or_else(|_| f.style.clone())
-                };
-                egui::ComboBox::from_id_salt("style").selected_text(cur).width(280.0).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut f.style, String::new(), "Songwriter's choice");
-                    for (key, s) in songwriter::styles::styles() {
-                        ui.selectable_value(&mut f.style, key.to_string(), s.label);
-                    }
-                });
-                ui.end_row();
-                ui.label("Voice");
-                egui::ComboBox::from_id_salt("voice").selected_text(f.voice.map(|v| v.label()).unwrap_or("Songwriter's choice")).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut f.voice, None, "Songwriter's choice");
-                    for v in voices() {
-                        ui.selectable_value(&mut f.voice, Some(v), v.label());
-                    }
-                });
-                ui.end_row();
-                ui.label("Claude via");
-                ui.horizontal(|ui| {
-                    ui.radio_value(&mut f.via, Via::Cli, "claude CLI (logged-in account)");
-                    ui.radio_value(&mut f.via, Via::Api, "API (ANTHROPIC_API_KEY)");
-                });
-                ui.end_row();
-                ui.label("Model");
-                ui.add(egui::TextEdit::singleline(&mut f.model).hint_text("default").desired_width(220.0));
-                ui.end_row();
-                ui.label("Seed");
-                ui.add(egui::TextEdit::singleline(&mut f.seed).hint_text("random").desired_width(220.0));
-                ui.end_row();
+        egui::Window::new("New song")
+            .open(&mut open)
+            .collapsible(false)
+            .default_width(460.0)
+            .show(ctx, |ui| {
+                let f = &mut self.new_song;
+                ui.label("What should the song be about? (mood, subject, a line, a place)");
+                ui.add(
+                    egui::TextEdit::multiline(&mut f.mood)
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY),
+                );
+                egui::Grid::new("new-song-grid")
+                    .num_columns(2)
+                    .spacing([10.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Style");
+                        let cur = if f.style.is_empty() {
+                            "Songwriter's choice".to_string()
+                        } else {
+                            songwriter::styles::style(&f.style)
+                                .map(|s| s.label.to_string())
+                                .unwrap_or_else(|_| f.style.clone())
+                        };
+                        egui::ComboBox::from_id_salt("style")
+                            .selected_text(cur)
+                            .width(280.0)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut f.style,
+                                    String::new(),
+                                    "Songwriter's choice",
+                                );
+                                for (key, s) in songwriter::styles::styles() {
+                                    ui.selectable_value(&mut f.style, key.to_string(), s.label);
+                                }
+                            });
+                        ui.end_row();
+                        ui.label("Voice");
+                        egui::ComboBox::from_id_salt("voice")
+                            .selected_text(
+                                f.voice.map(|v| v.label()).unwrap_or("Songwriter's choice"),
+                            )
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut f.voice, None, "Songwriter's choice");
+                                for v in voices() {
+                                    ui.selectable_value(&mut f.voice, Some(v), v.label());
+                                }
+                            });
+                        ui.end_row();
+                        ui.label("Claude via");
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut f.via, Via::Cli, "claude CLI (logged-in account)");
+                            ui.radio_value(&mut f.via, Via::Api, "API (ANTHROPIC_API_KEY)");
+                        });
+                        ui.end_row();
+                        ui.label("Model");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut f.model)
+                                .hint_text("default")
+                                .desired_width(220.0),
+                        );
+                        ui.end_row();
+                        ui.label("Seed");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut f.seed)
+                                .hint_text("random")
+                                .desired_width(220.0),
+                        );
+                        ui.end_row();
+                    });
+                if f.via == Via::Api && std::env::var_os("ANTHROPIC_API_KEY").is_none() {
+                    ui.colored_label(
+                        Color32::from_rgb(230, 170, 40),
+                        "ANTHROPIC_API_KEY is not set.",
+                    );
+                }
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Saved to {}. Writing takes a minute or more; rendering about 20 s.",
+                        self.opt.dir.display()
+                    ))
+                    .small()
+                    .weak(),
+                );
+                let ok = !f.mood.trim().is_empty();
+                if ui
+                    .add_enabled(ok, egui::Button::new("Write and render"))
+                    .clicked()
+                {
+                    submit = true;
+                }
             });
-            if f.via == Via::Api && std::env::var_os("ANTHROPIC_API_KEY").is_none() {
-                ui.colored_label(Color32::from_rgb(230, 170, 40), "ANTHROPIC_API_KEY is not set.");
-            }
-            ui.add_space(6.0);
-            ui.label(RichText::new(format!("Saved to {}. Writing takes a minute or more; rendering about 20 s.", self.opt.dir.display())).small().weak());
-            let ok = !f.mood.trim().is_empty();
-            if ui.add_enabled(ok, egui::Button::new("Write and render")).clicked() {
-                submit = true;
-            }
-        });
         if !open {
             self.new_song.open = false;
         }
@@ -933,27 +1184,46 @@ impl StudioApp {
         }
         let mut open = true;
         let mut submit = false;
-        egui::Window::new("Render a new take").open(&mut open).collapsible(false).default_width(360.0).show(ctx, |ui| {
-            let f = &mut self.take;
-            egui::Grid::new("take-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                ui.label("Seed");
-                ui.add(egui::TextEdit::singleline(&mut f.seed).hint_text("random").desired_width(220.0));
-                ui.end_row();
-                ui.label("Voice");
-                egui::ComboBox::from_id_salt("take-voice").selected_text(f.voice.map(|v| v.label()).unwrap_or("Same as now")).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut f.voice, None, "Same as now");
-                    for v in voices() {
-                        ui.selectable_value(&mut f.voice, Some(v), v.label());
-                    }
-                });
-                ui.end_row();
+        egui::Window::new("Render a new take")
+            .open(&mut open)
+            .collapsible(false)
+            .default_width(360.0)
+            .show(ctx, |ui| {
+                let f = &mut self.take;
+                egui::Grid::new("take-grid")
+                    .num_columns(2)
+                    .spacing([10.0, 8.0])
+                    .show(ui, |ui| {
+                        ui.label("Seed");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut f.seed)
+                                .hint_text("random")
+                                .desired_width(220.0),
+                        );
+                        ui.end_row();
+                        ui.label("Voice");
+                        egui::ComboBox::from_id_salt("take-voice")
+                            .selected_text(f.voice.map(|v| v.label()).unwrap_or("Same as now"))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut f.voice, None, "Same as now");
+                                for v in voices() {
+                                    ui.selectable_value(&mut f.voice, Some(v), v.label());
+                                }
+                            });
+                        ui.end_row();
+                    });
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(
+                        "Renders to a new stem beside this song; the current one is untouched.",
+                    )
+                    .small()
+                    .weak(),
+                );
+                if ui.button("Render").clicked() {
+                    submit = true;
+                }
             });
-            ui.add_space(6.0);
-            ui.label(RichText::new("Renders to a new stem beside this song; the current one is untouched.").small().weak());
-            if ui.button("Render").clicked() {
-                submit = true;
-            }
-        });
         if !open {
             self.take.open = false;
         }
@@ -965,7 +1235,8 @@ impl StudioApp {
                 match self.take.seed.trim().parse() {
                     Ok(s) => s,
                     Err(_) => {
-                        self.errors.push(format!("seed {:?} is not a whole number", self.take.seed));
+                        self.errors
+                            .push(format!("seed {:?} is not a whole number", self.take.seed));
                         return;
                     }
                 }
@@ -980,16 +1251,25 @@ impl StudioApp {
             return;
         }
         let Some(l) = &self.loaded else {
-            let info = mixer::Info { status: mixer::Status::NoStems, lead_voice: "", seed_known: true };
+            let info = mixer::Info {
+                status: mixer::Status::NoStems,
+                lead_voice: "",
+                seed_known: true,
+            };
             self.mixer.ui(ctx, &info);
             return;
         };
         let have = self.stems.as_ref().is_some_and(|c| c.stem == l.entry.stem);
         let status = if have {
-            mixer::Status::Ready { remixing: self.remix_job.is_some() }
+            mixer::Status::Ready {
+                remixing: self.remix_job.is_some(),
+            }
         } else if let Some(j) = &self.stems_job {
             let st = j.job.status();
-            mixer::Status::Loading { stage: st.stage, frac: st.frac }
+            mixer::Status::Loading {
+                stage: st.stage,
+                frac: st.frac,
+            }
         } else if matches!(&self.work, Some(Work::Render { stem, .. }) if *stem == l.entry.stem) {
             mixer::Status::WaitRender
         } else if self.mixer.stems_failed {
@@ -998,10 +1278,21 @@ impl StudioApp {
             // `poll_mixer` starts the stems job on the next frame, or once
             // the running render or write ends.
             ctx.request_repaint();
-            let stage = if self.work.is_some() { "Waiting for the running job" } else { "Starting" };
-            mixer::Status::Loading { stage: stage.into(), frac: None }
+            let stage = if self.work.is_some() {
+                "Waiting for the running job"
+            } else {
+                "Starting"
+            };
+            mixer::Status::Loading {
+                stage: stage.into(),
+                frac: None,
+            }
         };
-        let info = mixer::Info { status, lead_voice: l.sheet.voice.label(), seed_known: l.seed_known };
+        let info = mixer::Info {
+            status,
+            lead_voice: l.sheet.voice.label(),
+            seed_known: l.seed_known,
+        };
         if self.mixer.ui(ctx, &info) == mixer::Ask::RetryStems {
             self.mixer.stems_failed = false;
         }
@@ -1020,16 +1311,28 @@ impl StudioApp {
             Step::WaitReady => {
                 // With no song to open (--new and no SONG.json), the form
                 // itself is what the screenshot should show.
-                let ready = if self.loaded.is_none() && self.opt.song.is_none() && self.opt.open.is_none() {
+                let ready = if self.loaded.is_none()
+                    && self.opt.song.is_none()
+                    && self.opt.open.is_none()
+                {
                     self.new_song.open
                 } else {
-                    let sheet_ready = self.view == View::Lyrics || self.sheet.as_ref().is_some_and(SheetView::ready);
+                    let sheet_ready = self.view == View::Lyrics
+                        || self.sheet.as_ref().is_some_and(SheetView::ready);
                     let audio_ready = self.track.is_some() || self.audio_error.is_some();
                     // Mixer work (stems for an open mixer or a saved mix,
                     // then its re-mix) is done.
-                    let mixer_idle = self.stems_job.is_none() && self.remix_job.is_none() && !self.mixer.dirty() && !self.mixer.auto_load;
-                    let mixer_ready = mixer_idle && (!self.mixer.open || self.mixer.attached() || self.mixer.stems_failed);
-                    self.loaded.is_some() && sheet_ready && audio_ready && self.work.is_none() && mixer_ready
+                    let mixer_idle = self.stems_job.is_none()
+                        && self.remix_job.is_none()
+                        && !self.mixer.dirty()
+                        && !self.mixer.auto_load;
+                    let mixer_ready = mixer_idle
+                        && (!self.mixer.open || self.mixer.attached() || self.mixer.stems_failed);
+                    self.loaded.is_some()
+                        && sheet_ready
+                        && audio_ready
+                        && self.work.is_none()
+                        && mixer_ready
                 };
                 if ready {
                     if let Some(s) = self.opt.seek {
@@ -1038,8 +1341,15 @@ impl StudioApp {
                     }
                     if self.opt.play > 0.0 && self.track.is_some() {
                         self.toggle();
-                        eprintln!("studio: play at {:.3} s (playing={})", self.pos(), self.playing());
-                        self.step = Step::Playing { until: t + self.opt.play, next_log: t + 0.5 };
+                        eprintln!(
+                            "studio: play at {:.3} s (playing={})",
+                            self.pos(),
+                            self.playing()
+                        );
+                        self.step = Step::Playing {
+                            until: t + self.opt.play,
+                            next_log: t + 0.5,
+                        };
                     } else {
                         self.step = Step::Settle(10);
                     }
@@ -1048,8 +1358,16 @@ impl StudioApp {
             }
             Step::Playing { until, next_log } => {
                 if t >= next_log {
-                    eprintln!("studio: t={:.2} s wall, position {:.3} s, playing={}", t, self.pos(), self.playing());
-                    self.step = Step::Playing { until, next_log: next_log + 0.5 };
+                    eprintln!(
+                        "studio: t={:.2} s wall, position {:.3} s, playing={}",
+                        t,
+                        self.pos(),
+                        self.playing()
+                    );
+                    self.step = Step::Playing {
+                        until,
+                        next_log: next_log + 0.5,
+                    };
                 }
                 if t >= until {
                     self.step = Step::Settle(10);
@@ -1059,7 +1377,9 @@ impl StudioApp {
             Step::Settle(n) => {
                 self.step = if n == 0 {
                     if self.opt.screenshot.is_some() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
+                            egui::UserData::default(),
+                        ));
                         Step::Shot
                     } else {
                         Step::Done
@@ -1079,7 +1399,13 @@ impl StudioApp {
                 if let Some(img) = img {
                     if let Some(p) = &self.opt.screenshot {
                         match save_png(&img, p) {
-                            Ok(()) => eprintln!("studio: screenshot {} ({}x{}), position {:.3} s", p.display(), img.size[0], img.size[1], self.pos()),
+                            Ok(()) => eprintln!(
+                                "studio: screenshot {} ({}x{}), position {:.3} s",
+                                p.display(),
+                                img.size[0],
+                                img.size[1],
+                                self.pos()
+                            ),
                             Err(e) => eprintln!("studio: screenshot failed: {e}"),
                         }
                     }
@@ -1113,7 +1439,8 @@ fn save_png(img: &egui::ColorImage, path: &Path) -> Result<(), String> {
     }
     let size = resvg::tiny_skia::IntSize::from_wh(w as u32, h as u32).ok_or("empty screenshot")?;
     let pm = resvg::tiny_skia::Pixmap::from_vec(data, size).ok_or("bad screenshot size")?;
-    pm.save_png(path).map_err(|e| format!("{}: {e}", path.display()))
+    pm.save_png(path)
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 impl eframe::App for StudioApp {
@@ -1129,7 +1456,10 @@ impl eframe::App for StudioApp {
             ui.add_space(2.0);
         });
         egui::Panel::bottom("transport").show(ui, |ui| self.transport(ui));
-        egui::Panel::left("library").default_size(240.0).resizable(true).show(ui, |ui| self.library_panel(ui));
+        egui::Panel::left("library")
+            .default_size(240.0)
+            .resizable(true)
+            .show(ui, |ui| self.library_panel(ui));
         egui::CentralPanel::default().show(ui, |ui| self.central(ui));
         self.new_song_window(&ctx);
         self.take_window(&ctx);
@@ -1138,7 +1468,12 @@ impl eframe::App for StudioApp {
         }
         self.mixer_window(&ctx);
         self.script(&ctx);
-        if self.playing() || self.work.is_some() || self.load.is_some() || self.stems_job.is_some() || self.remix_job.is_some() {
+        if self.playing()
+            || self.work.is_some()
+            || self.load.is_some()
+            || self.stems_job.is_some()
+            || self.remix_job.is_some()
+        {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
         } else if self.mixer.dirty() {
             // Wake up when the debounce runs out.
