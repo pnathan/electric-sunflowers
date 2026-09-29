@@ -10,7 +10,11 @@ use notation::{engrave, note_boxes, system_boxes, Score};
 use resvg::{tiny_skia, usvg};
 use song::{Song, Voice};
 
-const OUT_DIR: &str = "/tmp/claude-1000";
+/// Where the review renders go: Bazel's undeclared test outputs when set
+/// (the test sandbox is read-only elsewhere), else /tmp/claude-1000.
+fn out_dir() -> String {
+    std::env::var("TEST_UNDECLARED_OUTPUTS_DIR").unwrap_or_else(|_| "/tmp/claude-1000".to_string())
+}
 
 fn song_of(json: &str) -> Song {
     let v: serde_json::Value = serde_json::from_str(json).expect("fixture is JSON");
@@ -119,10 +123,11 @@ fn write_png(svg: &str, name: &str) {
     let pm = render(svg);
     let dark = pm.pixels().iter().filter(|p| p.red() < 128).count();
     assert!(dark > 5000, "{name}: only {dark} dark pixels");
-    std::fs::create_dir_all(OUT_DIR).expect("output directory");
-    let path = format!("{OUT_DIR}/notation-{name}.png");
+    let dir = out_dir();
+    std::fs::create_dir_all(&dir).expect("output directory");
+    let path = format!("{dir}/notation-{name}.png");
     pm.save_png(&path).expect("PNG writes");
-    std::fs::write(format!("{OUT_DIR}/notation-{name}.svg"), svg).expect("SVG writes");
+    std::fs::write(format!("{dir}/notation-{name}.svg"), svg).expect("SVG writes");
 }
 
 #[test]
