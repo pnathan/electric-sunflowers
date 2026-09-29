@@ -23,6 +23,20 @@ pub enum View {
     Both,
 }
 
+/// Which sheet the sheet-music view is showing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SheetKind {
+    Lead,
+    Full,
+}
+
+fn sheet_of(kind: SheetKind, l: &Loaded) -> notation::Sheet {
+    match kind {
+        SheetKind::Lead => notation::Sheet::Lead(l.score.clone()),
+        SheetKind::Full => notation::Sheet::Full(l.full.clone()),
+    }
+}
+
 impl View {
     pub fn parse(s: &str) -> Option<View> {
         match s {
@@ -99,6 +113,7 @@ pub struct StudioApp {
     load: Option<Job<Loaded>>,
     loaded: Option<Loaded>,
     sheet: Option<SheetView>,
+    sheet_kind: SheetKind,
     lyrics: LyricsView,
     work: Option<Work>,
     /// Stems a render has been tried for, so a failure is not retried in a loop.
@@ -155,6 +170,7 @@ impl StudioApp {
             load: None,
             loaded: None,
             sheet: None,
+            sheet_kind: SheetKind::Lead,
             lyrics: LyricsView::new(),
             work: None,
             tried: Vec::new(),
@@ -336,7 +352,7 @@ impl StudioApp {
                     for n in &l.notes {
                         eprintln!("studio: {n}");
                     }
-                    self.sheet = Some(SheetView::new(l.score.clone(), self.svg_opt.clone()));
+                    self.sheet = Some(SheetView::new(sheet_of(self.sheet_kind, &l), self.svg_opt.clone()));
                     self.loaded = Some(l);
                     self.open_audio();
                 }
@@ -484,6 +500,15 @@ impl StudioApp {
                 if self.view != View::Lyrics {
                     ui.label("Zoom");
                     ui.add(egui::Slider::new(&mut s.zoom, 0.5..=2.5).fixed_decimals(2));
+                    ui.separator();
+                    let before = self.sheet_kind;
+                    ui.selectable_value(&mut self.sheet_kind, SheetKind::Lead, "Lead sheet");
+                    ui.selectable_value(&mut self.sheet_kind, SheetKind::Full, "Full score");
+                    if self.sheet_kind != before {
+                        if let Some(l) = &self.loaded {
+                            s.set_sheet(sheet_of(self.sheet_kind, l));
+                        }
+                    }
                 }
             }
             ui.checkbox(&mut self.lyrics.follow, "Follow");

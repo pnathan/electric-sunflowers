@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2};
 use resvg::{tiny_skia, usvg};
 
-use notation::{Score, TimedBox};
+use notation::{Sheet, TimedBox};
 
 /// Height of one raster tile in pixels.
 const TILE: u32 = 2048;
@@ -28,7 +28,7 @@ struct Page {
 }
 
 pub struct SheetView {
-    score: Score,
+    sheet: Sheet,
     opt: Arc<usvg::Options<'static>>,
     page: Option<Page>,
     /// (layout width, pixel scale) wanted, and when it was first asked for.
@@ -46,22 +46,28 @@ fn covering(boxes: &[TimedBox], t: f64) -> Option<usize> {
 }
 
 impl SheetView {
-    pub fn new(score: Score, opt: Arc<usvg::Options<'static>>) -> SheetView {
-        SheetView { score, opt, page: None, want: None, zoom: 1.0, follow: true, last_system: None, error: None }
+    pub fn new(sheet: Sheet, opt: Arc<usvg::Options<'static>>) -> SheetView {
+        SheetView { sheet, opt, page: None, want: None, zoom: 1.0, follow: true, last_system: None, error: None }
+    }
+
+    /// Switches to a different sheet (lead vs. full score), forcing a
+    /// fresh layout.
+    pub fn set_sheet(&mut self, sheet: Sheet) {
+        self.sheet = sheet;
+        self.page = None;
+        self.want = None;
+        self.last_system = None;
+        self.error = None;
     }
 
     /// Lays out and rasterises the page at `width` SVG px and `scale` px per SVG px.
     fn build(&self, ctx: &egui::Context, width: f64, scale: f32) -> Result<Page, String> {
-        let score = self.score.clone().with_width(width);
-        let svg = notation::engrave(&score);
-        let notes = notation::note_boxes(&score);
-        let systems = notation::system_boxes(&score);
-        let (pw, ph) = notation::page_size(&score);
-        let tree = usvg::Tree::from_str(&svg, &self.opt).map_err(|e| format!("sheet SVG: {e}"))?;
+        let np = self.sheet.page(width);
+        let tree = usvg::Tree::from_str(&np.svg, &self.opt).map_err(|e| format!("sheet SVG: {e}"))?;
         let max_side = ctx.input(|i| i.max_texture_side).max(512) as f32;
-        let scale = scale.min(max_side / pw as f32).max(0.1);
-        let px_w = (pw as f32 * scale).ceil().max(1.0) as u32;
-        let px_h = (ph as f32 * scale).ceil().max(1.0) as u32;
+        let scale = scale.min(max_side / np.width as f32).max(0.1);
+        let px_w = (np.width as f32 * scale).ceil().max(1.0) as u32;
+        let px_h = (np.height as f32 * scale).ceil().max(1.0) as u32;
         let tile = TILE.min(max_side as u32);
         let mut tiles = Vec::new();
         let mut y = 0u32;
@@ -76,7 +82,7 @@ impl SheetView {
             tiles.push((y as f32 / scale, h as f32 / scale, tex));
             y += h;
         }
-        Ok(Page { width: pw, height: ph, notes, systems, scale, tiles })
+        Ok(Page { width: np.width, height: np.height, notes: np.notes, systems: np.systems, scale, tiles })
     }
 
     /// True once a page is ready to show.

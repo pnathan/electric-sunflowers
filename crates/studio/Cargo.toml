@@ -9,6 +9,7 @@ publish.workspace = true
 sfcore = { path = "../core" }
 song = { path = "../song" }
 compose = { path = "../compose" }
+arrange = { path = "../arrange" }
 engine = { path = "../engine" }
 export = { path = "../export" }
 songwriter = { path = "../songwriter" }

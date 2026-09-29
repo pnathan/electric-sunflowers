@@ -3905,6 +3905,7 @@ name = "studio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrange",
  "compose",
  "eframe",
  "engine",
