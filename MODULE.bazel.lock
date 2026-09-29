@@ -476,7 +476,7 @@
           "REPO_MAPPING:rules_rust+,bazel_skylib bazel_skylib+",
           "REPO_MAPPING:rules_rust+,bazel_tools bazel_tools",
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
-          "FILE:@@//Cargo.lock e2b80fca0ea7f062347ff8763da20d1b90322b267c4401f5e83589e61be972f3",
+          "FILE:@@//Cargo.lock a93c4340482fbb3ef8a73006b33f2c2242ade59c054d6aea59854e824c51d073",
           "FILE:@@//Cargo.toml c7137c939e65e127089accceb74671da2b9ad77bb1ffe15686dff4d2ba5ff3b9",
           "FILE:@@//crates/arrange/Cargo.toml dc44d73080ee7831a818d92dd5d7fbda072126506d3b5b53e919d24b476a13ba",
           "FILE:@@//crates/compose/Cargo.toml 32ed9e1a11963bd6b4a0d282360eba04ebc7d57345b6085d578eaccda177ddc7",
@@ -491,7 +491,7 @@
           "FILE:@@//crates/notation/Cargo.toml 23430dddf466cd25e16fadd70dd4e57e5198d437b88ba8a491912c6205c67be2",
           "FILE:@@//crates/settings/Cargo.toml 59cf971f8b345523990cc24f040415c904babac6833aae051707c965e07aa433",
           "FILE:@@//crates/soundgate/Cargo.toml ab97ecc359703ee43490c2353e66ac64a80b1c814be5993aa5819503cbfde4f2",
-          "FILE:@@//crates/studio/Cargo.toml 5971d4b9970c51326661fa397d4f3ff4a4028c0dc05f90a611a5c7b97a08279e",
+          "FILE:@@//crates/studio/Cargo.toml 42bef4d962ae1b9a7940a0565fa887dd452bfdf476cfd480a49463543c7ae94f",
           "FILE:@@//crates/sunflower/Cargo.toml c6245c6c6d5e8245d992948e9d9c904fa39bb59bc83443d77a564c38a1d96d40"
         ],
         "generatedRepoSpecs": {
