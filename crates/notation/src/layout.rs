@@ -244,6 +244,17 @@ pub(crate) fn layout(score: &Score) -> Page {
             (avail / natural).min(2.0)
         };
 
+        // A shared line (design 4.8): a second staff is drawn below the
+        // melody staff's lyric row, with its own lyric row under it. Never
+        // true outside a duet. `swap_staves` routes the physically higher
+        // staff (drawn first, at the system's top) to whichever singer's
+        // range centre is higher (`Measure::melody_on_top`), so the melody
+        // is drawn on top only when it is also the higher singer; a
+        // non-shared bar always keeps the melody on top (there is nothing
+        // to swap it with).
+        let is_shared = score.duet && ms[first].shared;
+        let swap_staves = is_shared && !ms[first].melody_on_top;
+
         // Horizontal placement.
         let mut pns: Vec<Pn> = Vec::new();
         let mut rests: Vec<(f64, &Event)> = Vec::new();
@@ -253,7 +264,8 @@ pub(crate) fn layout(score: &Score) -> Page {
             let mw = nat[first + k].0 * scale;
             mx.push((x, mw));
             let mut ex = x + PAD_L * scale;
-            for (e, &(lo, w)) in m.events.iter().zip(&nat[first + k].1) {
+            let top_events = if swap_staves { &m.second } else { &m.events };
+            for (e, &(lo, w)) in top_events.iter().zip(&nat[first + k].1) {
                 match &e.note {
                     Some(n) => pns.push(Pn {
                         ev: e,
@@ -350,10 +362,6 @@ pub(crate) fn layout(score: &Score) -> Page {
         let y_label = y_chord - 2.2 * SP;
         let y_lyric = (7.4 * SP).max(bot + 2.2 * SP);
         let sys_top = if has_label { y_label - 1.8 * SP } else { y_chord - 2.0 * SP };
-        // A shared line (design 4.8): a second staff below the melody
-        // staff's lyric row, with its own lyric row under it. Never true
-        // outside a duet.
-        let is_shared = score.duet && ms[first].shared;
         let y2 = y_lyric + 3.0 * SP;
         let sys_bot = if is_shared { y2 + 4.0 * SP + 3.6 * SP } else { y_lyric + 1.4 * SP };
         let oy = cursor - sys_top;
@@ -368,7 +376,7 @@ pub(crate) fn layout(score: &Score) -> Page {
         for l in 0..5 {
             line(&mut s, MARGIN, l as f64 * SP, sys_end, l as f64 * SP, 0.13 * SP);
         }
-        let clef8 = ms[first].clef8;
+        let clef8 = if swap_staves { ms[first].second_clef8 } else { ms[first].clef8 };
         glyph(&mut s, if clef8 { &glyphs::G_CLEF8VB } else { &glyphs::G_CLEF }, MARGIN + 0.5 * SP, 3.0 * SP, 1.0);
         let mut hx = MARGIN + 3.6 * SP;
         let (steps, acc) = if score.fifths > 0 {
@@ -615,27 +623,29 @@ pub(crate) fn layout(score: &Score) -> Page {
 
         // Second staff (shared lines only, design 4.8): the other singer's
         // notes on their own staff, joined to the melody staff by a
-        // bracket, with a small "melody" label over the melody staff
-        // (kept as the top staff here: the "higher centre on top" rule is
-        // not yet applied to the vertical order, only to `melody_on_top`,
-        // which a future pass can use to swap the two rows). Rendering is
-        // simpler than the melody staff's: no beam grouping, each note its
-        // own stem and flag.
+        // bracket, with a small "melody" label over whichever staff is
+        // physically the melody staff (`swap_staves` above already routed
+        // the higher-centre singer to the top row, per design 4.8's
+        // "higher singer on top"; the label follows the melody, not the
+        // top row). Rendering is simpler than the top staff's: no beam
+        // grouping, each note its own stem and flag.
         if is_shared {
             for l in 0..5 {
                 line(&mut s, MARGIN, y2 + l as f64 * SP, sys_end, y2 + l as f64 * SP, 0.13 * SP);
             }
-            let clef2 = ms[first].second_clef8;
+            let clef2 = if swap_staves { ms[first].clef8 } else { ms[first].second_clef8 };
             glyph(&mut s, if clef2 { &glyphs::G_CLEF8VB } else { &glyphs::G_CLEF }, MARGIN + 0.5 * SP, y2 + 3.0 * SP, 1.0);
             drawn::bracket(&mut s, MARGIN - 0.3 * SP, 0.0, y2 + 4.0 * SP, 1.0);
-            text(&mut s, MARGIN + head, -0.3 * SP, 10.0, "start", r#" font-style="italic""#, "melody");
+            let melody_label_y = if swap_staves { y2 - 0.3 * SP } else { -0.3 * SP };
+            text(&mut s, MARGIN + head, melody_label_y, 10.0, "start", r#" font-style="italic""#, "melody");
             let y_lyric2 = y2 + 6.2 * SP;
 
             for (k, m) in ms[first..end].iter().enumerate() {
                 let (bx0, _) = mx[k];
                 let gi = first + k;
                 let mut ex = bx0 + PAD_L * scale;
-                for (e, &(lo, w)) in m.second.iter().zip(&nat[gi].1) {
+                let bot_events: &Vec<Event> = if swap_staves { &m.events } else { &m.second };
+                for (e, &(lo, w)) in bot_events.iter().zip(&nat[gi].1) {
                     let xx = ex + lo * scale;
                     match &e.note {
                         None => {

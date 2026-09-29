@@ -330,7 +330,7 @@ fn draw_system(
 
     // Part names, full on the first system, abbreviated after.
     for (i, st) in staves.iter().enumerate() {
-        let name = if is_first_system { st.name } else { st.abbrev };
+        let name = if is_first_system { &st.name } else { &st.abbrev };
         text(&mut s, MARGIN - 0.6 * SP, rows[i].top + 2.2 * SP, 11.0, "end", r#" class="staffname""#, &esc(name));
     }
 

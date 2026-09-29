@@ -19,10 +19,11 @@
 //! Weinberg, "Guide to Standardized Drumset Notation" (Percussive Arts
 //! Society, 1998): see `drum_head`.
 
+use compose::melody::LeadNote;
 use compose::prepare::Prepared;
 use compose::timeline::Timeline;
 use song::events::DrumKind;
-use song::{Mode, Pc, SectionKind, Song, Voice};
+use song::{Mode, Pc, SectionKind, SingerId, Song, Voice};
 
 use crate::score::{key_alterations, key_fifths, spell, Grid};
 
@@ -97,8 +98,14 @@ pub enum Group {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StaffDef {
     pub part: PartId,
-    pub name: &'static str,
-    pub abbrev: &'static str,
+    /// Full name, shown on the first system. For `Lead` in a duet and for
+    /// `LeadB`, this names the singer's actual voice type ("Voice A
+    /// (Baritone)"), the full score's counterpart to the lead sheet's "A
+    /// (Baritone)" / "B (Alto)" system labels (design 4.8); a solo song's
+    /// `Lead` staff keeps the plain "Voice (A)" it always had.
+    pub name: String,
+    /// Abbreviation, shown on every system after the first.
+    pub abbrev: String,
     pub clef: Clef,
     pub group: Group,
 }
@@ -245,6 +252,10 @@ fn vocal_clef(v: Voice) -> Clef {
     }
 }
 
+/// Static part text: (full name, abbreviation). `Lead` in a duet and
+/// `LeadB` get the singer's actual voice type spliced into the full name
+/// at the call site below (`StaffDef::name`'s own doc comment); this text
+/// is what a solo song's `Lead` staff keeps unchanged.
 fn name_of(part: PartId) -> (&'static str, &'static str) {
     match part {
         PartId::Lead => ("Voice (A)", "Voc."),
@@ -328,7 +339,28 @@ fn raw_notes_of(part: PartId, song: &Song, prep: &Prepared, arr: &arrange::Arran
             .collect(),
         PartId::LeadB => {
             let b = arr.vocals.lead_b.as_ref()?;
-            vocal(&b.notes)
+            // `b.notes` (`song::events::VocalNote`) carries no syllable
+            // text: it is built from `singer_notes(SingerId::B, ...)`
+            // (`arrange::vocals::singer_notes`) via a 1:1, order-preserving
+            // map (`compose::prepare::vocal_notes` then `vocals::event`,
+            // neither of which filters, merges or reorders), so the same
+            // filter-and-sort over `prep.comp.lead`/`comp.second`
+            // (`compose::melody::LeadNote`, which does carry the lyric)
+            // reproduces singer B's notes in the same order and count and
+            // supplies the lyric `b.notes` itself cannot.
+            let mut lyric_notes: Vec<&LeadNote> =
+                prep.comp.lead.iter().chain(prep.comp.second.iter()).filter(|n| n.singer == SingerId::B).collect();
+            lyric_notes.sort_by(|a, b| a.t0.partial_cmp(&b.t0).expect("finite t0"));
+            debug_assert_eq!(b.notes.len(), lyric_notes.len(), "LeadB voice and lyric note counts disagree");
+            b.notes
+                .iter()
+                .zip(lyric_notes)
+                .map(|(n, ln)| RawNote {
+                    lyric: Some(ln.syl.text.clone()),
+                    hyphen: !ln.syl.word_end,
+                    ..RawNote::pitched(n.t0, n.t1, n.midi as f64)
+                })
+                .collect()
         }
         PartId::Harmony => {
             if !song.band.harmonies {
@@ -659,12 +691,20 @@ impl FullScore {
                 PartId::Bass => Clef::Bass8vb,
                 PartId::Drums => Clef::Percussion,
             };
-            let (name, abbrev) = name_of(part);
+            let (base_name, abbrev) = name_of(part);
+            let name = match part {
+                PartId::Lead if song.is_duet() => format!("Voice A ({})", prep.voice.label()),
+                PartId::LeadB => {
+                    let vb = arr.vocals.lead_b.as_ref().map_or(prep.voice, |b| b.voice);
+                    format!("Voice B ({})", vb.label())
+                }
+                _ => base_name.to_string(),
+            };
             let pitched = part != PartId::Drums;
             let written = if matches!(clef, Clef::Treble8vb | Clef::Bass8vb) { 12 } else { 0 };
             let cells = build_cells(&raw, tl, &grid, n_bars, if pitched { fifths } else { 0 }, &key_alt, written);
             all_cells.push(cells);
-            staves.push(StaffDef { part, name, abbrev, clef, group: group_of(part) });
+            staves.push(StaffDef { part, name, abbrev: abbrev.to_string(), clef, group: group_of(part) });
         }
 
         let bars = bar_meta

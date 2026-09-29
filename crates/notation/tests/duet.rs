@@ -25,6 +25,33 @@ fn duet_song() -> Song {
     s
 }
 
+/// The duet fixture with every shared ("both") section's lead flipped to A
+/// (baritone, the lower-centre voice): B (alto, the higher-centre voice)
+/// becomes the shared lines' "other" singer instead of their melody. Only
+/// the fixture's default (B leads, and B is already the higher singer)
+/// cannot tell a fixed `melody_on_top` wiring from a broken one, since
+/// "melody on top" and "higher singer on top" agree there; this variant
+/// makes them disagree, so a broken wiring (melody always drawn on top)
+/// would put the lower-centre singer (A, baritone) on the physically
+/// higher staff.
+fn duet_song_lead_a() -> Song {
+    let mut raw: serde_json::Value =
+        serde_json::from_str(include_str!("../../compose/tests/songs/duet.json")).expect("duet.json is JSON");
+    let sections = raw["sections"].as_array_mut().expect("sections is an array");
+    let mut flipped = 0;
+    for sec in sections.iter_mut() {
+        if sec.get("sing").and_then(|v| v.as_str()) == Some("both") {
+            sec["lead"] = serde_json::json!("A");
+            flipped += 1;
+        }
+    }
+    assert!(flipped > 0, "duet fixture has no shared (\"both\") section to flip");
+    let (s, repairs) = song::normalize_value(&raw).expect("flipped duet fixture normalises");
+    assert!(repairs.is_empty(), "{repairs:?}");
+    assert!(s.is_duet());
+    s
+}
+
 fn parses(svg: &str) {
     let opt = usvg::Options::default();
     usvg::Tree::from_str(svg, &opt).expect("SVG parses");
@@ -119,6 +146,46 @@ fn shared_lines_get_two_staves_and_labels() {
     for w in boxes.windows(2) {
         assert!(w[0].0 <= w[1].0 + 1e-9, "note boxes out of time order: {:?} then {:?}", w[0], w[1]);
     }
+}
+
+/// The lead sheet's shared-line staves put the higher-centre singer's
+/// staff physically on top (design 4.8), even when that singer is not the
+/// line's melody: with the duet fixture's shared chorus flipped so A
+/// (baritone, centre 55) leads and B (alto, centre 65) is the "other"
+/// singer, the physically higher (first-drawn) staff must still be B's.
+#[test]
+fn shared_line_puts_the_higher_singer_on_top() {
+    assert!(song::Voice::Alto.range().centre() > song::Voice::Baritone.range().centre());
+
+    let song = duet_song_lead_a();
+    let prep = prepare_voices(&song, 3, VoiceChoice::default());
+    let score = Score::new(&song, &prep);
+    let svg = engrave(&score);
+    parses(&svg);
+
+    // Each system's own markup, in document order: the physically higher
+    // staff is drawn (and so appears in the SVG text) before the lower
+    // one. A shared system draws exactly two G-clef glyphs (one per
+    // staff); a non-shared system draws one.
+    let mut shared_systems = 0;
+    for chunk in svg.split(r#"<g class="system""#).skip(1) {
+        let mut is_8vb: Vec<bool> = Vec::new();
+        let mut idx = 0;
+        while let Some(pos) = chunk[idx..].find("#g-gClef") {
+            let at = idx + pos + "#g-gClef".len();
+            is_8vb.push(chunk[at..].starts_with("8vb"));
+            idx = at;
+        }
+        if is_8vb.len() == 2 && is_8vb[0] != is_8vb[1] {
+            shared_systems += 1;
+            // Alto (B, the higher singer, now the "other" part) is drawn
+            // without the 8vb clef; baritone (A, the melody, now the
+            // lower singer) is drawn with it.
+            assert!(!is_8vb[0], "the higher singer (B, alto) must be on the physically higher staff");
+            assert!(is_8vb[1], "the lower singer (A, baritone) must be on the physically lower staff");
+        }
+    }
+    assert!(shared_systems > 0, "no shared (two-staff) system found in the flipped duet fixture");
 }
 
 /// Part B (design 6.1): the full score's `LeadB` staff draws when
