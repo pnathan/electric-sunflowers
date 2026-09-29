@@ -96,18 +96,20 @@ fn flowing_released_is_bit_identical_to_the_legacy_constants() {
     };
     let explicit = VoiceSettings::from(&style);
 
-    let mut legacy = VoiceSettings::default();
-    legacy.phrasing = PhrasingParams {
-        sustain: 1.0,
-        onset_share: 0.45,
-        lead_in: 1.0,
-        vibrato: 1.0,
-        glide: 1.0,
-        swell: 0.16,
-        breath: 1.0,
-        end_len: 1.0,
-        fade_depth: 0.4,
-        fade_from: 0.55,
+    let legacy = VoiceSettings {
+        phrasing: PhrasingParams {
+            sustain: 1.0,
+            onset_share: 0.45,
+            lead_in: 1.0,
+            vibrato: 1.0,
+            glide: 1.0,
+            swell: 0.16,
+            breath: 1.0,
+            end_len: 1.0,
+            fade_depth: 0.4,
+            fade_from: 0.55,
+        },
+        ..VoiceSettings::default()
     };
 
     assert!(matches!(
