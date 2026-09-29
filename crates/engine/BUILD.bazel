@@ -3,10 +3,11 @@ load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# src/lib.rs embeds this at compile time (include_str!("demo.json")); other
-# crates' tests also reach it via relative include_str!("../../engine/src/demo.json"),
-# so it needs to be visible to other packages too.
-exports_files(["src/demo.json"])
+# src/lib.rs embeds these at compile time (include_str!("demo.json"),
+# include_str!("demo_duet.json")); other crates' tests also reach them via
+# relative include_str!("../../engine/src/demo.json") etc., so they need to
+# be visible to other packages too.
+exports_files(["src/demo.json", "src/demo_duet.json"])
 
 ENGINE_LOCAL_DEPS = [
     "//crates/core:sfcore",
@@ -21,14 +22,14 @@ ENGINE_LOCAL_DEPS = [
 rust_library(
     name = "engine",
     srcs = glob(["src/**/*.rs"]),
-    compile_data = ["src/demo.json"],
+    compile_data = ["src/demo.json", "src/demo_duet.json"],
     edition = "2021",
     deps = ENGINE_LOCAL_DEPS + all_crate_deps(normal = True),
 )
 
 rust_test(
     name = "engine_unit_tests",
-    compile_data = ["src/demo.json"],
+    compile_data = ["src/demo.json", "src/demo_duet.json"],
     crate = ":engine",
     edition = "2021",
     deps = ["//crates/songwriter"] + all_crate_deps(normal_dev = True),
@@ -57,6 +58,16 @@ rust_test(
 rust_test(
     name = "sheet_test",
     srcs = ["tests/sheet.rs"],
+    edition = "2021",
+    deps = [":engine"] + ENGINE_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "duet_test",
+    srcs = ["tests/duet.rs"],
     edition = "2021",
     deps = [":engine"] + ENGINE_LOCAL_DEPS + all_crate_deps(
         normal = True,

@@ -45,3 +45,24 @@ rust_test(
         normal_dev = True,
     ),
 )
+
+rust_test(
+    name = "duet",
+    srcs = ["tests/duet.rs"],
+    # tests/duet.rs embeds both engine/src/demo.json and
+    # engine/src/demo_duet.json via include_str!.
+    compile_data = [
+        "//crates/engine:src/demo.json",
+        "//crates/engine:src/demo_duet.json",
+    ],
+    edition = "2021",
+    deps = [
+        ":arrange",
+        "//crates/core:sfcore",
+        "//crates/song",
+        "//crates/compose",
+    ] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
