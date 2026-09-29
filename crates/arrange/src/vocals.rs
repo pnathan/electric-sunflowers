@@ -29,7 +29,7 @@ use compose::melody::LeadNote;
 use compose::prepare::{harmony_line, vocal_notes, Prepared, VocalNote as ComposedNote};
 use sfcore::random::{tag, Rng, Tag};
 use song::events::{SingStyle, Singer, VocalNote};
-use song::{Phoneme, SectionKind, Song, Voice};
+use song::{Phoneme, Phrasing, SectionKind, SingerId, Song, Voice};
 
 use crate::choir;
 
@@ -104,7 +104,9 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
     let lead_notes = &p.comp.lead;
     let sec_of = |n: &LeadNote| &form.sections[form.lines[n.line_idx].sec];
 
-    let lead = Singer { voice: p.voice, style: SingStyle::LEAD, notes: notes(lead_notes, 1.0), pan: 0.0, offset: 0.0 };
+    let phrasing = song.phrasing_of(SingerId::A);
+    let lead_style = SingStyle { phrasing, ..SingStyle::LEAD };
+    let lead = Singer { voice: p.voice, style: lead_style, notes: notes(lead_notes, 1.0), pan: 0.0, offset: 0.0 };
 
     let lifted: Vec<LeadNote> = lead_notes.iter().filter(|n| n.lift).cloned().collect();
     let hl = harmony_line(&lifted, form, &p.timeline, song, p.tonic, p.voice != Voice::Soprano);
@@ -115,7 +117,7 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
     };
     let harmony = Singer {
         voice: harmony_voice(p.voice, median),
-        style: SingStyle { vibrato_scale: 0.8, breath_scale: 1.2, ..SingStyle::LEAD },
+        style: SingStyle { vibrato_scale: 0.8, breath_scale: 1.2, phrasing, ..SingStyle::LEAD },
         notes: notes(&hl, 0.9),
         pan: 0.0,
         offset: 0.008,
@@ -132,6 +134,7 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
             formant_scale: formant,
             breath_add: 0.05,
             breath_pauses: false,
+            phrasing,
             ..SingStyle::LEAD
         },
         notes: dn.clone(),
@@ -173,6 +176,7 @@ pub fn choir_singers(p: &Prepared, seed: u64) -> [Vec<Singer>; 4] {
                 glide: 0.05,
                 scoop: false,
                 breath_pauses: false,
+                phrasing: Phrasing::default(),
             };
             let mut notes: Vec<VocalNote> = Vec::with_capacity(vs.len());
             for cv in &vs {

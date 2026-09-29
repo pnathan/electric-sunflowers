@@ -3,9 +3,9 @@
 use std::cell::RefCell;
 
 use songwriter::claude::{Claude, ClaudeError, Effort, Reply, Request};
-use songwriter::prompt::{persona_age, song_prompt, REGISTERS};
-use songwriter::styles::{style_direction, FormId, StyleId};
-use songwriter::{write_song, Rng, WriteRequest, WRITE_TAG};
+use songwriter::prompt::{persona_age, song_prompt, song_prompt_with, REGISTERS};
+use songwriter::styles::{style_direction, DuetFit, FormId, StyleId, STYLES};
+use songwriter::{write_song, write_song_with, DuetRequest, Rng, WriteOptions, WriteRequest, WRITE_TAG};
 
 fn rng(seed: u64) -> Rng {
     Rng::stream(seed, WRITE_TAG)
@@ -135,4 +135,201 @@ fn write_song_reports_a_reply_without_json() {
     };
     let r = write_song(&mock, &WriteRequest::new("x", 2026), &mut rng(1));
     assert!(matches!(r, Err(songwriter::WriteSongError::NoJsonFound(_))));
+}
+
+// ---------------------------------------------------------------- duet and phrasing (w1-prompt)
+
+#[test]
+fn prompt_names_the_styles_duet_fit_and_phrasing() {
+    for seed in 0..30 {
+        let dir = style_direction(None, &mut rng(seed));
+        let p = song_prompt("a barn dance", None, &dir, "playful", 2026);
+        assert!(
+            p.contains(&format!("In this style a duet is {}.", dir.duet.as_str())),
+            "seed {seed}: {p}"
+        );
+        assert!(
+            p.contains(&format!(
+                "This style usually sings {}, endings {}.",
+                dir.phrasing.delivery, dir.phrasing.endings
+            )),
+            "seed {seed}"
+        );
+    }
+}
+
+#[test]
+fn solo_and_duet_requests_are_fixed_choices_verbatim() {
+    let dir = style_direction(Some(StyleId::Gospel), &mut rng(1));
+
+    let p = song_prompt_with("a hymn", None, &dir, "devotional", 2026, &DuetRequest::Solo);
+    assert!(p.contains("The choice is fixed: write this as a solo song, one singer throughout."));
+
+    let p = song_prompt_with("a hymn", None, &dir, "devotional", 2026, &DuetRequest::Auto);
+    assert!(!p.contains("The choice is fixed"));
+
+    let p = song_prompt_with(
+        "a hymn",
+        None,
+        &dir,
+        "devotional",
+        2026,
+        &DuetRequest::Duet { a: Some(song::Voice::Tenor), b: Some(song::Voice::Alto) },
+    );
+    assert!(p.contains("The choice is fixed: write this as a duet. Singer A is tenor, singer B is alto."));
+
+    let p = song_prompt_with(
+        "a hymn",
+        None,
+        &dir,
+        "devotional",
+        2026,
+        &DuetRequest::Duet { a: None, b: None },
+    );
+    assert!(p.contains("Singer A is your choice of voice, singer B is your choice of voice."));
+}
+
+#[test]
+fn every_style_has_a_duet_fit_and_a_phrasing() {
+    use songwriter::styles::StyleId::*;
+    let welcome = [Bakersfield, Nashville, Texas, Cajun, Zydeco, Americana, Laurel, Revival, Gospel];
+    let rare = [Appalachian, Broadside, IrishAir, Scottish, Welsh, Blues];
+    for s in &STYLES {
+        let want = if welcome.contains(&s.id) {
+            DuetFit::Welcome
+        } else if rare.contains(&s.id) {
+            DuetFit::Rare
+        } else {
+            DuetFit::Occasional
+        };
+        assert_eq!(s.duet, want, "{}", s.id);
+    }
+
+    let legato = [IrishAir, Scottish, Welsh, Gospel];
+    let parlando = [Blues, Broadside, Texas, Cowboy];
+    let detached = [Oldtime, Bluegrass, Cajun, Zydeco, Shanty, IrishPub];
+    let held = [Gospel, Revival, Nashville, IrishAir];
+    let clipped = [Oldtime, Bluegrass, Shanty, Zydeco];
+    for s in &STYLES {
+        let want_delivery = if legato.contains(&s.id) {
+            song::Delivery::Legato
+        } else if parlando.contains(&s.id) {
+            song::Delivery::Parlando
+        } else if detached.contains(&s.id) {
+            song::Delivery::Detached
+        } else {
+            song::Delivery::Flowing
+        };
+        let want_endings = if held.contains(&s.id) {
+            song::Endings::Held
+        } else if clipped.contains(&s.id) {
+            song::Endings::Clipped
+        } else {
+            song::Endings::Released
+        };
+        assert_eq!(s.phrasing.delivery, want_delivery, "{}", s.id);
+        assert_eq!(s.phrasing.endings, want_endings, "{}", s.id);
+    }
+}
+
+#[test]
+fn style_apply_fills_phrasing_only_when_none() {
+    let raw = serde_json::json!({
+        "meter": "4/4", "tempo": 100,
+        "sections": [{"type": "verse", "lines": [{"syl": "*one *two", "chords": ["C"]}]}]
+    });
+    let (mut song, _) = song::normalize_value(&raw).expect("song normalises");
+    assert_eq!(song.phrasing, None);
+    songwriter::styles::apply_style("gospel", &mut song).expect("gospel exists");
+    assert_eq!(song.phrasing, Some(songwriter::styles::style("gospel").unwrap().phrasing));
+
+    // A written phrasing survives the style's own default.
+    let (mut song, _) = song::normalize_value(&raw).expect("song normalises");
+    song.phrasing = Some(song::Phrasing::default());
+    songwriter::styles::apply_style("gospel", &mut song).expect("gospel exists");
+    assert_eq!(song.phrasing, Some(song::Phrasing::default()));
+}
+
+/// A minimal duet reply matching the reply template, including phrasing,
+/// duet and the sing/lead/blend fields the SINGERS block describes.
+fn duet_reply() -> String {
+    serde_json::json!({
+        "title": "Two on the Porch", "note": "a call and answer", "key": "G", "mode": "major",
+        "meter": "4/4", "tempo": 100, "guitar": "strum", "voice": "baritone",
+        "phrasing": {"delivery": "flowing", "endings": "released"},
+        "duet": {"voice": "alto", "phrasing": {"delivery": "legato", "endings": "held"}},
+        "band": {"drums": "none", "bass": true, "harmonyGuitar": false, "harp": false,
+                 "violin": false, "choir": false, "harmonies": false, "doubles": false},
+        "sections": [
+            {"type": "intro", "chords": ["G", "C", "G", "D"]},
+            {"type": "verse", "sing": "A", "lines": [
+                {"syl": "*one *two", "ph": "w ah n|t uw", "chords": ["G", "C"]}]},
+            {"type": "verse", "sing": "B", "lines": [
+                {"syl": "*three *four", "ph": "th r iy|f ao r", "chords": ["G", "C"]}]},
+            {"type": "chorus", "sing": "both", "lead": "B", "blend": "harmony", "lines": [
+                {"syl": "*five *six", "ph": "f ay v|s ih k s", "chords": ["G", "D"]}]},
+            {"type": "outro", "chords": ["G", "C", "D"]}
+        ]
+    })
+    .to_string()
+}
+
+#[test]
+fn reply_template_field_names_appear_verbatim() {
+    let dir = style_direction(Some(StyleId::Americana), &mut rng(4));
+    let p = song_prompt("a duet", None, &dir, "playful", 2026);
+    assert!(p.contains(
+        "\"phrasing\":{\"delivery\":\"<legato|flowing|parlando|detached>\",\"endings\":\"<held|released|clipped>\"}"
+    ));
+    assert!(p.contains("\"duet\""));
+    assert!(p.contains("\"sing\":\"A|B|both\""));
+    assert!(p.contains("\"lead\":\"A|B\""));
+    assert!(p.contains("\"blend\":\"harmony|octave\""));
+    assert!(p.contains("\"type\":\"chorus\",\"sing\":\"both\",\"lead\":\"B\",\"blend\":\"harmony\""));
+}
+
+#[test]
+fn a_duet_reply_parses_and_normalises_with_zero_repairs() {
+    let mock = Mock { reply: duet_reply(), seen: RefCell::new(None) };
+    let mut req = WriteRequest::new("a duet", 2026);
+    req.style = Some(StyleId::Americana);
+    let opts = WriteOptions { duet: DuetRequest::Duet { a: None, b: Some(song::Voice::Alto) } };
+    let w = write_song_with(&mock, &req, &opts, &mut rng(5)).expect("mock reply parses");
+
+    let seen = mock.seen.borrow().clone().expect("request sent");
+    assert!(seen.prompt.contains("Singer A is your choice of voice, singer B is alto."));
+
+    let (song, repairs) = song::normalize_value(&w.raw).expect("valid song JSON");
+    assert!(repairs.is_empty(), "{repairs:?}");
+    assert!(song.is_duet());
+}
+
+#[test]
+fn random_draws_are_unchanged_for_seeds_0_to_100() {
+    // FNV-1a 64 over "style meter form mode" lines joined by '|', for
+    // style_direction(None, ..) at seeds 0..100. Recorded once, so a future
+    // change that adds or reorders a random draw in style_direction fails
+    // this test loudly (design 4.7/5.1: "no new rng draws").
+    fn fnv1a(data: &[u8]) -> u64 {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for &b in data {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        h
+    }
+    let mut lines = Vec::with_capacity(100);
+    for seed in 0u64..100 {
+        let d = style_direction(None, &mut rng_from_seed(seed));
+        lines.push(format!("{} {} {} {}", d.style, d.meter, d.form, d.mode));
+    }
+    let joined = lines.join("|");
+    assert_eq!(fnv1a(joined.as_bytes()), 0x68111dd336787f93, "{joined}");
+}
+
+/// `style_direction`'s draws are keyed by plain `Rng::from_seed`, not the
+/// write-path's stream tag; this mirrors that (unlike `rng()` above, which
+/// streams under `WRITE_TAG` as `write_song` does).
+fn rng_from_seed(seed: u64) -> Rng {
+    Rng::from_seed(seed)
 }

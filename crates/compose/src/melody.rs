@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use sfcore::random::{tag, Rng, Tag};
-use song::{Mode, Pc, PcSet, SectionKind, Song, Syllable};
+use song::{Mode, Pc, PcSet, SectionKind, SingerId, Song, Syllable, Voice};
 
 pub use crate::contour::{Contour, ContourKind};
 pub use crate::pitch::{Cadence, PitchStyle};
@@ -179,6 +179,9 @@ pub struct LeadNote {
     pub grace: Option<i32>,
     /// The note's section is lifted.
     pub lift: bool,
+    /// The singer this note belongs to: the melody singer for a note in
+    /// `Comp::lead`, the other singer for a note in `Comp::second`.
+    pub singer: SingerId,
     pub t0: f64,
     pub t1: f64,
 }
@@ -197,6 +200,11 @@ pub struct InstNote {
 pub struct Comp {
     pub lead: Vec<LeadNote>,
     pub inst: Vec<InstNote>,
+    /// The other singer's notes on shared lines (design 4.5): same onsets,
+    /// durations, syllables, phrase flags and lift as the melody, no grace
+    /// notes. Filled by `prepare::compose_second`, after the transposition;
+    /// empty from `compose_melody` and in a solo song.
+    pub second: Vec<LeadNote>,
     /// Register pitch: the tonic near middle C (MIDI 54-66).
     pub t: i32,
     /// Tonic pitch class, 0-11.
@@ -291,12 +299,13 @@ pub fn compose_line(spec: &LineSpec, h: &Harmony, rhythm_rng: &mut Rng, pitch_rn
     LineMelody { rh, pitches, scales }
 }
 
-/// Cache key of a sung line: kind, line index, text, and the chords under
-/// it as (root, intervals), one list per bar, so the bar count and the bar
-/// boundaries are part of the key. Equal keys compose to equal lines, and
-/// the key transposes with the song, so the cache hits the same lines in
-/// any key.
-type LineKey = (SectionKind, usize, String, Vec<Vec<(u8, &'static [u8])>>);
+/// Cache key of a sung line: kind, line index, text, the chords under it as
+/// (root, intervals), one list per bar (so the bar count and the bar
+/// boundaries are part of the key), and the melody singer (design 4.5, so a
+/// line sung by A and the same line sung by B, whose register centre
+/// differs, compose separately). Equal keys compose to equal lines, and the
+/// key transposes with the song, so the cache hits the same lines in any key.
+type LineKey = (SectionKind, usize, String, Vec<Vec<(u8, &'static [u8])>>, SingerId);
 
 fn line_key(form: &Form, li_idx: usize, kind: SectionKind) -> LineKey {
     let l = &form.lines[li_idx];
@@ -313,7 +322,7 @@ fn line_key(form: &Form, li_idx: usize, kind: SectionKind) -> LineKey {
                 .collect()
         })
         .collect();
-    (kind, l.li, l.text.clone(), chords)
+    (kind, l.li, l.text.clone(), chords, l.part.melody())
 }
 
 /// Grace notes: on a long (>= 1.5 beats) last note, with probability 0.55,
@@ -322,14 +331,24 @@ fn line_key(form: &Form, li_idx: usize, kind: SectionKind) -> LineKey {
 const GRACE_END_P: f64 = 0.55;
 const GRACE_FALL_P: f64 = 0.18;
 
-/// Composes every sung line (lines with the same kind, index, text and
-/// chords are composed once and repeat exactly) and the instrumental lead
-/// lines of instrumental sections. Sets `form.lines[*].pitches` and `.rh`.
-pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u64) -> Comp {
+/// Composes every sung line (lines with the same kind, index, text, chords
+/// and melody singer are composed once and repeat exactly) and the
+/// instrumental lead lines of instrumental sections. Sets
+/// `form.lines[*].pitches` and `.rh`. `voice_a` is singer A's chosen voice;
+/// `voice_b`, `Some` in a duet, is singer B's: the duet register fit
+/// (design 4.5, `voices::duet_register`) then offsets singer B's line
+/// centre by `d` while composing and shifts B's melody notes by `12 * o`
+/// afterward, so a shared line composed for A and the same line for B
+/// (different centres) are cached separately (`LineKey`'s melody singer).
+pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u64, voice_a: Voice, voice_b: Option<Voice>) -> Comp {
     let bpb = form.bpb();
     let tonic = (song.key.get() as i32 + form.transpose).rem_euclid(12);
     let t = register_of(tonic);
     let prof = melody_profile(seed, song);
+    let (o, d) = match voice_b {
+        Some(vb) => crate::voices::duet_register(voice_a, vb),
+        None => (0, 0.0),
+    };
 
     let mut cache: HashMap<LineKey, LineMelody> = HashMap::new();
     let mut first_occ: [Vec<Option<Vec<i32>>>; SectionKind::ALL.len()] = Default::default();
@@ -346,11 +365,15 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u64) ->
             let (kind, li, nl) = (sec.kind, line.li, sec.lines.len());
             let line_beat = (line.start_bar as i32 * bpb) as f64;
             let key = line_key(form_r, li_idx, kind);
+            let singer = line.part.melody();
 
             if !cache.contains_key(&key) {
                 let stresses: Vec<bool> = line.syls.iter().map(|s| s.stress).collect();
                 let cadence = cadence_for(kind, li, nl);
-                let ts = prof.tess(kind);
+                let mut ts = prof.tess(kind);
+                if singer == SingerId::B {
+                    ts.c += d;
+                }
                 // Reference: the same line of the first section of this
                 // kind, else the line two back in this section.
                 let first = if sec.occ > 0 { first_occ[kind as usize].get(li).and_then(Option::as_ref) } else { None };
@@ -383,14 +406,20 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u64) ->
                 cache.insert(key.clone(), m);
             }
             let m = &cache[&key];
-            composed[li_idx] = Some((m.rh.clone(), m.pitches.clone()));
+            // Singer B's melody notes move by a whole octave after
+            // composing (design 4.5): applied here, and to every use of
+            // this line's pitches below, so `form.lines[*].pitches` and
+            // the cached reference and lead notes all agree.
+            let octave_shift = if singer == SingerId::B { 12 * o } else { 0 };
+            let shifted: Vec<i32> = m.pitches.iter().map(|&p| p + octave_shift).collect();
+            composed[li_idx] = Some((m.rh.clone(), shifted.clone()));
 
             let occ = &mut first_occ[kind as usize];
             if occ.len() <= li {
                 occ.resize(li + 1, None);
             }
             if sec.occ == 0 {
-                occ[li] = Some(m.pitches.clone());
+                occ[li] = Some(shifted.clone());
             }
 
             let n = m.pitches.len();
@@ -408,15 +437,16 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u64) ->
                 lead.push(LeadNote {
                     beat: line_beat + m.rh.onsets[i],
                     dur,
-                    midi,
+                    midi: midi + octave_shift,
                     syl: syl.clone(),
                     line_idx: li_idx,
                     i,
                     stress: syl.stress,
                     phrase_start: i == 0,
                     phrase_end: i + 1 == n,
-                    grace,
+                    grace: grace.map(|g| g + octave_shift),
                     lift: sec.is_lift(),
+                    singer,
                     t0: 0.0,
                     t1: 0.0,
                 });
@@ -434,7 +464,7 @@ pub fn compose_melody(song: &Song, form: &mut Form, tl: &Timeline, seed: u64) ->
     }
 
     let inst = compose_instrumental(song, form, tl, seed, tonic, t);
-    Comp { lead, inst, t, tonic }
+    Comp { lead, inst, second: Vec::new(), t, tonic }
 }
 
 /// Instrumental lead lines for sections without lyrics: one line per two
@@ -542,7 +572,7 @@ mod tests {
         let s = song(json!({}));
         let mut form = crate::form::build_form(&s, 0);
         let tl = Timeline::new(&form, s.tempo_bpm);
-        let comp = compose_melody(&s, &mut form, &tl, 7);
+        let comp = compose_melody(&s, &mut form, &tl, 7, Voice::Baritone, None);
         assert!(!comp.lead.is_empty());
         assert!(!comp.inst.is_empty());
         for l in &form.lines {

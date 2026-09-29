@@ -45,6 +45,7 @@ use song::Voice;
 use crate::controls::{Articulation, ControlTracks, Window};
 use crate::glottal::GlottalSource;
 use crate::params::{voice_params, VoiceParams};
+use crate::phrasing::PhrasingParams;
 use crate::tract::{Formants, Tract, MAX_HIGH};
 use crate::tuning::{ASPIRATION_GAIN, BREATH_LP_HZ, TILT_SCALE};
 
@@ -99,6 +100,10 @@ pub struct VoiceSettings {
     pub scoop: bool,
     /// Audible breaths in pauses before phrases.
     pub breath_pauses: bool,
+    /// Delivery and endings (design 5.2); `vibrato` and `glide` are
+    /// already folded into `vibrato_scale` and `glide` above, so read the
+    /// other fields from here.
+    pub phrasing: PhrasingParams,
 }
 
 impl Default for VoiceSettings {
@@ -109,10 +114,11 @@ impl Default for VoiceSettings {
 
 impl From<&SingStyle> for VoiceSettings {
     fn from(s: &SingStyle) -> Self {
+        let phrasing = PhrasingParams::of(s.phrasing);
         VoiceSettings {
             detune: s.detune_cents as f64 / 100.0,
             lateness: s.lateness as f64,
-            vibrato_scale: s.vibrato_scale as f64,
+            vibrato_scale: s.vibrato_scale as f64 * phrasing.vibrato,
             vibrato_rate_scale: s.vibrato_rate_scale as f64,
             formant_scale: s.formant_scale as f64,
             f1_scale: s.f1_scale as f64,
@@ -124,9 +130,10 @@ impl From<&SingStyle> for VoiceSettings {
             shimmer_scale: s.shimmer_scale as f64,
             n_high: s.n_high,
             av_tau: s.av_tau as f64,
-            glide: s.glide as f64,
+            glide: s.glide as f64 * phrasing.glide,
             scoop: s.scoop,
             breath_pauses: s.breath_pauses,
+            phrasing,
         }
     }
 }
@@ -427,7 +434,10 @@ pub(crate) fn render_phrases_with(
     let mut synth = VoiceSynth::new(p, settings.n_high as usize, seed);
 
     let mut art = Articulation::new(&notes, p, settings, Rng::stream(seed, CONTROLS));
-    let spans = phrase_spans(&notes, &art, n_f);
+    // `art.notes()` is `notes` with `phrasing::phrase_notes` applied (a
+    // no-op copy for the default phrasing); phrase splitting and the
+    // phrase spans use those shaped times, matching what `art` plans.
+    let spans = phrase_spans(art.notes(), &art, n_f);
 
     // Control tracks per phrase: the span plus the frame its last frame
     // ramps to.

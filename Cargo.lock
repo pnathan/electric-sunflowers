@@ -1612,6 +1612,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "gaterun"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "dsp",
+ "engine",
+ "instruments",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sfcore",
+ "song",
+ "soundgate",
+ "voice",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3934,6 +3951,7 @@ dependencies = [
  "export",
  "rayon",
  "serde_json",
+ "settings",
  "sfcore",
  "song",
  "songwriter",
@@ -4582,7 +4600,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "voice"
 version = "0.1.0"
 dependencies = [
+ "compose",
  "dsp",
+ "serde_json",
  "sfcore",
  "song",
 ]

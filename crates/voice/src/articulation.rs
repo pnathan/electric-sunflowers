@@ -43,6 +43,7 @@ use song::Phoneme;
 
 use crate::params::VoiceParams;
 use crate::phoneme::{consonant, vowel_formants, ConsClass, Consonant, Locus};
+use crate::phrasing::PhrasingParams;
 use crate::synth::VoiceSettings;
 use crate::tuning::BURST_GAIN;
 
@@ -105,8 +106,6 @@ impl Segment {
 
 /// Default nucleus of a note without a vowel: /aa/, the choir vowel.
 pub const DEFAULT_NUCLEUS: Phoneme = Phoneme::Aa;
-/// Share of the inter-onset interval the onset consonants may take.
-pub const ONSET_SHARE: f64 = 0.45;
 /// Onset room of the first note, s.
 pub const FIRST_ONSET: f64 = 0.3;
 /// Share of the note the coda may take.
@@ -230,8 +229,12 @@ pub struct Syllable {
     pub coda_dur: Vec<f64>,
     /// Onset compression factor, <= 1.
     pub onset_scale: f64,
-    /// Time the first onset consonant starts, s (<= the note's t0).
+    /// Time the first onset consonant starts, s (<= `vowel_start`).
     pub onset_start: f64,
+    /// Time the nucleus starts, s (the note's `t0` with `lead_in` 1.0;
+    /// later with a smaller `lead_in`, which pushes part of the onset
+    /// consonants' scaled span past the written onset).
+    pub vowel_start: f64,
     /// Nucleus formant targets (unscaled), never empty.
     pub targets: Vec<NucTarget>,
 }
@@ -249,8 +252,9 @@ pub fn split_ph(ph: &[Phoneme]) -> (Vec<Phoneme>, Vec<Phoneme>, Vec<Phoneme>) {
 }
 
 /// Per-note syllables of `notes` for voice `p`: split, durations, flapping,
-/// onset compression.
-pub fn syllables(notes: &[VocalNote], p: &VoiceParams) -> Vec<Syllable> {
+/// onset compression against `ph.onset_share`, and the onset/vowel span
+/// placed by `ph.lead_in`.
+pub fn syllables(notes: &[VocalNote], p: &VoiceParams, ph: &PhrasingParams) -> Vec<Syllable> {
     let cs = p.cons_scale;
     let mut syl: Vec<Syllable> = notes
         .iter()
@@ -259,7 +263,7 @@ pub fn syllables(notes: &[VocalNote], p: &VoiceParams) -> Vec<Syllable> {
             let onset_dur = onset.iter().map(|&ph| cons_dur(ph, false) * cs).collect();
             let coda_dur = coda.iter().map(|&ph| cons_dur(ph, true) * cs).collect();
             let targets = nuc_targets(&nucleus);
-            Syllable { onset, nucleus, coda, onset_dur, coda_dur, onset_scale: 1.0, onset_start: n.t0, targets }
+            Syllable { onset, nucleus, coda, onset_dur, coda_dur, onset_scale: 1.0, onset_start: n.t0, vowel_start: n.t0, targets }
         })
         .collect();
 
@@ -275,10 +279,14 @@ pub fn syllables(notes: &[VocalNote], p: &VoiceParams) -> Vec<Syllable> {
     for k in 0..notes.len() {
         let n = &notes[k];
         let d: f64 = syl[k].onset_dur.iter().sum();
-        let avail = if k > 0 { (n.t0 - notes[k - 1].t0) * ONSET_SHARE } else { FIRST_ONSET };
+        let avail = if k > 0 { (n.t0 - notes[k - 1].t0) * ph.onset_share } else { FIRST_ONSET };
         let s = if d > avail && d > 0.0 { avail / d } else { 1.0 };
         syl[k].onset_scale = s;
-        syl[k].onset_start = n.t0 - d * s;
+        // Onset consonants of scaled length `dd` span [t0 - lead_in dd,
+        // t0 + (1 - lead_in) dd]; the vowel starts at the span end.
+        let dd = d * s;
+        syl[k].onset_start = n.t0 - ph.lead_in * dd;
+        syl[k].vowel_start = n.t0 + (1.0 - ph.lead_in) * dd;
     }
     syl
 }
@@ -323,7 +331,7 @@ impl Plan<'_> {
 /// applied), sorted by start time. See the module doc for the rules.
 pub fn plan_segments(notes: &[VocalNote], p: &VoiceParams, settings: &VoiceSettings) -> Vec<(Span, Segment)> {
     let mut out = Vec::with_capacity(notes.len() * 8);
-    plan_syllables(notes, &syllables(notes, p), 0..notes.len(), p, settings, &mut out);
+    plan_syllables(notes, &syllables(notes, p, &settings.phrasing), 0..notes.len(), p, settings, &mut out);
     out
 }
 
@@ -369,28 +377,28 @@ pub fn plan_syllables(
         let mut coda_end = n.t1;
         if let Some((_, ns)) = next {
             if ns.onset_start < n.t1 + 0.03 {
-                coda_end = ns.onset_start.min((n.t0 + 0.06).max(n.t1));
+                coda_end = ns.onset_start.min((s.vowel_start + 0.06).max(n.t1));
             }
         }
         let d2: f64 = s.coda_dur.iter().sum();
-        let lim = (coda_end - n.t0) * CODA_SHARE;
+        let lim = (coda_end - s.vowel_start) * CODA_SHARE;
         let s2 = if d2 > lim && d2 > 0.0 { lim / d2 } else { 1.0 };
         let coda_start = coda_end - d2 * s2;
 
         // CV transition from the locus.
-        let vlen = coda_start - n.t0;
-        let mut n_start = n.t0;
+        let vlen = coda_start - s.vowel_start;
+        let mut n_start = s.vowel_start;
         if let (Some(loc), NucKind::Vowel) = (locus, vt[0].kind) {
             let tt = CV_TRANSITION.min(vlen * 0.4);
             for j in 0..CV_STEPS {
                 let a = (j as f64 + 0.5) / CV_STEPS as f64;
                 let e = 1.0 - (1.0 - a).powf(1.6);
                 let f = [0, 1, 2].map(|q| loc[q] + (vf0[q] - loc[q]) * e);
-                let t0 = n.t0 + tt * j as f64 / CV_STEPS as f64;
-                let t1 = n.t0 + tt * (j as f64 + 1.0) / CV_STEPS as f64;
+                let t0 = s.vowel_start + tt * j as f64 / CV_STEPS as f64;
+                let t1 = s.vowel_start + tt * (j as f64 + 1.0) / CV_STEPS as f64;
                 plan.put(t0, t1, Segment::Vowel { f, av: amp * (0.7 + 0.3 * a) });
             }
-            n_start = n.t0 + tt;
+            n_start = s.vowel_start + tt;
         }
 
         // Nucleus: one target, or a hold and a glide through the rest.
@@ -586,7 +594,7 @@ mod tests {
                 note(2.0, 2.4, &["s", "ih"], true),
                 note(2.5, 2.9, &["t", "iy"], false),
             ];
-            let syl = syllables(&notes, &p);
+            let syl = syllables(&notes, &p, &PhrasingParams::default());
             assert_eq!(syl[4].onset, vec![Phoneme::Dx], "{voice:?}");
             let plan = plan_segments(&notes, &p, &settings);
             let on = inside(&plan, syl[4].onset_start, notes[4].t0);
@@ -600,7 +608,7 @@ mod tests {
             // Stressed, the same /t/ is a full voiceless stop.
             let mut stressed = notes.clone();
             stressed[4].stress = true;
-            let syl = syllables(&stressed, &p);
+            let syl = syllables(&stressed, &p, &PhrasingParams::default());
             assert_eq!(syl[4].onset, vec![Phoneme::T]);
             assert_eq!(syl[4].onset_scale, 1.0);
             let plan = plan_segments(&stressed, &p, &settings);
@@ -625,9 +633,9 @@ mod tests {
     fn t_after_coda_or_gap_does_not_flap() {
         let p = voice_params(Voice::Baritone);
         let notes = [note(0.5, 0.9, &["s", "ih", "n"], true), note(1.0, 1.4, &["t", "iy"], false)];
-        assert_eq!(syllables(&notes, &p)[1].onset, vec![Phoneme::T]);
+        assert_eq!(syllables(&notes, &p, &PhrasingParams::default())[1].onset, vec![Phoneme::T]);
         let notes = [note(0.5, 0.9, &["s", "ih"], true), note(1.2, 1.6, &["t", "iy"], false)];
-        assert_eq!(syllables(&notes, &p)[1].onset, vec![Phoneme::T]);
+        assert_eq!(syllables(&notes, &p, &PhrasingParams::default())[1].onset, vec![Phoneme::T]);
     }
 
     /// Onsets take at most 45% of the inter-onset interval.
@@ -635,10 +643,32 @@ mod tests {
     fn onset_compression() {
         let p = voice_params(Voice::Soprano);
         let notes = [note(0.5, 0.6, &["aa"], true), note(0.62, 0.8, &["s", "t", "r", "aa"], true)];
-        let syl = syllables(&notes, &p);
+        let syl = syllables(&notes, &p, &PhrasingParams::default());
         let used = notes[1].t0 - syl[1].onset_start;
         assert!(syl[1].onset_scale < 1.0);
-        assert!((used - 0.12 * ONSET_SHARE).abs() < 1e-12, "{used}");
+        assert!((used - 0.12 * PhrasingParams::default().onset_share).abs() < 1e-12, "{used}");
+    }
+
+    /// `lead_in` moves the vowel start by `(1 - lead_in) * D`, where `D` is
+    /// the onset consonants' scaled span (uncompressed here); `onset_start`
+    /// moves the other way, by `lead_in * D`, so the span keeps length `D`.
+    #[test]
+    fn lead_in_moves_the_vowel_start() {
+        let p = voice_params(Voice::Tenor);
+        let notes = [note(1.0, 1.6, &["s", "t", "aa"], true), note(2.0, 2.6, &["b", "aa"], true)];
+        let default = PhrasingParams::default();
+        let syl0 = syllables(&notes, &p, &default);
+        assert_eq!(syl0[0].vowel_start, notes[0].t0);
+        let d: f64 = syl0[0].onset_dur.iter().sum::<f64>() * syl0[0].onset_scale;
+
+        for lead_in in [0.6, 0.0, 1.0] {
+            let ph = PhrasingParams { lead_in, ..default };
+            let syl = syllables(&notes, &p, &ph);
+            let dd: f64 = syl[0].onset_dur.iter().sum::<f64>() * syl[0].onset_scale;
+            assert!((dd - d).abs() < 1e-9, "onset compression must not depend on lead_in");
+            assert!((syl[0].vowel_start - (notes[0].t0 + (1.0 - lead_in) * dd)).abs() < 1e-9, "lead_in {lead_in}");
+            assert!((syl[0].onset_start - (notes[0].t0 - lead_in * dd)).abs() < 1e-9, "lead_in {lead_in}");
+        }
     }
 
     /// A breath precedes a phrase after a long pause, only when enabled.

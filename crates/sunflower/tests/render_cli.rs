@@ -346,3 +346,147 @@ fn sheet_of_a_missing_file_errors_without_panicking() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("reading song JSON"));
 }
+
+/// `SUNFLOWER_CONFIG` changes the ogg quality that goes into the output
+/// (and so its size), and a `--quality` flag beats the settings file.
+#[test]
+fn settings_file_changes_the_default_ogg_quality_and_a_flag_beats_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("cfg.toml");
+    std::fs::write(&cfg, "[export]\nogg_quality = -0.2\n").unwrap();
+
+    let low = dir.path().join("low.ogg");
+    let status = Command::new(bin())
+        .env("SUNFLOWER_CONFIG", &cfg)
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", low.to_str().unwrap()])
+        .status()
+        .expect("run sunflower render");
+    assert!(status.success());
+
+    let flagged = dir.path().join("flagged.ogg");
+    let status = Command::new(bin())
+        .env("SUNFLOWER_CONFIG", &cfg)
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "--quality", "0.5", "-o", flagged.to_str().unwrap()])
+        .status()
+        .expect("run sunflower render");
+    assert!(status.success());
+
+    let (low_len, flagged_len) = (std::fs::metadata(&low).unwrap().len(), std::fs::metadata(&flagged).unwrap().len());
+    assert!(flagged_len > low_len, "a higher quality (from the flag) should produce a larger file: {low_len} vs {flagged_len}");
+}
+
+/// A bad settings file value falls back to the default and warns; the
+/// warning is printed with the `sunflower: warning: settings:` prefix.
+#[test]
+fn a_bad_settings_file_warns_and_still_renders() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("cfg.toml");
+    std::fs::write(&cfg, "[claude]\neffort = \"blazing\"\n").unwrap();
+    let out = dir.path().join("x.wav");
+    let output = Command::new(bin())
+        .env("SUNFLOWER_CONFIG", &cfg)
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", out.to_str().unwrap()])
+        .output()
+        .expect("run sunflower render");
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("sunflower: warning: settings:"), "{stderr}");
+    assert!(stderr.contains("claude.effort"), "{stderr}");
+}
+
+/// `--stems` writes one FLAC per audible track plus `reverb.flac` and
+/// `stems.json`, and the render sidecar names the directory.
+#[test]
+fn stems_flag_writes_one_flac_per_track_plus_reverb() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("tune.wav");
+    let status = Command::new(bin())
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "--stems", "-o", out.to_str().unwrap()])
+        .status()
+        .expect("run sunflower render");
+    assert!(status.success());
+
+    let stems_dir = dir.path().join("tune.stems");
+    assert!(stems_dir.is_dir());
+    let manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(stems_dir.join("stems.json")).unwrap()).unwrap();
+    let tracks: Vec<String> = manifest["tracks"].as_array().unwrap().iter().map(|t| t.as_str().unwrap().to_string()).collect();
+    assert!(!tracks.is_empty());
+    for t in &tracks {
+        let p = stems_dir.join(format!("{t}.flac"));
+        assert!(p.exists(), "missing stem file {p:?}");
+        assert_eq!(&std::fs::read(&p).unwrap()[0..4], b"fLaC");
+    }
+    let reverb = stems_dir.join("reverb.flac");
+    assert!(reverb.exists());
+    assert_eq!(&std::fs::read(&reverb).unwrap()[0..4], b"fLaC");
+    assert!(manifest["gain"].as_f64().unwrap() > 0.0);
+    assert!(manifest["extra_gain"].as_f64().unwrap() > 0.0);
+
+    let side: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("tune.render.json")).unwrap()).unwrap();
+    assert!(side["stems"].as_str().unwrap().ends_with("tune.stems"));
+}
+
+/// A mix sidecar that mutes the bass changes the audio and is recorded in
+/// the render sidecar's `mix` field; `--no-mix` ignores an auto-picked-up
+/// `<out-stem>.mix.json`.
+#[test]
+fn mix_sidecar_changes_the_mix_and_is_recorded_no_mix_ignores_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let plain = dir.path().join("plain.wav");
+    let status = Command::new(bin())
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", plain.to_str().unwrap()])
+        .status()
+        .expect("run sunflower render");
+    assert!(status.success());
+
+    let mix_file = dir.path().join("mute-bass.json");
+    std::fs::write(&mix_file, r#"{"version": 1, "tracks": {"bass": {"mute": true}}}"#).unwrap();
+    let muted = dir.path().join("muted.wav");
+    let output = Command::new(bin())
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "--mix", mix_file.to_str().unwrap(), "-o", muted.to_str().unwrap()])
+        .output()
+        .expect("run sunflower render");
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("applying mix settings from"));
+    assert_ne!(std::fs::read(&plain).unwrap(), std::fs::read(&muted).unwrap(), "muting the bass should change the mix");
+
+    let side: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.path().join("muted.render.json")).unwrap()).unwrap();
+    assert!(side["mix"].as_str().unwrap().ends_with("mute-bass.json"));
+
+    // <out-stem>.mix.json is auto-applied ...
+    let auto_out = dir.path().join("auto.wav");
+    std::fs::copy(&mix_file, dir.path().join("auto.mix.json")).unwrap();
+    let status = Command::new(bin())
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", auto_out.to_str().unwrap()])
+        .status()
+        .expect("run sunflower render");
+    assert!(status.success());
+    assert_eq!(std::fs::read(&auto_out).unwrap(), std::fs::read(&muted).unwrap(), "auto-picked-up mix should match the explicit --mix run");
+
+    // ... but --no-mix ignores it.
+    let ignored = dir.path().join("auto.ignored.wav");
+    let status = Command::new(bin())
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "--no-mix", "-o", ignored.to_str().unwrap()])
+        .status()
+        .expect("run sunflower render");
+    assert!(status.success());
+    // --no-mix on a different output stem never picks up auto.mix.json anyway
+    // (the candidate is <out-stem>.mix.json), so compare directly against plain.
+    assert_eq!(std::fs::read(&ignored).unwrap(), std::fs::read(&plain).unwrap(), "--no-mix should ignore any mix sidecar");
+}
+
+/// The render sidecar parses with `songwriter::sidecar::RenderSidecar`.
+#[test]
+fn sidecar_parses_with_render_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("tune.ogg");
+    let status = Command::new(bin())
+        .args(["render", song_path().to_str().unwrap(), "--seed", "7", "-o", out.to_str().unwrap()])
+        .status()
+        .expect("run sunflower render");
+    assert!(status.success());
+    let side = songwriter::sidecar::RenderSidecar::read(&dir.path().join("tune.render.json")).expect("RenderSidecar::read");
+    assert_eq!(side.seed, Some(7));
+    assert_eq!(side.voice.as_deref(), Some("baritone"));
+    assert!(side.generation.is_none());
+}

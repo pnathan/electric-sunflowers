@@ -8,3 +8,10 @@ publish.workspace = true
 sfcore = { path = "../core" }
 song = { path = "../song" }
 dsp = { path = "../dsp" }
+
+[dev-dependencies]
+# Not a real dependency of the voice library: the phrasing example and the
+# demo-lead identity test need real sung notes (compose does not depend on
+# voice, so this is not a cycle).
+compose = { path = "../compose" }
+serde_json.workspace = true

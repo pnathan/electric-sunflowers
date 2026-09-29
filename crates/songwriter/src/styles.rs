@@ -17,7 +17,10 @@ use std::fmt;
 use std::str::FromStr;
 
 use sfcore::random::Rng;
-use song::{Band, BreakLead, DrumKit, GuitarPattern, Meter, Mode, Repair, SectionKind, SectionRole, Song};
+use song::{
+    Band, BreakLead, Delivery, DrumKit, Endings, GuitarPattern, Meter, Mode, Phrasing, Repair, SectionKind,
+    SectionRole, Song,
+};
 
 /// Declares a fieldless id enum with its spellings: `ALL`, `as_str`,
 /// `Display`, and `FromStr` (exact spelling, surrounding whitespace ignored)
@@ -427,6 +430,32 @@ pub static FORMS: [Form; 10] = [
     },
 ];
 
+/// How welcome a duet is in a style (design 4.7). Sets the prompt's
+/// "In this style a duet is common | occasional | rare" line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DuetFit {
+    Welcome,
+    Occasional,
+    Rare,
+}
+
+impl DuetFit {
+    /// The prompt's word for this fit.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            DuetFit::Welcome => "common",
+            DuetFit::Occasional => "occasional",
+            DuetFit::Rare => "rare",
+        }
+    }
+}
+
+impl fmt::Display for DuetFit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// A style.
 #[derive(Clone, Copy, Debug)]
 pub struct Style {
@@ -444,6 +473,11 @@ pub struct Style {
     pub forms: &'static [FormId],
     /// Lead instrument of instrumental breaks.
     pub lead: BreakLead,
+    /// How welcome a duet is in this style (design 4.7).
+    pub duet: DuetFit,
+    /// The style's default articulation (design 5.1); `Style::apply` fills
+    /// `song.phrasing` with this only when it is `None`.
+    pub phrasing: Phrasing,
 }
 
 impl Style {
@@ -461,6 +495,12 @@ impl Style {
         song.break_lead = self.lead;
         song.band = self.band;
         song.style = Some(self.id.as_str().to_string());
+        // The style's default, only when the song did not write its own
+        // (no repair: this is the style's default, as the guitar pattern
+        // is). Singer B's phrasing falls back on its own (`phrasing_of`).
+        if song.phrasing.is_none() {
+            song.phrasing = Some(self.phrasing);
+        }
         let mut rep = Vec::new();
         if let Some((lo, hi)) = self.tempo_for(song.meter) {
             let from = song.tempo_bpm;
@@ -522,6 +562,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { bass: false, violin: true, ..kit(DrumKit::None) },
         forms: &[FormId::Strophic, FormId::Refrain],
         lead: BreakLead::Violin,
+        duet: DuetFit::Rare,
+        phrasing: Phrasing { delivery: Delivery::Flowing, endings: Endings::Released },
     },
     Style {
         id: StyleId::Oldtime,
@@ -534,6 +576,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harmony_guitar: true, violin: true, harmonies: true, ..kit(DrumKit::None) },
         forms: &[FormId::VcBreaks, FormId::Refrain],
         lead: BreakLead::Violin,
+        duet: DuetFit::Occasional,
+        phrasing: Phrasing { delivery: Delivery::Detached, endings: Endings::Clipped },
     },
     Style {
         id: StyleId::Bluegrass,
@@ -546,6 +590,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harmony_guitar: true, violin: true, harmonies: true, ..kit(DrumKit::None) },
         forms: &[FormId::VcBreaks],
         lead: BreakLead::Both,
+        duet: DuetFit::Occasional,
+        phrasing: Phrasing { delivery: Delivery::Detached, endings: Endings::Clipped },
     },
     Style {
         id: StyleId::Cowboy,
@@ -558,6 +604,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harmony_guitar: true, violin: true, harmonies: true, ..kit(Brushes) },
         forms: &[FormId::Vc, FormId::WaltzBreaks, FormId::Strophic],
         lead: BreakLead::Violin,
+        duet: DuetFit::Occasional,
+        phrasing: Phrasing { delivery: Delivery::Parlando, endings: Endings::Released },
     },
     Style {
         id: StyleId::Bakersfield,
@@ -570,6 +618,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harmony_guitar: true, violin: true, harmonies: true, doubles: true, ..kit(Full) },
         forms: &[FormId::VcBreaks, FormId::Vc, FormId::ChorusFirst],
         lead: BreakLead::Guitar,
+        duet: DuetFit::Welcome,
+        phrasing: Phrasing { delivery: Delivery::Flowing, endings: Endings::Released },
     },
     Style {
         id: StyleId::Texas,
@@ -582,6 +632,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harmony_guitar: true, ..kit(Brushes) },
         forms: &[FormId::Refrain, FormId::Strophic, FormId::Aaba],
         lead: BreakLead::Guitar,
+        duet: DuetFit::Welcome,
+        phrasing: Phrasing { delivery: Delivery::Parlando, endings: Endings::Released },
     },
     Style {
         id: StyleId::Cajun,
@@ -594,6 +646,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { violin: true, harmonies: true, ..kit(Soft) },
         forms: &[FormId::WaltzBreaks],
         lead: BreakLead::Violin,
+        duet: DuetFit::Welcome,
+        phrasing: Phrasing { delivery: Delivery::Detached, endings: Endings::Released },
     },
     Style {
         id: StyleId::Zydeco,
@@ -613,6 +667,8 @@ pub static STYLES: [Style; 22] = [
         },
         forms: &[FormId::ChorusFirst, FormId::VcBreaks],
         lead: BreakLead::Both,
+        duet: DuetFit::Welcome,
+        phrasing: Phrasing { delivery: Delivery::Detached, endings: Endings::Clipped },
     },
     Style {
         id: StyleId::Acadian,
@@ -625,6 +681,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { violin: true, harmonies: true, ..kit(Soft) },
         forms: &[FormId::VcBreaks, FormId::Refrain],
         lead: BreakLead::Violin,
+        duet: DuetFit::Occasional,
+        phrasing: Phrasing { delivery: Delivery::Flowing, endings: Endings::Released },
     },
     Style {
         id: StyleId::Broadside,
@@ -637,6 +695,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { bass: false, violin: true, ..kit(DrumKit::None) },
         forms: &[FormId::Strophic, FormId::Refrain],
         lead: BreakLead::Violin,
+        duet: DuetFit::Rare,
+        phrasing: Phrasing { delivery: Delivery::Parlando, endings: Endings::Released },
     },
     Style {
         id: StyleId::Scottish,
@@ -649,6 +709,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harp: true, violin: true, ..kit(DrumKit::None) },
         forms: &[FormId::Strophic, FormId::Refrain, FormId::Aaba],
         lead: BreakLead::Violin,
+        duet: DuetFit::Rare,
+        phrasing: Phrasing { delivery: Delivery::Legato, endings: Endings::Released },
     },
     Style {
         id: StyleId::IrishAir,
@@ -661,6 +723,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harp: true, violin: true, ..kit(DrumKit::None) },
         forms: &[FormId::Strophic, FormId::Aaba],
         lead: BreakLead::Violin,
+        duet: DuetFit::Rare,
+        phrasing: Phrasing { delivery: Delivery::Legato, endings: Endings::Held },
     },
     Style {
         id: StyleId::IrishPub,
@@ -673,6 +737,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { violin: true, choir: true, harmonies: true, doubles: true, ..kit(Soft) },
         forms: &[FormId::Vc, FormId::ChorusFirst, FormId::VcBreaks],
         lead: BreakLead::Violin,
+        duet: DuetFit::Occasional,
+        phrasing: Phrasing { delivery: Delivery::Detached, endings: Endings::Released },
     },
     Style {
         id: StyleId::Welsh,
@@ -685,6 +751,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harp: true, choir: true, harmonies: true, ..kit(DrumKit::None) },
         forms: &[FormId::Hymn],
         lead: BreakLead::Guitar,
+        duet: DuetFit::Rare,
+        phrasing: Phrasing { delivery: Delivery::Legato, endings: Endings::Released },
     },
     Style {
         id: StyleId::Breton,
@@ -697,6 +765,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { violin: true, harmonies: true, ..kit(Soft) },
         forms: &[FormId::Refrain, FormId::VcBreaks],
         lead: BreakLead::Violin,
+        duet: DuetFit::Occasional,
+        phrasing: Phrasing { delivery: Delivery::Flowing, endings: Endings::Released },
     },
     Style {
         id: StyleId::Blues,
@@ -709,6 +779,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harmony_guitar: true, ..kit(Brushes) },
         forms: &[FormId::Blues12],
         lead: BreakLead::Guitar,
+        duet: DuetFit::Rare,
+        phrasing: Phrasing { delivery: Delivery::Parlando, endings: Endings::Released },
     },
     Style {
         id: StyleId::Gospel,
@@ -721,6 +793,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { choir: true, harmonies: true, doubles: true, ..kit(Soft) },
         forms: &[FormId::ChorusFirst, FormId::Vc, FormId::Prechorus],
         lead: BreakLead::Guitar,
+        duet: DuetFit::Welcome,
+        phrasing: Phrasing { delivery: Delivery::Legato, endings: Endings::Held },
     },
     Style {
         id: StyleId::Revival,
@@ -733,6 +807,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { bass: false, harmonies: true, ..kit(DrumKit::None) },
         forms: &[FormId::Refrain, FormId::Vc, FormId::Strophic],
         lead: BreakLead::Guitar,
+        duet: DuetFit::Welcome,
+        phrasing: Phrasing { delivery: Delivery::Flowing, endings: Endings::Held },
     },
     Style {
         id: StyleId::Laurel,
@@ -745,6 +821,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harmony_guitar: true, harmonies: true, doubles: true, ..kit(Soft) },
         forms: &[FormId::Vc, FormId::Prechorus, FormId::Aaba],
         lead: BreakLead::Guitar,
+        duet: DuetFit::Welcome,
+        phrasing: Phrasing { delivery: Delivery::Flowing, endings: Endings::Released },
     },
     Style {
         id: StyleId::Nashville,
@@ -757,6 +835,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harmony_guitar: true, violin: true, harmonies: true, ..kit(Brushes) },
         forms: &[FormId::WaltzBreaks, FormId::Vc],
         lead: BreakLead::Violin,
+        duet: DuetFit::Welcome,
+        phrasing: Phrasing { delivery: Delivery::Flowing, endings: Endings::Held },
     },
     Style {
         id: StyleId::Americana,
@@ -769,6 +849,8 @@ pub static STYLES: [Style; 22] = [
         band: Band { harmony_guitar: true, violin: true, harmonies: true, doubles: true, ..kit(Soft) },
         forms: &[FormId::Vc, FormId::Prechorus, FormId::ChorusFirst, FormId::Aaba],
         lead: BreakLead::Both,
+        duet: DuetFit::Welcome,
+        phrasing: Phrasing { delivery: Delivery::Flowing, endings: Endings::Released },
     },
     Style {
         id: StyleId::Shanty,
@@ -788,6 +870,8 @@ pub static STYLES: [Style; 22] = [
         },
         forms: &[FormId::Refrain, FormId::ChorusFirst],
         lead: BreakLead::Violin,
+        duet: DuetFit::Occasional,
+        phrasing: Phrasing { delivery: Delivery::Detached, endings: Endings::Clipped },
     },
 ];
 
@@ -829,6 +913,10 @@ pub struct Direction {
     pub band: Band,
     pub lead: BreakLead,
     pub world: Option<&'static str>,
+    /// How welcome a duet is in this style (design 4.7).
+    pub duet: DuetFit,
+    /// The style's default articulation (design 5.1).
+    pub phrasing: Phrasing,
 }
 
 /// Chooses the direction: `style`, or a uniformly random style when
@@ -855,6 +943,8 @@ pub fn style_direction(style: Option<StyleId>, rng: &mut Rng) -> Direction {
         band: s.band,
         lead: s.lead,
         world,
+        duet: s.duet,
+        phrasing: s.phrasing,
     }
 }
 

@@ -249,3 +249,57 @@ fn short_gap_keeps_the_sounding_note() {
     let last = rms(1.75, 1.85);
     assert!(after > 0.5 * before && after > 0.5 * last, "rms 1.50-1.55 {before}, 1.56-1.66 {after}, 1.75-1.85 {last}");
 }
+
+/// The demo song's lead melody as sung notes (`compose::prepare` plus the
+/// `arrange::vocals::notes` conversion, duplicated here so `voice` need not
+/// depend on `arrange` for a test).
+fn demo_lead_notes(seed: u64) -> (Voice, Vec<VocalNote>) {
+    let raw: serde_json::Value = serde_json::from_str(include_str!("../../engine/src/demo.json")).expect("demo.json is JSON");
+    let (song, _) = song::normalize_value(&raw).expect("demo.json normalises");
+    let p = compose::prepare::prepare(&song, seed, None);
+    let notes = compose::prepare::vocal_notes(&p.comp.lead, 1.0)
+        .iter()
+        .map(|n| VocalNote {
+            t0: n.t0,
+            t1: n.t1,
+            midi: n.midi as f32,
+            phones: n.ph.clone(),
+            amp: n.amp as f32,
+            stress: n.stress,
+            phrase_start: n.phrase_start,
+            phrase_end: n.phrase_end,
+            grace: n.grace.map(|g| g as f32),
+        })
+        .collect();
+    (p.voice, notes)
+}
+
+/// FNV-1a (64-bit): a small, dependency-free content hash for the
+/// bit-identity check below (no sha2 crate is vendored).
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+/// With the default phrasing (`Phrasing::default()`, applied automatically
+/// when a `SingStyle` carries no other value), `render_phrases` output for
+/// the demo lead is bit-identical to the pre-phrasing code path: this hash
+/// was taken from the render before `voice::phrasing` and `phrase_notes`
+/// were wired in (`phrase_notes` borrows its input unchanged whenever
+/// `sustain == 1.0` and `end_len == 1.0`, and every other phrasing number
+/// used downstream, onset_share, lead_in, swell, breath, fade_depth,
+/// fade_from, vibrato and glide scales, equals its old constant at the
+/// default, so the pipeline cannot diverge).
+#[test]
+fn demo_lead_render_is_bit_identical_at_default_phrasing() {
+    let (voice, notes) = demo_lead_notes(1234);
+    let len = (notes.last().map_or(0.0, |n| n.t1) * SR_F) as usize + (2.0 * SR_F) as usize;
+    let mut out = vec![0.0f32; len];
+    render_phrases(&notes, voice, &VoiceSettings::default(), 1234, len, |s0, b| out[s0..s0 + b.len()].copy_from_slice(b));
+    let bytes: Vec<u8> = out.iter().flat_map(|x| x.to_le_bytes()).collect();
+    assert_eq!(fnv1a(&bytes), 0x08a630ed57eeb7de, "demo lead render changed at the default phrasing");
+}

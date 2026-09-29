@@ -9,19 +9,19 @@ use crate::score::{Event, Measure, NoteEv, Score};
 /// Staff space in px.
 pub(crate) const SP: f64 = 8.0;
 /// Page margin in px.
-const MARGIN: f64 = 36.0;
+pub(crate) const MARGIN: f64 = 36.0;
 /// Glyph scale: 250 font units per staff space.
 const GS: f64 = SP / 250.0;
-const HEAD_W: f64 = 295.0 * GS;
-const WHOLE_W: f64 = 422.0 * GS;
-const STEM_LEN: f64 = 3.5 * SP;
-const STEM_W: f64 = 0.12 * SP;
-const PAD_L: f64 = 1.2 * SP;
-const PAD_R: f64 = 0.6 * SP;
-const LYRIC_PX: f64 = 12.5;
-const CHORD_PX: f64 = 13.0;
-const LABEL_PX: f64 = 11.5;
-const FONT: &str = "DejaVu Serif, Liberation Serif, Georgia, serif";
+pub(crate) const HEAD_W: f64 = 295.0 * GS;
+pub(crate) const WHOLE_W: f64 = 422.0 * GS;
+pub(crate) const STEM_LEN: f64 = 3.5 * SP;
+pub(crate) const STEM_W: f64 = 0.12 * SP;
+pub(crate) const PAD_L: f64 = 1.2 * SP;
+pub(crate) const PAD_R: f64 = 0.6 * SP;
+pub(crate) const LYRIC_PX: f64 = 12.5;
+pub(crate) const CHORD_PX: f64 = 13.0;
+pub(crate) const LABEL_PX: f64 = 11.5;
+pub(crate) const FONT: &str = "DejaVu Serif, Liberation Serif, Georgia, serif";
 
 /// A box on the page in px with its time span in seconds:
 /// (t0, t1, x, y, w, h).
@@ -37,24 +37,24 @@ pub(crate) struct Page {
 }
 
 /// Vertical position of a staff step relative to the top staff line.
-fn y_of(step: i32) -> f64 {
+pub(crate) fn y_of(step: i32) -> f64 {
     (38 - step) as f64 * SP * 0.5
 }
 
-fn lyric_w(t: &str) -> f64 {
+pub(crate) fn lyric_w(t: &str) -> f64 {
     t.chars().count() as f64 * LYRIC_PX * 0.5
 }
 
-fn chord_w(t: &str) -> f64 {
+pub(crate) fn chord_w(t: &str) -> f64 {
     t.chars().count() as f64 * CHORD_PX * 0.62
 }
 
-fn glyph_w(g: &Glyph) -> f64 {
+pub(crate) fn glyph_w(g: &Glyph) -> f64 {
     (g.bbox[2] - g.bbox[0]) as f64 * GS
 }
 
 /// XML text escape.
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -70,7 +70,7 @@ fn esc(s: &str) -> String {
 }
 
 /// A chord symbol for print: flat and sharp signs after note letters.
-fn chord_text(sym: &str) -> String {
+pub(crate) fn chord_text(sym: &str) -> String {
     let mut o = String::new();
     let mut prev = ' ';
     for c in sym.chars() {
@@ -86,16 +86,16 @@ fn chord_text(sym: &str) -> String {
 }
 
 /// Appends a glyph at (x, y), scaled by `sc`.
-fn glyph(out: &mut String, g: &Glyph, x: f64, y: f64, sc: f64) {
+pub(crate) fn glyph(out: &mut String, g: &Glyph, x: f64, y: f64, sc: f64) {
     let s = GS * sc;
     let _ = write!(out, r##"<use xlink:href="#g-{}" transform="translate({x:.2},{y:.2}) scale({s:.4},{:.4})"/>"##, g.name, -s);
 }
 
-fn line(out: &mut String, x1: f64, y1: f64, x2: f64, y2: f64, w: f64) {
+pub(crate) fn line(out: &mut String, x1: f64, y1: f64, x2: f64, y2: f64, w: f64) {
     let _ = write!(out, r##"<line x1="{x1:.2}" y1="{y1:.2}" x2="{x2:.2}" y2="{y2:.2}" stroke="#111" stroke-width="{w:.2}"/>"##);
 }
 
-fn text(out: &mut String, x: f64, y: f64, px: f64, anchor: &str, extra: &str, body: &str) {
+pub(crate) fn text(out: &mut String, x: f64, y: f64, px: f64, anchor: &str, extra: &str, body: &str) {
     let _ = write!(out, r#"<text x="{x:.1}" y="{y:.1}" font-size="{px}" text-anchor="{anchor}"{extra}>{body}</text>"#);
 }
 
@@ -107,7 +107,7 @@ fn head_w(score: &Score, first: bool) -> f64 {
 
 /// Space before the notehead (accidental, wide lyric) and the event's
 /// natural width.
-fn event_w(ev: &Event, chord: Option<&str>) -> (f64, f64) {
+pub(crate) fn event_w(ev: &Event, chord: Option<&str>) -> (f64, f64) {
     let dotted = matches!(ev.d, 3 | 6 | 12);
     let mut base = SP * (1.7 + 1.2 * ((1 + ev.d) as f64).log2()) + if dotted { 0.6 * SP } else { 0.0 };
     let (mut lo, mut w) = (0.0, 0.0);
@@ -125,7 +125,7 @@ fn event_w(ev: &Event, chord: Option<&str>) -> (f64, f64) {
 }
 
 /// Natural width of a measure and its events' (offset, width).
-fn measure_w(m: &Measure) -> (f64, Vec<(f64, f64)>) {
+pub(crate) fn measure_w(m: &Measure) -> (f64, Vec<(f64, f64)>) {
     if m.empty {
         let cw: f64 = m.chords.iter().map(|c| chord_w(&c.name) + SP).sum();
         return ((7.0 * SP).max(cw + 2.0 * SP), Vec::new());
@@ -155,7 +155,7 @@ struct Pn<'a> {
     beamed: bool,
 }
 
-fn head_glyph(d: i64) -> &'static Glyph {
+pub(crate) fn head_glyph(d: i64) -> &'static Glyph {
     if d >= 16 {
         &glyphs::NOTEHEAD_WHOLE
     } else if d >= 8 {
@@ -165,7 +165,7 @@ fn head_glyph(d: i64) -> &'static Glyph {
     }
 }
 
-fn rest_glyph(d: i64) -> (&'static Glyph, f64) {
+pub(crate) fn rest_glyph(d: i64) -> (&'static Glyph, f64) {
     match d {
         16.. => (&glyphs::REST_WHOLE, SP),
         8..=15 => (&glyphs::REST_HALF, 2.0 * SP),
@@ -175,7 +175,7 @@ fn rest_glyph(d: i64) -> (&'static Glyph, f64) {
     }
 }
 
-fn fmt_time(t: f64) -> String {
+pub(crate) fn fmt_time(t: f64) -> String {
     format!("{:.3}", if t.is_finite() { t } else { 0.0 })
 }
 

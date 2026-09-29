@@ -1,0 +1,82 @@
+{
+ "title": "Two Roads",
+ "note": "Test fixture for w1-compose-duet (docs/features-2-plan.json). Lyrics are a placeholder written for this test, not a real release.",
+ "key": "C",
+ "mode": "major",
+ "meter": "4/4",
+ "tempo": 96,
+ "guitar": "travis",
+ "voice": "baritone",
+ "duet": {"voice": "alto"},
+ "band": {
+  "drums": "brushes",
+  "bass": true,
+  "harmonyGuitar": true,
+  "harp": false,
+  "violin": true,
+  "choir": false,
+  "harmonies": false,
+  "doubles": true
+ },
+ "sections": [
+  {
+   "type": "intro",
+   "chords": ["C", "G", "C", "G"]
+  },
+  {
+   "type": "verse",
+   "lines": [
+    {
+     "syl": "*down the *road we *go a *lone",
+     "ph": "d aw n|dh ax|r ow d|w iy|g ow|ax|l ow n",
+     "chords": ["C", "G"]
+    },
+    {
+     "syl": "*shades will *fall a *cross the *floor",
+     "ph": "sh ey d z|w ih l|f ao l|ax|k r ao s|dh ax|f l ao r",
+     "chords": ["C", "G"]
+    }
+   ]
+  },
+  {
+   "type": "verse",
+   "sing": "B",
+   "lines": [
+    {
+     "syl": "*i would *wait for *you at *dawn",
+     "ph": "ay|w uh d|w ey t|f ao r|y uw|ae t|d ao n",
+     "chords": ["C", "G"]
+    },
+    {
+     "syl": "*watch and *wait some *more each *day",
+     "ph": "w aa ch|ae n d|w ey t|s ah m|m ao r|iy ch|d ey",
+     "chords": ["C", "G"],
+     "sing": "A"
+    }
+   ]
+  },
+  {
+   "type": "chorus",
+   "sing": "both",
+   "lead": "B",
+   "blend": "harmony",
+   "lines": [
+    {
+     "syl": "*side by *side we *walk the *mile",
+     "ph": "s ay d|b ay|s ay d|w iy|w ao k|dh ax|m ay l",
+     "chords": ["G", "C"]
+    },
+    {
+     "syl": "*hand in *hand we *go the *mile",
+     "ph": "hh ae n d|ih n|hh ae n d|w iy|g ow|dh ax|m ay l",
+     "chords": ["G", "C"],
+     "blend": "octave"
+    }
+   ]
+  },
+  {
+   "type": "chorus",
+   "same": true
+  }
+ ]
+}

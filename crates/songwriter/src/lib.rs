@@ -57,32 +57,42 @@ impl<'a> WriteRequest<'a> {
     }
 }
 
-/// A written song, not yet validated.
-#[derive(Clone, Debug)]
-pub struct Written {
-    /// The song JSON as the model wrote it.
-    pub raw: serde_json::Value,
-    /// The direction the prompt gave.
-    pub direction: Direction,
-    /// The register the prompt gave for an open feeling.
-    pub register: &'static str,
-    /// The model that answered, when the transport reports it. Equal to
-    /// `generation.model`.
-    pub model: Option<String>,
-    /// Usage, cost and timing of the call that wrote this song.
-    pub generation: Generation,
+/// Whether, and how, to write a duet: the songwriter's choice (`Auto`), a
+/// forced solo, or a forced duet naming zero, one or both voices (design
+/// 4.7). `--duet`, `--solo` and the settings key `songwriter.duet` build
+/// this; it draws no random numbers by itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum DuetRequest {
+    #[default]
+    Auto,
+    Solo,
+    Duet {
+        a: Option<Voice>,
+        b: Option<Voice>,
+    },
 }
 
-/// Writes one song. Draws from `rng`: the style direction (see
-/// `styles::style_direction`), then the register. Extracts the first JSON
-/// object from the reply, tolerating a code fence or prose around it.
-/// Measures `wall_ms` around `claude.complete` only; a failed call (a
-/// refusal, a cut-off reply, a status error) records no usage on purpose
-/// (`WriteSongError` carries only `ClaudeError`).
-pub fn write_song(claude: &dyn Claude, req: &WriteRequest, rng: &mut Rng) -> Result<Written, WriteSongError> {
+/// Options for `write_song_with` beyond `WriteRequest`. Kept as its own
+/// struct (rather than new `WriteRequest` fields) so a caller's existing
+/// struct literal for `WriteRequest` keeps compiling.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WriteOptions {
+    pub duet: DuetRequest,
+}
+
+/// Writes one song with `opts` (see `write_song` for the rest). `write_song`
+/// is this with `WriteOptions::default()`, so it draws the same random
+/// numbers as before: no new draw is added for the duet or phrasing choice,
+/// which are left to Claude unless `opts.duet` fixes them.
+pub fn write_song_with(
+    claude: &dyn Claude,
+    req: &WriteRequest,
+    opts: &WriteOptions,
+    rng: &mut Rng,
+) -> Result<Written, WriteSongError> {
     let direction = styles::style_direction(req.style, rng);
     let register = prompt::pick_register(rng);
-    let text = prompt::song_prompt(req.mood, req.voice, &direction, register, req.year);
+    let text = prompt::song_prompt_with(req.mood, req.voice, &direction, register, req.year, &opts.duet);
 
     let mut creq = Request::new(text);
     if let Some(m) = &req.model {
@@ -116,6 +126,32 @@ pub fn write_song(claude: &dyn Claude, req: &WriteRequest, rng: &mut Rng) -> Res
         model: generation.model.clone(),
         generation,
     })
+}
+
+/// A written song, not yet validated.
+#[derive(Clone, Debug)]
+pub struct Written {
+    /// The song JSON as the model wrote it.
+    pub raw: serde_json::Value,
+    /// The direction the prompt gave.
+    pub direction: Direction,
+    /// The register the prompt gave for an open feeling.
+    pub register: &'static str,
+    /// The model that answered, when the transport reports it. Equal to
+    /// `generation.model`.
+    pub model: Option<String>,
+    /// Usage, cost and timing of the call that wrote this song.
+    pub generation: Generation,
+}
+
+/// Writes one song. Draws from `rng`: the style direction (see
+/// `styles::style_direction`), then the register. Extracts the first JSON
+/// object from the reply, tolerating a code fence or prose around it.
+/// Measures `wall_ms` around `claude.complete` only; a failed call (a
+/// refusal, a cut-off reply, a status error) records no usage on purpose
+/// (`WriteSongError` carries only `ClaudeError`).
+pub fn write_song(claude: &dyn Claude, req: &WriteRequest, rng: &mut Rng) -> Result<Written, WriteSongError> {
+    write_song_with(claude, req, &WriteOptions::default(), rng)
 }
 
 #[derive(Debug)]

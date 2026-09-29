@@ -10,6 +10,7 @@ song = { path = "../song" }
 rayon = "1.10"
 engine = { path = "../engine" }
 songwriter = { path = "../songwriter" }
+settings = { path = "../settings" }
 export = { path = "../export" }
 serde_json.workspace = true
 clap = { version = "4", features = ["derive"] }

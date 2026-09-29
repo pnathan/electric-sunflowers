@@ -3,7 +3,7 @@
 //! Times are `f64` seconds from the start of the song; levels are linear
 //! `f32` in 0..=1 unless stated.
 
-use crate::model::Voice;
+use crate::model::{Phrasing, Voice};
 use crate::phoneme::Phoneme;
 use serde::Serialize;
 
@@ -118,6 +118,8 @@ pub struct SingStyle {
     pub scoop: bool,
     /// Audible breaths in pauses between phrases.
     pub breath_pauses: bool,
+    /// Delivery and endings; sets `voice::phrasing::PhrasingParams`.
+    pub phrasing: Phrasing,
 }
 
 impl SingStyle {
@@ -139,6 +141,7 @@ impl SingStyle {
         glide: 0.028,
         scoop: true,
         breath_pauses: true,
+        phrasing: Phrasing { delivery: crate::model::Delivery::Flowing, endings: crate::model::Endings::Released },
     };
 }
 

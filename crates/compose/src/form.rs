@@ -5,7 +5,7 @@
 use std::ops::Range;
 
 use song::chord::transpose_symbol;
-use song::{BarChords, Chord, ChordId, Meter, MeterGrid, SectionBody, SectionKind, SectionRole, Song, Syllable};
+use song::{BarChords, Chord, ChordId, Meter, MeterGrid, Part, SectionBody, SectionKind, SectionRole, Song, Syllable};
 
 /// A metric bar: its chord(s) plus the section and line it belongs to.
 #[derive(Clone, Debug)]
@@ -25,6 +25,9 @@ pub struct FormLine {
     pub start_bar: usize,
     pub n_bars: usize,
     pub syls: Vec<Syllable>,
+    /// Which singer(s) carry this line (design 4.5); `Part::default()`
+    /// (`Solo(A)`) outside a duet.
+    pub part: Part,
     /// Syllable texts joined by single spaces.
     pub text: String,
     /// Set by `compose_melody`; `None` until composed.
@@ -228,6 +231,7 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
                         start_bar,
                         n_bars: bars.len() - start_bar,
                         syls: ln.syllables.clone(),
+                        part: ln.part,
                         text: ln.text(),
                         pitches: None,
                         rh: None,

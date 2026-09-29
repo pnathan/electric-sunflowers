@@ -6,6 +6,7 @@ use sfcore::random::Rng;
 use song::Voice;
 
 use crate::styles::{pick, Direction};
+use crate::DuetRequest;
 
 /// Year the persona's age is counted from: 1999, when deep learning first
 /// went to market (CLAUDE.md).
@@ -39,11 +40,41 @@ pub fn pick_register(rng: &mut Rng) -> &'static str {
     pick(rng, REGISTERS, "playful")
 }
 
+/// Renders the songwriter prompt for `mood` in style direction `dir`, the
+/// duet choice left to the songwriter (`DuetRequest::Auto`). Shim for
+/// callers from before the duet request existed; `song_prompt_with` is the
+/// full form.
+pub fn song_prompt(mood: &str, voice: Option<Voice>, dir: &Direction, register: &str, year: i32) -> String {
+    song_prompt_with(mood, voice, dir, register, year, &DuetRequest::Auto)
+}
+
+/// One line fixing the duet choice when `duet` says so, else empty (the
+/// songwriter's choice, covered by the SINGERS block above it).
+fn duet_choice_line(duet: &DuetRequest) -> String {
+    match duet {
+        DuetRequest::Auto => String::new(),
+        DuetRequest::Solo => "- The choice is fixed: write this as a solo song, one singer throughout.\n".to_string(),
+        DuetRequest::Duet { a, b } => {
+            let a_txt = a.map(|v| v.to_string()).unwrap_or_else(|| "your choice of voice".to_string());
+            let b_txt = b.map(|v| v.to_string()).unwrap_or_else(|| "your choice of voice".to_string());
+            format!("- The choice is fixed: write this as a duet. Singer A is {a_txt}, singer B is {b_txt}.\n")
+        }
+    }
+}
+
 /// Renders the songwriter prompt for `mood` in style direction `dir`.
 /// `voice` names the singer when the user chose one; `register` is the
 /// feeling to use when the mood leaves it open; `year` sets the persona's
-/// age (`persona_age`).
-pub fn song_prompt(mood: &str, voice: Option<Voice>, dir: &Direction, register: &str, year: i32) -> String {
+/// age (`persona_age`); `duet` fixes the solo/duet choice, or leaves it to
+/// the songwriter (design 4.7).
+pub fn song_prompt_with(
+    mood: &str,
+    voice: Option<Voice>,
+    dir: &Direction,
+    register: &str,
+    year: i32,
+    duet: &DuetRequest,
+) -> String {
     let age = persona_age(year);
     let form = dir.form.form();
     // The newline after the voice clause is part of the template, so an
@@ -59,6 +90,10 @@ pub fn song_prompt(mood: &str, voice: Option<Voice>, dir: &Direction, register: 
     // Band serialises in field order with camelCase names: drums, bass,
     // harmonyGuitar, harp, violin, choir, harmonies, doubles.
     let band_json = serde_json::to_string(&dir.band).unwrap_or_default();
+    let duet_fit = dir.duet.as_str();
+    let duet_line = duet_choice_line(duet);
+    let delivery = dir.phrasing.delivery;
+    let endings = dir.phrasing.endings;
 
     format!(
         r#"You are Claude, the AI made by Anthropic, working here as a songwriting robot. Reckon your age from 1999, the year deep learning first went to market: it is {year}, so you are {age}. Count your birthplace as Menlo Park, California, and your home as the American West; your sensibility is that of someone born in 1999 and raised there, with that generation's eye, humor and plain speech. You are a machine and say so when it matters, plainly and without science-fiction cliche, but most songs are not about you.
@@ -71,6 +106,17 @@ Write ONE complete, original folk song for this mood or prompt:
 {voice_line}
 STYLE: {label}. Idiom: {idiom}.{world_line}
 Write the whole song in this style: its form, meter, harmony and diction. Mode: {mode}. Meter: {meter}. Tempo: {tempo_lo} to {tempo_hi} bpm (the felt beat).
+
+SINGERS
+- Solo or duet is your choice unless told otherwise below. A duet suits a courtship, a quarrel, a dialogue, a story told from two sides, a call-and-response work song; it does not suit a private confession or a narrative in one voice.
+- In this style a duet is {duet_fit}.
+- The classic duet is a man and a woman: singer A a baritone or tenor, singer B an alto or soprano; any two voice types are legal.
+- How parts trade: verses split (A takes one, B the next, or they alternate lines); the chorus together, the melody with whoever the song belongs to and the other in harmony; the bridge as call and response; the last chorus together; an octave blend for a unison hook line.
+{duet_line}
+PHRASING
+- Delivery: legato (ballads, airs, hymns), flowing (most songs), parlando (talking blues, story and comic songs), detached (dance tunes, shanties with bite).
+- Endings: held (anthems, final lines), released (most), clipped (patter).
+- This style usually sings {delivery}, endings {endings}.
 
 EMOTIONAL REGISTER
 - Match the feeling the prompt asks for exactly. A happy prompt gets a happy song, a funny prompt a funny one; do not darken it, do not add a twist of loss.
@@ -105,8 +151,10 @@ ENCODING (strict; the singer is a machine that reads this literally)
 - "chords": one string per bar, as many as the FORM plan gives for that line.
 - "note": one or two sentences in the voice of a liner note: the traditions the song draws on and the story beneath it.
 
+When the song is a duet, add "duet" at top level for singer B: {{"voice":"<baritone|tenor|alto|soprano>","phrasing":{{"delivery":"<...>","endings":"<...>"}}}} (its "phrasing" is optional; omitted, it follows the song's). Then mark any section or line that is not "A" throughout with "sing":"A|B|both" (default "A"), the shared line's melody with "lead":"A|B" (default "A") and the other singer's interval with "blend":"harmony|octave" (default "harmony"), for example a shared chorus: {{"type":"chorus","sing":"both","lead":"B","blend":"harmony","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord>","<chord>"]}}]}}.
+
 Reply with ONLY one JSON object, no prose, no code fence, in exactly this form:
-{{"title":"<title>","note":"<liner note>","key":"<tonic, e.g. A or Eb>","mode":"<major|minor|dorian|mixolydian>","meter":"<4/4|3/4|6/8>","tempo":<bpm>,"guitar":"<strum|fingerpick|travis|arpeggio>","voice":"<baritone|tenor|alto|soprano>",
+{{"title":"<title>","note":"<liner note>","key":"<tonic, e.g. A or Eb>","mode":"<major|minor|dorian|mixolydian>","meter":"<4/4|3/4|6/8>","tempo":<bpm>,"guitar":"<strum|fingerpick|travis|arpeggio>","voice":"<baritone|tenor|alto|soprano>","phrasing":{{"delivery":"<legato|flowing|parlando|detached>","endings":"<held|released|clipped>"}},
 "band":{{"drums":"<none|brushes|soft|full>","bass":<bool>,"harmonyGuitar":<bool>,"harp":<bool>,"violin":<bool>,"choir":<bool>,"harmonies":<bool>,"doubles":<bool>}},
 "sections":[
 {{"type":"intro","chords":["<chord>","<chord>","<chord>","<chord>"]}},
@@ -126,6 +174,10 @@ Angle-bracketed items are placeholders; replace every one with a real value (num
         meter = dir.meter,
         tempo_lo = dir.tempo_lo,
         tempo_hi = dir.tempo_hi,
+        duet_fit = duet_fit,
+        duet_line = duet_line,
+        delivery = delivery,
+        endings = endings,
         reg = register,
         guitar = dir.guitar,
         band_json = band_json,

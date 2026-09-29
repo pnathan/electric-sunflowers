@@ -31,6 +31,7 @@
 //!    plus the singer's detune. The walk and the vibrato phase run on
 //!    from one window to the next.
 
+use std::borrow::Cow;
 use std::f64::consts::{PI, TAU};
 use std::ops::Range;
 
@@ -43,6 +44,7 @@ use song::events::VocalNote;
 
 use crate::articulation::{plan_syllables, syllables, Segment, Span, Syllable};
 use crate::params::VoiceParams;
+use crate::phrasing::{phrase_notes, PhrasingParams};
 use crate::synth::VoiceSettings;
 
 /// Control frames per second.
@@ -187,8 +189,8 @@ impl Window {
 
 /// The segments of `plan` written into `out`, reset to `w.len` neutral
 /// frames. Each kind writes F1-F3 and its own fields only; later segments
-/// overwrite earlier ones.
-pub fn rasterise(plan: &[(Span, Segment)], w: Window, out: &mut ControlTracks) {
+/// overwrite earlier ones. `breath` scales `BREATH_AH` (`PhrasingParams`).
+pub fn rasterise(plan: &[(Span, Segment)], w: Window, out: &mut ControlTracks, breath: f64) {
     let c = out;
     c.reset(w.len);
     for (span, seg) in plan {
@@ -227,15 +229,16 @@ pub fn rasterise(plan: &[(Span, Segment)], w: Window, out: &mut ControlTracks) {
                 c.b1x[r].fill(0.0);
             }
             Segment::Closure { av, .. } => c.av[r].fill(av as f32),
-            Segment::Breath { .. } => c.ah[r].fill(BREATH_AH),
+            Segment::Breath { .. } => c.ah[r].fill(BREATH_AH * breath as f32),
             Segment::Silence { .. } => {}
         }
     }
 }
 
 /// Per-note swell and phrase-end fade on the voicing track `av` of window
-/// `w`, for `notes`.
-pub fn shape_dynamics(av: &mut [f32], notes: &[VocalNote], w: Window) {
+/// `w`, for `notes`. `ph.swell`, `ph.fade_depth` and `ph.fade_from` replace
+/// the 0.16, 0.4 and 0.55 of today's constants.
+pub fn shape_dynamics(av: &mut [f32], notes: &[VocalNote], w: Window, ph: &PhrasingParams) {
     for n in notes {
         let dur = n.t1 - n.t0;
         if dur <= 0.5 && !n.phrase_end {
@@ -246,9 +249,9 @@ pub fn shape_dynamics(av: &mut [f32], notes: &[VocalNote], w: Window) {
         let len = (i1 - i0).max(1) as f64;
         for i in w.clip(i0, i1) {
             let x = (w.abs(i) - i0) as f64 / len;
-            let mut e = if dur > 0.5 { 0.9 + 0.16 * (PI * (x * 1.1).min(1.0)).sin() } else { 1.0 };
+            let mut e = if dur > 0.5 { 0.9 + ph.swell * (PI * (x * 1.1).min(1.0)).sin() } else { 1.0 };
             if n.phrase_end {
-                e *= 1.0 - 0.4 * smoothstep(0.55, 1.0, x);
+                e *= 1.0 - ph.fade_depth * smoothstep(ph.fade_from, 1.0, x);
             }
             av[i] = (av[i] as f64 * e) as f32;
         }
@@ -377,10 +380,11 @@ pub fn drift_walk() -> RandomWalk {
     RandomWalk::leaky(step, leak, w_leak, limit)
 }
 
-/// One singer's articulation state: syllables of all notes, the vibrato
-/// phase and drift walk that run across phrases, and reused buffers.
+/// One singer's articulation state: the notes with `phrasing::phrase_notes`
+/// applied, their syllables, the vibrato phase and drift walk that run
+/// across phrases, and reused buffers.
 pub struct Articulation<'a> {
-    notes: &'a [VocalNote],
+    notes: Cow<'a, [VocalNote]>,
     syl: Vec<Syllable>,
     p: VoiceParams,
     settings: VoiceSettings,
@@ -392,14 +396,17 @@ pub struct Articulation<'a> {
 
 impl<'a> Articulation<'a> {
     /// For `notes` (in time order) sung with resolved parameters `p`
-    /// (settings applied). `rng` is the singer's control stream: one
-    /// uniform draw now (vibrato phase), then one normal draw per rendered
-    /// frame (drift).
+    /// (settings applied). Applies `phrasing::phrase_notes` first (a
+    /// no-op copy for the default phrasing). `rng` is the singer's control
+    /// stream: one uniform draw now (vibrato phase), then one normal draw
+    /// per rendered frame (drift).
     pub fn new(notes: &'a [VocalNote], p: &VoiceParams, settings: &VoiceSettings, mut rng: Rng) -> Self {
         let phase = rng.uniform() * TAU;
+        let notes = phrase_notes(notes, &settings.phrasing);
+        let syl = syllables(&notes, p, &settings.phrasing);
         Articulation {
             notes,
-            syl: syllables(notes, p),
+            syl,
             p: *p,
             settings: *settings,
             rng,
@@ -407,6 +414,12 @@ impl<'a> Articulation<'a> {
             drift: drift_walk(),
             plan: Vec::new(),
         }
+    }
+
+    /// The notes actually sung: `phrase_notes` applied to the notes given
+    /// to `new`.
+    pub fn notes(&self) -> &[VocalNote] {
+        &self.notes
     }
 
     /// Time note `k` first sounds: its first onset consonant, s.
@@ -438,9 +451,9 @@ impl<'a> Articulation<'a> {
         }
         let range = lo..end;
         let notes = self.notes.get(range.clone()).unwrap_or(&[]);
-        plan_syllables(self.notes, &self.syl, range.clone(), &self.p, &self.settings, &mut self.plan);
-        rasterise(&self.plan, w, out);
-        shape_dynamics(&mut out.av, notes, w);
+        plan_syllables(&self.notes, &self.syl, range.clone(), &self.p, &self.settings, &mut self.plan);
+        rasterise(&self.plan, w, out, self.settings.phrasing.breath);
+        shape_dynamics(&mut out.av, notes, w, &self.settings.phrasing);
 
         let taus = [
             SMOOTH_F1,
@@ -462,7 +475,7 @@ impl<'a> Articulation<'a> {
         // Every ControlTracks track has the window's frame count.
         debug_assert!(smoothed.is_ok(), "control tracks of unequal length");
 
-        pitch_track(self.notes, &self.syl, range, &self.settings, w, &mut out.midi);
+        pitch_track(&self.notes, &self.syl, range, &self.settings, w, &mut out.midi);
         self.vibrato.add(&mut out.midi, notes, w);
         add_drift(&mut out.midi, &mut self.drift, &mut self.rng, self.settings.detune);
     }
@@ -566,7 +579,7 @@ mod tests {
         let notes = song();
         let settings = VoiceSettings::default();
         let p = voice_params(Voice::Baritone);
-        let syl = syllables(&notes, &p);
+        let syl = syllables(&notes, &p, &settings.phrasing);
         let mut m = vec![0.0; frames_for(&notes)];
         pitch_track(&notes, &syl, 0..notes.len(), &settings, Window::song(m.len()), &mut m);
         for n in notes.iter().filter(|n| n.t1 - n.t0 >= 0.4 && n.grace.is_none()) {

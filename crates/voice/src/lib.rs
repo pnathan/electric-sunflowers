@@ -7,9 +7,11 @@ pub mod controls;
 pub mod glottal;
 pub mod params;
 pub mod phoneme;
+pub mod phrasing;
 pub mod synth;
 pub mod tract;
 pub mod tuning;
 
 pub use params::{voice_params, VoiceParams};
+pub use phrasing::{phrase_notes, PhrasingParams};
 pub use synth::{render_phrases, VoiceSettings, VoiceSynth};

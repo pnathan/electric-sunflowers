@@ -1,7 +1,7 @@
-//! The full multipart score's data model (parts, staves, quantised bars).
-//! See `model` for the algorithms; this module has no drawing code (wave 1
-//! draws it, in `notation::full::layout`, not yet built).
+//! The full multipart score's data model (parts, staves, quantised bars),
+//! and its multi-staff system layout.
 
+pub(crate) mod layout;
 mod model;
 
 pub use model::{

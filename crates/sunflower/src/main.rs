@@ -3,17 +3,25 @@
 //!
 //! One pipeline for every command: normalise (printing the repairs),
 //! render the stems (`engine::render`, one rayon task graph; set
-//! RAYON_NUM_THREADS=1 for a single thread), mix with the band, export by
+//! RAYON_NUM_THREADS=1 for a single thread), mix with the band (a mix
+//! sidecar next to the output, when present, is folded in), export by
 //! the output file's extension. Next to the audio `<stem>.ext` every
-//! rendering command writes `<stem>.render.json` (seed, voice, style,
-//! model, song JSON path, audio path, creation time) and `<stem>.sheet.json`
+//! rendering command writes `<stem>.render.json`
+//! (`songwriter::sidecar::RenderSidecar`) and `<stem>.sheet.json`
 //! (`engine::SongSheet`). `sheet` prints a song's chord sheet.
+//!
+//! Settings (docs/features-2.md section 2) are loaded once per run
+//! (`settings::load`) and fill in anything a flag left unset: flag beats
+//! settings file beats built-in default.
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use engine::{BandPart, Progress};
-use export::{Format, Meta};
+use engine::{BandPart, MixSettings, Progress, Stems, TrackId};
+use export::{BitDepth, Format, Meta};
 use song::{Band, Repair, Song, Voice};
+use songwriter::claude::{Effort, Transport};
+use songwriter::sidecar::RenderSidecar;
+use songwriter::usage::Generation;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
@@ -44,12 +52,29 @@ struct ExportArgs {
     #[arg(long)]
     float: bool,
     /// Ogg Vorbis VBR quality, roughly -0.2 to 1.0 (0.6 is about 192 kb/s
-    /// for a 44.1 kHz stereo signal).
-    #[arg(long, default_value_t = 0.6)]
-    quality: f32,
+    /// for a 44.1 kHz stereo signal). Defaults to settings export.ogg_quality.
+    #[arg(long)]
+    quality: Option<f32>,
     /// FLAC only: 16-bit output instead of the default 24-bit.
     #[arg(long)]
     flac16: bool,
+}
+
+/// Mix and stems settings shared by every rendering command.
+#[derive(Args)]
+struct MixArgs {
+    /// Apply this mix sidecar (see `engine::MixSettings`) instead of the
+    /// default `<out-stem>.mix.json`.
+    #[arg(long)]
+    mix: Option<PathBuf>,
+    /// Ignore any mix sidecar, even `<out-stem>.mix.json` if present.
+    #[arg(long)]
+    no_mix: bool,
+    /// Also write `<out-stem>.stems/<track>.flac` (24-bit stereo) for
+    /// every audible track plus `reverb.flac`, and `stems.json`. Opt-in:
+    /// about 30 MB per track for a 3-minute song.
+    #[arg(long)]
+    stems: bool,
 }
 
 #[derive(Subcommand)]
@@ -60,6 +85,8 @@ enum Cmd {
         render: RenderArgs,
         #[command(flatten)]
         export: ExportArgs,
+        #[command(flatten)]
+        mix: MixArgs,
     },
     /// Normalize, style, render and mix a song JSON file. Output defaults
     /// to song.ogg.
@@ -75,6 +102,8 @@ enum Cmd {
         render: RenderArgs,
         #[command(flatten)]
         export: ExportArgs,
+        #[command(flatten)]
+        mix: MixArgs,
     },
     /// Write a new song with Claude, then render and mix it. Output
     /// defaults to <title-slug>.ogg.
@@ -82,14 +111,21 @@ enum Cmd {
         mood: String,
         #[arg(long)]
         style: Option<String>,
-        #[arg(long, value_enum, default_value = "cli")]
-        via: Via,
+        /// cli | api. Defaults to settings claude.transport.
+        #[arg(long, value_parser = parse_transport)]
+        via: Option<Transport>,
+        /// Defaults to settings claude.model.
         #[arg(long)]
         model: Option<String>,
+        /// low | medium | high | xhigh | max. Defaults to settings claude.effort.
+        #[arg(long, value_parser = parse_effort)]
+        effort: Option<Effort>,
         #[command(flatten)]
         render: RenderArgs,
         #[command(flatten)]
         export: ExportArgs,
+        #[command(flatten)]
+        mix: MixArgs,
     },
     /// List style keys and labels.
     Styles,
@@ -105,12 +141,6 @@ enum Cmd {
         #[command(flatten)]
         render: RenderArgs,
     },
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum Via {
-    Cli,
-    Api,
 }
 
 /// `--voice` values.
@@ -144,6 +174,18 @@ fn parse_band_part(s: &str) -> Result<BandPart, String> {
     })
 }
 
+/// `--via`: `Transport` has no local `ValueEnum` impl (it lives in the
+/// `songwriter` crate, which does not depend on clap), so this parses the
+/// same names (`cli`, `api`) by hand, the same way `parse_band_part` does.
+fn parse_transport(s: &str) -> Result<Transport, String> {
+    s.parse::<Transport>().map_err(|e| e.to_string())
+}
+
+/// `--effort`: see `parse_transport`.
+fn parse_effort(s: &str) -> Result<Effort, String> {
+    s.parse::<Effort>().map_err(|e| e.to_string())
+}
+
 fn main() {
     sfcore::fp::init_pool(None);
     sfcore::fp::flush_denormals();
@@ -154,24 +196,30 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    let loaded = settings::load();
+    for w in &loaded.warnings {
+        eprintln!("sunflower: warning: settings: {w}");
+    }
+    let settings = &loaded.settings;
+
     match Cli::parse().cmd {
-        Cmd::Demo { render, export } => {
+        Cmd::Demo { render, export, mix } => {
             let song = engine::demo_song();
             let out = export.out.clone().unwrap_or_else(|| PathBuf::from("song.ogg"));
             // The demo has no file of its own; save it so the sidecar can name one.
             let json_path = stem_path(&out, "json");
             std::fs::write(&json_path, engine::DEMO_JSON)
                 .with_context(|| format!("saving the demo song JSON to {}", json_path.display()))?;
-            pipeline(song, &render, song.band, &out, &export, &Source { song_json: json_path, model: None })
+            pipeline(song, &render, song.band, &out, &export, &mix, settings, Source { song_json: json_path, model: None, generation: None })
         }
-        Cmd::Render { song: path, style, no, render, export } => {
+        Cmd::Render { song: path, style, no, render, export, mix } => {
             let out = export.out.clone().unwrap_or_else(|| PathBuf::from("song.ogg"));
             let song = load_song(&path, style.as_deref())?;
             let mut band = song.band;
             for part in no {
                 part.switch_off(&mut band);
             }
-            pipeline(&song, &render, band, &out, &export, &Source { song_json: path, model: None })
+            pipeline(&song, &render, band, &out, &export, &mix, settings, Source { song_json: path, model: None, generation: None })
         }
         Cmd::Sheet { song: path, style, json, render } => {
             let song = load_song(&path, style.as_deref())?;
@@ -184,7 +232,12 @@ fn run() -> Result<()> {
             }
             Ok(())
         }
-        Cmd::Write { mood, style, via, model, render, export } => cmd_write(&mood, style.as_deref(), via, model.as_deref(), &render, &export),
+        Cmd::Write { mood, style, via, model, effort, render, export, mix } => {
+            let via = via.unwrap_or(settings.claude.transport);
+            let model = model.unwrap_or_else(|| settings.claude.model.clone());
+            let effort = effort.unwrap_or(settings.claude.effort);
+            cmd_write(&mood, style.as_deref(), via, &model, effort, &render, &export, &mix, settings)
+        }
         Cmd::Styles => cmd_styles(),
     }
 }
@@ -218,6 +271,8 @@ struct Source {
     song_json: PathBuf,
     /// The model that wrote the song, when known.
     model: Option<String>,
+    /// The Claude usage record, when the song was written this run.
+    generation: Option<Generation>,
 }
 
 /// Lowercases `s`, replaces runs of non-alphanumerics with a single `-`, and
@@ -289,15 +344,129 @@ impl Progress for Report {
     }
 }
 
-/// Renders `song`, mixes the parts `band` turns on and writes `out` in the
-/// format its extension names.
-fn pipeline(song: &Song, render: &RenderArgs, band: Band, out: &Path, export: &ExportArgs, src: &Source) -> Result<()> {
-    let fmt = Format::from_path(out, export.quality, export.flac16, export.float)?;
+/// The mix settings to use: `--no-mix` keeps the defaults; `--mix FILE`
+/// applies that sidecar; otherwise `<out-stem>.mix.json` is applied when
+/// it exists. Returns the settings and the sidecar path used, if any (for
+/// the render sidecar's `mix` field).
+fn resolve_mix(mix_args: &MixArgs, out: &Path, defaults: &MixSettings) -> Result<(MixSettings, Option<PathBuf>)> {
+    if mix_args.no_mix {
+        return Ok((defaults.clone(), None));
+    }
+    let path = match &mix_args.mix {
+        Some(p) => Some(p.clone()),
+        None => Some(stem_path(out, "mix.json")).filter(|p| p.exists()),
+    };
+    let Some(path) = path else {
+        return Ok((defaults.clone(), None));
+    };
+    let text = std::fs::read_to_string(&path).with_context(|| format!("reading mix settings from {}", path.display()))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&text).with_context(|| format!("parsing JSON in {}", path.display()))?;
+    eprintln!("sunflower: applying mix settings from {}", path.display());
+    let (settings, warnings) = MixSettings::from_json(&value, defaults);
+    for w in &warnings {
+        eprintln!("sunflower: warning: mix: {w}");
+    }
+    Ok((settings, Some(path)))
+}
+
+/// The largest absolute sample in `s` (both channels).
+fn peak_abs(s: &engine::Stereo) -> f32 {
+    s.l.iter().chain(s.r.iter()).fold(0.0f32, |m, &x| m.max(x.abs()))
+}
+
+/// Writes `<out-stem>.stems/<track>.flac` (24-bit stereo) for every
+/// audible track plus `reverb.flac`, and `<out-stem>.stems/stems.json`
+/// (design section 3.4). Two passes over the same cheap-to-print stems:
+/// pass 1 finds the largest sample across every printed stem and the
+/// reverb (each buffer dropped once measured, so only one is ever held);
+/// pass 2 reprints and writes, scaled by `extra_gain` when the peak
+/// exceeds 1.0. Returns the directory written.
+fn write_stems(stems: &Stems, band: &Band, seed: u64, settings: &MixSettings, out: &Path) -> Result<PathBuf> {
+    let gain = engine::mix_gain(stems, band, seed, settings);
+    let duck = engine::mix::duck_gains(stems, band, settings);
+    let audible: Vec<TrackId> = TrackId::ALL.into_iter().filter(|&id| id.plays(band) && settings.audible(id)).collect();
+
+    // Pass 1: the peak over every stem and the reverb.
+    let mut peak = 0.0f32;
+    for &id in &audible {
+        if let Some(s) = engine::print_stem(stems, band, seed, settings, id, duck.as_deref(), gain) {
+            peak = peak.max(peak_abs(&s));
+        }
+    }
+    peak = peak.max(peak_abs(&engine::print_reverb(stems, band, seed, settings, duck.as_deref(), gain)));
+    let extra_gain = if peak > 1.0 { 0.99 / peak } else { 1.0 };
+
+    // Pass 2: reprint, scale, write.
+    let dir = stem_path(out, "stems");
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let meta = Meta::default();
+    let sr = sfcore::SR as u32;
+    let mut names = Vec::with_capacity(audible.len());
+    for &id in &audible {
+        let Some(mut s) = engine::print_stem(stems, band, seed, settings, id, duck.as_deref(), gain) else {
+            continue;
+        };
+        scale(&mut s, extra_gain);
+        let path = dir.join(format!("{}.flac", id.name()));
+        export::write(&path, &s.l, &s.r, sr, &meta, Format::Flac { bits: BitDepth::Bits24 })
+            .with_context(|| format!("writing {}", path.display()))?;
+        names.push(id.name().to_string());
+    }
+    let mut reverb = engine::print_reverb(stems, band, seed, settings, duck.as_deref(), gain);
+    scale(&mut reverb, extra_gain);
+    let reverb_path = dir.join("reverb.flac");
+    export::write(&reverb_path, &reverb.l, &reverb.r, sr, &meta, Format::Flac { bits: BitDepth::Bits24 })
+        .with_context(|| format!("writing {}", reverb_path.display()))?;
+
+    let manifest = serde_json::json!({
+        "tracks": names,
+        "gain": gain,
+        "extra_gain": extra_gain,
+        "note": "sum of stems plus reverb equals the mix before the bus compressor",
+    });
+    let manifest_path = dir.join("stems.json");
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)
+        .with_context(|| format!("writing {}", manifest_path.display()))?;
+    eprintln!("sunflower: wrote {}", dir.display());
+    Ok(dir)
+}
+
+/// Scales both channels of `s` by `g` in place.
+fn scale(s: &mut engine::Stereo, g: f32) {
+    if g == 1.0 {
+        return;
+    }
+    for v in s.l.iter_mut().chain(s.r.iter_mut()) {
+        *v *= g;
+    }
+}
+
+/// Renders `song`, mixes the parts `band` turns on (folding in a mix
+/// sidecar per `mix_args`) and writes `out` in the format its extension
+/// names.
+fn pipeline(
+    song: &Song,
+    render: &RenderArgs,
+    band: Band,
+    out: &Path,
+    export: &ExportArgs,
+    mix_args: &MixArgs,
+    settings: &settings::Settings,
+    src: Source,
+) -> Result<()> {
+    let quality = export.quality.unwrap_or(settings.export.ogg_quality);
+    let fmt = Format::from_path(out, quality, export.flac16, export.float)?;
     let seed = resolve_seed(render.seed);
     eprintln!("sunflower: rendering on {} threads", rayon::current_num_threads());
     let (prepared, stems) = engine::render(song, seed, render.voice.voice(), &Report);
     eprintln!("sunflower: mixing");
-    let m = engine::mix(&stems, &band, seed);
+    let defaults = MixSettings::default_for(&stems);
+    let (mix_settings, mix_path) = resolve_mix(mix_args, out, &defaults)?;
+
+    let stems_dir = if mix_args.stems { Some(write_stems(&stems, &band, seed, &mix_settings, out)?) } else { None };
+
+    let m = engine::mix_with(&stems, &band, seed, &mix_settings);
     drop(stems);
     export::write(out, &m.l, &m.r, sfcore::SR as u32, &song_meta(song), fmt)
         .with_context(|| format!("writing audio to {}", out.display()))?;
@@ -305,29 +474,44 @@ fn pipeline(song: &Song, render: &RenderArgs, band: Band, out: &Path, export: &E
 
     let mut sheet = engine::sheet_from(song, seed, &prepared);
     sheet.style_label = Some(style_label(song)).filter(|l| !l.is_empty());
-    write_sidecars(out, &sheet, src)
+    write_sidecars(out, &sheet, &src, mix_path.as_deref(), stems_dir.as_deref())
 }
 
-/// Writes `<stem>.sheet.json` and `<stem>.render.json` next to `out`.
-fn write_sidecars(out: &Path, sheet: &engine::SongSheet, src: &Source) -> Result<()> {
+/// `p` canonicalised to an absolute path, or its own text when that fails
+/// (e.g. it does not exist).
+fn abs(p: &Path) -> String {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).display().to_string()
+}
+
+/// Writes `<stem>.sheet.json` and `<stem>.render.json`
+/// (`songwriter::sidecar::RenderSidecar`) next to `out`.
+fn write_sidecars(out: &Path, sheet: &engine::SongSheet, src: &Source, mix_path: Option<&Path>, stems_dir: Option<&Path>) -> Result<()> {
     let sheet_path = stem_path(out, "sheet.json");
     std::fs::write(&sheet_path, serde_json::to_string_pretty(sheet)?)
         .with_context(|| format!("writing the sheet to {}", sheet_path.display()))?;
-    let abs = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).display().to_string();
-    let side = serde_json::json!({
-        "seed": sheet.seed,
-        "voice": sheet.voice.as_str(),
-        "style": sheet.style,
-        "style_label": sheet.style_label,
-        "model": src.model,
-        "song_json": abs(&src.song_json),
-        "audio": abs(out),
-        "sheet": abs(&sheet_path),
-        "created": utc_now_iso(),
-    });
+
+    let model = src
+        .generation
+        .as_ref()
+        .map(|g| g.model.clone().unwrap_or_else(|| g.requested_model.clone()))
+        .or_else(|| src.model.clone());
+    let side = RenderSidecar {
+        seed: Some(sheet.seed),
+        voice: Some(sheet.voice.as_str().to_string()),
+        voice_b: None,
+        style: sheet.style.clone(),
+        style_label: sheet.style_label.clone(),
+        model,
+        generation: src.generation.clone(),
+        song_json: Some(abs(&src.song_json)),
+        audio: Some(abs(out)),
+        sheet: Some(abs(&sheet_path)),
+        mix: mix_path.map(abs),
+        stems: stems_dir.map(abs),
+        created: Some(utc_now_iso()),
+    };
     let side_path = stem_path(out, "render.json");
-    std::fs::write(&side_path, serde_json::to_string_pretty(&side)?)
-        .with_context(|| format!("writing the render sidecar to {}", side_path.display()))?;
+    side.write(&side_path).map_err(|e| anyhow!("{e}"))?;
     eprintln!("sunflower: wrote {} and {}", side_path.display(), sheet_path.display());
     Ok(())
 }
@@ -349,12 +533,22 @@ fn song_meta(song: &Song) -> Meta {
     }
 }
 
-fn cmd_write(mood: &str, style: Option<&str>, via: Via, model: Option<&str>, render: &RenderArgs, export: &ExportArgs) -> Result<()> {
+fn cmd_write(
+    mood: &str,
+    style: Option<&str>,
+    via: Transport,
+    model: &str,
+    effort: Effort,
+    render: &RenderArgs,
+    export: &ExportArgs,
+    mix_args: &MixArgs,
+    settings: &settings::Settings,
+) -> Result<()> {
     let seed = resolve_seed(render.seed);
     let render = RenderArgs { seed: Some(seed), voice: render.voice };
     let claude: Box<dyn songwriter::claude::Claude> = match via {
-        Via::Cli => Box::new(songwriter::claude::ClaudeCli::default()),
-        Via::Api => Box::new(songwriter::claude::ClaudeApi::from_env().map_err(|e| anyhow!("could not build the API client: {e}"))?),
+        Transport::Cli => Box::new(songwriter::claude::ClaudeCli::default()),
+        Transport::Api => Box::new(songwriter::claude::ClaudeApi::from_env().map_err(|e| anyhow!("could not build the API client: {e}"))?),
     };
     let year = current_year(); // CLAUDE.md: age counted from 1999 as of the current year.
     let style_id = style
@@ -368,13 +562,17 @@ fn cmd_write(mood: &str, style: Option<&str>, via: Via, model: Option<&str>, ren
         voice: render.voice.voice(),
         style: style_id,
         year,
-        model: model.map(|s| s.to_string()),
-        effort: Default::default(),
+        model: Some(model.to_string()),
+        effort,
     };
 
-    eprintln!("sunflower: asking Claude to write the song ({})", via_label(via));
+    eprintln!("sunflower: asking Claude to write the song ({model} via {via}, effort {effort})");
     let w = songwriter::write_song(claude.as_ref(), &req, &mut rng).map_err(|e| anyhow!("songwriter: {e}"))?;
-    let songwriter::Written { raw, direction: dir, model: answered, .. } = w;
+    let songwriter::Written { raw, direction: dir, generation, .. } = w;
+
+    // The generation summary (cost, tokens, timing) is printed before the
+    // song is validated, so a rejected song still shows what it cost.
+    eprintln!("{}", generation.summary());
 
     // Save the model's reply before validating it, so a rejected song is kept.
     let title = raw.get("title").and_then(|t| t.as_str()).unwrap_or("song");
@@ -394,15 +592,9 @@ fn cmd_write(mood: &str, style: Option<&str>, via: Via, model: Option<&str>, ren
     println!("meter: {}", song.meter);
     println!("tempo: {:.0}", song.tempo_bpm);
 
-    let src = Source { song_json: json_path, model: answered.or_else(|| model.map(str::to_string)) };
-    pipeline(&song, &render, song.band, &out, export, &src)
-}
-
-fn via_label(via: Via) -> &'static str {
-    match via {
-        Via::Cli => "claude CLI",
-        Via::Api => "Anthropic API",
-    }
+    let model_used = generation.model.clone().unwrap_or_else(|| generation.requested_model.clone());
+    let src = Source { song_json: json_path, model: Some(model_used), generation: Some(generation) };
+    pipeline(&song, &render, song.band, &out, export, mix_args, settings, src)
 }
 
 /// The current UTC year (CLAUDE.md: the songwriter persona's age is counted
@@ -460,6 +652,15 @@ mod tests {
             assert_eq!(parse_band_part(p.name()), Ok(p));
         }
         assert!(parse_band_part("bogus").is_err_and(|e| e.contains("unknown --no track")));
+    }
+
+    #[test]
+    fn via_and_effort_parse_known_names() {
+        assert!(matches!(parse_transport("cli"), Ok(Transport::Cli)));
+        assert!(matches!(parse_transport("api"), Ok(Transport::Api)));
+        assert!(parse_transport("bogus").is_err());
+        assert!(matches!(parse_effort("high"), Ok(Effort::High)));
+        assert!(parse_effort("bogus").is_err());
     }
 
     #[test]

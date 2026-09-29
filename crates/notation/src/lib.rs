@@ -11,12 +11,15 @@
 //!
 //! Page units are px at the SVG's own `width` x `height`.
 
+pub mod drawn;
 pub mod full;
 pub mod glyphs;
 mod layout;
+pub mod page;
 mod score;
 
 pub use layout::TimedBox;
+pub use page::{Page, Sheet};
 pub use score::{Score, DEFAULT_WIDTH};
 
 /// The score as a standalone SVG document.
