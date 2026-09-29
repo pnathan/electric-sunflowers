@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Wrapper for running Bazel here from several coding agents at once without
+# queuing behind a single output base's lock.
+#
+# Each agent gets its own --output_base (so no two agents lock each other
+# out of analysis/execution), but all agents share:
+#   - a disk cache (~/.cache/bazel-disk/electric-sunflowers): action results
+#     keyed by content hash, so one agent's compile of e.g. rayon or serde is
+#     reused by another agent building the same thing.
+#   - Bazel's default repository cache (~/.cache/bazel/_bazel_$USER/cache/repos),
+#     which is already output-base-independent and needs no flag.
+#
+# Usage: scripts/bz build //...
+#        AGENT=agent2 scripts/bz test //crates/dsp:all
+#        BZ_NAME=render-fix scripts/bz build //crates/sunflower
+#
+# With no AGENT/BZ_NAME set, this runs against Bazel's normal (default)
+# output base, i.e. the same one a plain `bazel` invocation would use.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+NAME="${BZ_NAME:-${AGENT:-}}"
+
+DISK_CACHE="${BZ_DISK_CACHE:-$HOME/.cache/bazel-disk/electric-sunflowers}"
+mkdir -p "$DISK_CACHE"
+
+BAZEL_BIN="${BAZEL_BIN:-$HOME/bin/bazel}"
+
+# --output_base is a Bazel *startup* option: it must come before the command
+# verb (build/test/...). --disk_cache is a *command* option: it must come
+# after the verb, so it is appended after "$@" (Bazel accepts command flags
+# after the target patterns too).
+STARTUP_ARGS=()
+
+if [ -n "$NAME" ]; then
+    OUTPUT_BASE="${BZ_OUTPUT_BASE_ROOT:-/tmp/claude-1000/bazel-ob}/$NAME"
+    mkdir -p "$OUTPUT_BASE"
+    STARTUP_ARGS=(--output_base="$OUTPUT_BASE")
+fi
+
+exec "$BAZEL_BIN" "${STARTUP_ARGS[@]}" "$@" --disk_cache="$DISK_CACHE"

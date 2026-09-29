@@ -1,0 +1,20 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "settings",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    deps = [
+        "//crates/song",
+        "//crates/songwriter",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "settings_unit_tests",
+    crate = ":settings",
+    edition = "2021",
+)

@@ -1,0 +1,66 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+NOTATION_LOCAL_DEPS = [
+    "//crates/song",
+    "//crates/compose",
+    "//crates/arrange",
+]
+
+rust_library(
+    name = "notation",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    deps = NOTATION_LOCAL_DEPS + all_crate_deps(normal = True),
+)
+
+# src/score.rs has a #[cfg(test)] module using engine::demo_song().
+rust_test(
+    name = "notation_unit_tests",
+    crate = ":notation",
+    edition = "2021",
+    deps = ["//crates/engine"] + all_crate_deps(normal_dev = True),
+)
+
+rust_test(
+    name = "engrave",
+    srcs = ["tests/engrave.rs"],
+    # song_of(include_str!("songs/blues.json")) / ("songs/six_eight.json").
+    compile_data = glob(["tests/songs/**"]),
+    edition = "2021",
+    deps = [
+        ":notation",
+        "//crates/engine",
+    ] + NOTATION_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "full_layout",
+    srcs = ["tests/full_layout.rs"],
+    edition = "2021",
+    deps = [
+        ":notation",
+        "//crates/engine",
+    ] + NOTATION_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "full_model",
+    srcs = ["tests/full_model.rs"],
+    edition = "2021",
+    deps = [
+        ":notation",
+        "//crates/engine",
+    ] + NOTATION_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

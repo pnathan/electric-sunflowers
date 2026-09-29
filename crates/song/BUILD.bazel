@@ -1,0 +1,76 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "song",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(proc_macro = True),
+    deps = all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "song_unit_tests",
+    crate = ":song",
+    edition = "2021",
+)
+
+rust_test(
+    name = "compat",
+    srcs = ["tests/compat.rs"],
+    compile_data = ["//crates/engine:src/demo.json"],
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+        proc_macro_dev = True,
+    ),
+    deps = [":song"] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "duet",
+    srcs = ["tests/duet.rs"],
+    compile_data = ["//crates/engine:src/demo.json"],
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+        proc_macro_dev = True,
+    ),
+    deps = [":song"] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "phrasing",
+    srcs = ["tests/phrasing.rs"],
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+        proc_macro_dev = True,
+    ),
+    deps = [":song"] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "wire_repairs",
+    srcs = ["tests/wire_repairs.rs"],
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+        proc_macro_dev = True,
+    ),
+    deps = [":song"] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

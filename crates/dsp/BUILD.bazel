@@ -1,0 +1,70 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "dsp",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    deps = ["//crates/core:sfcore"] + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "dsp_unit_tests",
+    crate = ":dsp",
+    edition = "2021",
+    deps = ["//crates/core:sfcore"] + all_crate_deps(normal_dev = True),
+)
+
+rust_test(
+    name = "delay_test",
+    srcs = ["tests/delay.rs"],
+    edition = "2021",
+    deps = [
+        ":dsp",
+        "//crates/core:sfcore",
+    ] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "fft_test",
+    srcs = ["tests/fft.rs"],
+    edition = "2021",
+    deps = [
+        ":dsp",
+        "//crates/core:sfcore",
+    ] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "filters",
+    srcs = ["tests/filters.rs"],
+    edition = "2021",
+    deps = [
+        ":dsp",
+        "//crates/core:sfcore",
+    ] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "reverb_test",
+    srcs = ["tests/reverb.rs"],
+    edition = "2021",
+    deps = [
+        ":dsp",
+        "//crates/core:sfcore",
+    ] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

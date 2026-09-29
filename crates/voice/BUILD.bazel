@@ -1,0 +1,50 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "voice",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    deps = [
+        "//crates/core:sfcore",
+        "//crates/dsp",
+        "//crates/song",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "voice_unit_tests",
+    crate = ":voice",
+    edition = "2021",
+    deps = ["//crates/compose"] + all_crate_deps(normal_dev = True),
+)
+
+rust_test(
+    name = "synth",
+    srcs = ["tests/synth.rs"],
+    compile_data = ["//crates/engine:src/demo.json"],
+    edition = "2021",
+    deps = [
+        ":voice",
+        "//crates/core:sfcore",
+        "//crates/dsp",
+        "//crates/song",
+        "//crates/compose",
+    ] + all_crate_deps(normal_dev = True),
+)
+
+# Vowel-distinctness probe used by the sound gate (tests/vow.js parity):
+# tools/vow.py / CLAUDE.md "the good reference is 13.2-13.6 dB".
+rust_binary(
+    name = "vow",
+    srcs = ["examples/vow.rs"],
+    edition = "2021",
+    deps = [
+        ":voice",
+        "//crates/core:sfcore",
+        "//crates/dsp",
+        "//crates/song",
+    ] + all_crate_deps(normal = True),
+)

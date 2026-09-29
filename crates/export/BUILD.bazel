@@ -1,0 +1,29 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "export",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    deps = ["//crates/core:sfcore"] + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "export_unit_tests",
+    crate = ":export",
+    edition = "2021",
+)
+
+# tests/formats.rs shells out to `ffmpeg` (skips if not on PATH) to check
+# tags/round-trips against a second decoder.
+rust_test(
+    name = "formats",
+    srcs = ["tests/formats.rs"],
+    edition = "2021",
+    deps = [
+        ":export",
+        "//crates/core:sfcore",
+    ] + all_crate_deps(normal = True),
+)

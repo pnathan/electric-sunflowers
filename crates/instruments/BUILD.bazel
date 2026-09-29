@@ -1,0 +1,97 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "instruments",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    deps = [
+        "//crates/core:sfcore",
+        "//crates/dsp",
+        "//crates/song",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "instruments_unit_tests",
+    crate = ":instruments",
+    edition = "2021",
+    deps = [
+        "//crates/core:sfcore",
+        "//crates/dsp",
+        "//crates/song",
+    ] + all_crate_deps(normal_dev = True),
+)
+
+rust_test(
+    name = "body",
+    srcs = ["tests/body.rs"],
+    edition = "2021",
+    deps = [
+        ":instruments",
+        "//crates/core:sfcore",
+        "//crates/dsp",
+        "//crates/song",
+    ] + all_crate_deps(normal_dev = True),
+)
+
+rust_test(
+    name = "drums",
+    srcs = ["tests/drums.rs"],
+    edition = "2021",
+    deps = [
+        ":instruments",
+        "//crates/core:sfcore",
+        "//crates/dsp",
+        "//crates/song",
+    ] + all_crate_deps(normal_dev = True),
+)
+
+rust_test(
+    name = "pluck",
+    srcs = ["tests/pluck.rs"],
+    edition = "2021",
+    deps = [
+        ":instruments",
+        "//crates/core:sfcore",
+        "//crates/dsp",
+        "//crates/song",
+    ] + all_crate_deps(normal_dev = True),
+)
+
+# tests/violin.rs pulls in tests/helmholtz/mod.rs as a submodule (`mod
+# helmholtz;`); it is not its own Cargo integration test target.
+rust_test(
+    name = "violin",
+    srcs = [
+        "tests/helmholtz/mod.rs",
+        "tests/violin.rs",
+    ],
+    edition = "2021",
+    deps = [
+        ":instruments",
+        "//crates/core:sfcore",
+        "//crates/dsp",
+        "//crates/song",
+    ] + all_crate_deps(normal_dev = True),
+)
+
+# Exercises the gate's Helmholtz sweep directly (see tests/helmholtz).
+# examples/helmholtz.rs pulls in tests/helmholtz/mod.rs via
+# #[path = "../tests/helmholtz/mod.rs"], which itself uses the rayon
+# dev-dependency to run cases in parallel.
+rust_binary(
+    name = "helmholtz",
+    srcs = [
+        "examples/helmholtz.rs",
+        "tests/helmholtz/mod.rs",
+    ],
+    edition = "2021",
+    deps = [
+        ":instruments",
+        "//crates/core:sfcore",
+        "//crates/song",
+    ] + all_crate_deps(normal_dev = True),
+)

@@ -7,3 +7,9 @@ node_modules/
 out/
 # Vendored crates are committed whole: cargo checks every file against its checksum.
 !/vendor/**
+
+# Bazel convenience symlinks (bazel-bin, bazel-out, bazel-<repo name>, ...).
+/bazel-*
+# Local-only Bazel overrides (e.g. a BuildBuddy API key). See .bazelrc.
+.bazelrc.local
+.claude/settings.local.json

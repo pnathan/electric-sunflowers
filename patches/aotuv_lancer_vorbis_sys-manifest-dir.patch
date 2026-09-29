@@ -1,0 +1,31 @@
+--- a/build.rs	2026-09-28 17:22:47.702764705 -0700
++++ b/build.rs	2026-09-28 17:22:47.784560369 -0700
+@@ -1,16 +1,23 @@
+-use std::{env, env::current_dir};
++use std::env;
++use std::path::PathBuf;
++
++// Bazel's cargo_build_script does not run build scripts with the crate's
++// manifest directory as the process cwd (unlike Cargo), so `current_dir()`
++// resolves to the wrong place there. CARGO_MANIFEST_DIR is set correctly
++// by both Cargo and rules_rust.
++fn manifest_dir() -> PathBuf {
++	PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"))
++}
+ 
+ #[cfg(feature = "build-time-bindgen")]
+ use bindgen::RustTarget;
+ 
+ fn main() {
+ 	#[cfg(feature = "build-time-bindgen")]
+-	let ogg_vendor_path = current_dir()
+-		.expect("Could not get current working directory")
++	let ogg_vendor_path = manifest_dir()
+ 		.join("ogg_vendor");
+ 
+-	let vorbis_vendor_path = current_dir()
+-		.expect("Could not get current working directory")
++	let vorbis_vendor_path = manifest_dir()
+ 		.join("vorbis_vendor");
+ 
+ 	println!(

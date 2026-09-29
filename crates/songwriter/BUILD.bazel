@@ -1,0 +1,29 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+SONGWRITER_LOCAL_DEPS = [
+    "//crates/core:sfcore",
+    "//crates/song",
+]
+
+rust_library(
+    name = "songwriter",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    deps = SONGWRITER_LOCAL_DEPS + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "songwriter_unit_tests",
+    crate = ":songwriter",
+    edition = "2021",
+)
+
+rust_test(
+    name = "prompt",
+    srcs = ["tests/prompt.rs"],
+    edition = "2021",
+    deps = [":songwriter"] + SONGWRITER_LOCAL_DEPS + all_crate_deps(normal = True),
+)

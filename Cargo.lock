@@ -1612,23 +1612,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gaterun"
-version = "0.1.0"
-dependencies = [
- "clap",
- "dsp",
- "engine",
- "instruments",
- "rayon",
- "serde",
- "serde_json",
- "sfcore",
- "song",
- "soundgate",
- "voice",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

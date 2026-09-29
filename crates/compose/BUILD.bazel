@@ -1,0 +1,46 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# crates/compose/src/prepare.rs embeds tests/songs/duet.json (its own
+# fixture) and, in its #[cfg(test)] unit tests, engine/src/demo.json (via
+# relative include_str!("../../engine/src/demo.json")) at compile time.
+COMPOSE_TEST_DATA = glob(["tests/songs/**"]) + ["//crates/engine:src/demo.json"]
+
+rust_library(
+    name = "compose",
+    srcs = glob(["src/**/*.rs"]),
+    compile_data = COMPOSE_TEST_DATA,
+    edition = "2021",
+    deps = [
+        "//crates/core:sfcore",
+        "//crates/song",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "compose_unit_tests",
+    compile_data = COMPOSE_TEST_DATA,
+    crate = ":compose",
+    edition = "2021",
+    deps = [
+        "//crates/core:sfcore",
+        "//crates/song",
+    ] + all_crate_deps(normal_dev = True),
+)
+
+rust_test(
+    name = "properties",
+    srcs = ["tests/properties.rs"],
+    compile_data = ["//crates/engine:src/demo.json"],
+    edition = "2021",
+    deps = [
+        ":compose",
+        "//crates/core:sfcore",
+        "//crates/song",
+    ] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

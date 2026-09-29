@@ -1,0 +1,48 @@
+# Bazel trial build for the Rust workspace, alongside Cargo (see CLAUDE.md).
+# Cargo remains the build of record; this exists so parallel coding agents
+# can build/test without queuing behind Cargo's single target/ lock.
+#
+# Per-agent output bases and the shared disk cache are NOT set here: use
+# scripts/bz, which picks them up from $AGENT/$BZ_NAME so this file behaves
+# the same for a lone dev and for N parallel agents.
+
+# --- Day-to-day (no --config) ---
+# Plain `bazel build`/`bazel test` uses Bazel's default fastbuild compilation
+# mode (rustc -C opt-level=0, debug assertions on), matching one of the two
+# day-to-day options CLAUDE.md's authoring instructions allow. Use
+# --config=release for optimized, LTO'd binaries (sunflower, studio,
+# soundgate, gaterun).
+
+# --- Release: mirrors [profile.release] in Cargo.toml (lto = "fat",
+# codegen-units = 1) ---
+build:release -c opt
+build:release --@rules_rust//rust/settings:lto=fat
+build:release --@rules_rust//rust/settings:codegen_units=1
+
+# --- Lint (opt-in): rustfmt-check and clippy aspects, self-employment's
+# convention. NOT wired into plain `build`/`test`: `cargo fmt --check`
+# already fails on this tree today (e.g. crates/arrange/src/bass.rs), so
+# making this the default would fail every build for a reason unrelated to
+# this trial. Enable per-invocation with --config=lint once the tree is
+# rustfmt-clean, or to see the clippy findings on their own.
+build:lint --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect
+build:lint --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect
+build:lint --output_groups=+rustfmt_checks,+clippy_checks
+
+# Format the tree with: bazel run @rules_rust//tools/rustfmt
+
+# --- BuildBuddy (opt-in, disabled): mirrors self-employment/.bazelrc's
+# pattern. This endpoint and any credentials are NOT filled in - fill in
+# this org's BuildBuddy endpoint below and enable with --config=buildbuddy
+# if wanted. A local API key would go in the gitignored .bazelrc.local
+# (common --remote_header=x-buildbuddy-api-key=<key>), never here.
+# build:buildbuddy --bes_results_url=https://<org>.buildbuddy.io/invocation/
+# build:buildbuddy --bes_backend=grpcs://<org>.buildbuddy.io
+# build:buildbuddy --remote_cache=grpcs://<org>.buildbuddy.io
+# build:buildbuddy --remote_timeout=10m
+# build:buildbuddy --remote_cache_compression
+# build:buildbuddy --remote_upload_local_results
+
+# A gitignored file for anything that must not be committed: a local
+# BuildBuddy API key (see above), or other machine-specific overrides.
+try-import %workspace%/.bazelrc.local

@@ -1,0 +1,87 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# src/lib.rs embeds this at compile time (include_str!("demo.json")); other
+# crates' tests also reach it via relative include_str!("../../engine/src/demo.json"),
+# so it needs to be visible to other packages too.
+exports_files(["src/demo.json"])
+
+ENGINE_LOCAL_DEPS = [
+    "//crates/core:sfcore",
+    "//crates/song",
+    "//crates/compose",
+    "//crates/dsp",
+    "//crates/instruments",
+    "//crates/voice",
+    "//crates/arrange",
+]
+
+rust_library(
+    name = "engine",
+    srcs = glob(["src/**/*.rs"]),
+    compile_data = ["src/demo.json"],
+    edition = "2021",
+    deps = ENGINE_LOCAL_DEPS + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "engine_unit_tests",
+    compile_data = ["src/demo.json"],
+    crate = ":engine",
+    edition = "2021",
+    deps = ["//crates/songwriter"] + all_crate_deps(normal_dev = True),
+)
+
+rust_test(
+    name = "mixer",
+    srcs = ["tests/mixer.rs"],
+    edition = "2021",
+    deps = [":engine"] + ENGINE_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "render_test",
+    srcs = ["tests/render_test.rs"],
+    edition = "2021",
+    deps = [":engine"] + ENGINE_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "sheet_test",
+    srcs = ["tests/sheet.rs"],
+    edition = "2021",
+    deps = [":engine"] + ENGINE_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+# Sound gate stems: renders the demo song and writes each processed stem.
+rust_binary(
+    name = "stems",
+    srcs = ["examples/stems.rs"],
+    edition = "2021",
+    deps = [":engine"] + ENGINE_LOCAL_DEPS + all_crate_deps(normal = True),
+)
+
+# Vocal balance probe against the accompaniment (see CLAUDE.md open issue 1).
+rust_binary(
+    name = "balance",
+    srcs = ["examples/balance.rs"],
+    edition = "2021",
+    deps = [
+        ":engine",
+        "//crates/songwriter",
+    ] + ENGINE_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

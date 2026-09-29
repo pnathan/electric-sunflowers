@@ -1,0 +1,29 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+STUDIO_LOCAL_DEPS = [
+    "//crates/core:sfcore",
+    "//crates/song",
+    "//crates/compose",
+    "//crates/engine",
+    "//crates/export",
+    "//crates/songwriter",
+    "//crates/notation",
+]
+
+rust_binary(
+    name = "studio",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    deps = STUDIO_LOCAL_DEPS + all_crate_deps(normal = True),
+)
+
+# main.rs and src/{jobs,lyrics,library,sheetview}.rs have #[cfg(test)] unit
+# tests; rust_test(crate=) recompiles the binary's sources under --test.
+rust_test(
+    name = "studio_unit_tests",
+    crate = ":studio",
+    edition = "2021",
+)

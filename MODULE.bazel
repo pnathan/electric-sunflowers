@@ -1,0 +1,53 @@
+module(
+    name = "electric_sunflowers",
+    version = "0.1.0",
+)
+
+# Trial Bazel build, alongside Cargo (see CLAUDE.md). Conventions borrowed
+# from /home/pnathan/src/self-employment: rules_rust version, crate.from_cargo
+# driven by the existing Cargo.lock and per-crate manifests, rust.toolchain.
+
+bazel_dep(name = "rules_rust", version = "0.74.0")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    versions = ["1.98.1"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//:Cargo.lock",
+    manifests = [
+        # The workspace root manifest is sufficient on its own: it has
+        # `[workspace] members = ["crates/*"]`, so cargo-bazel discovers all
+        # member manifests (and their `edition.workspace = true` /
+        # `serde.workspace = true` etc. resolve against its
+        # [workspace.package] / [workspace.dependencies]) from this alone.
+        # (Confirmed by cargo-bazel's own INFO message when the member
+        # manifests were also listed explicitly; listing them was also how
+        # a stale entry for the removed crates/gaterun briefly broke the
+        # build - one more reason to let this list stay just the root.)
+        "//:Cargo.toml",
+    ],
+    supported_platform_triples = ["x86_64-unknown-linux-gnu"],
+)
+
+# aotuv_lancer_vorbis_sys's build.rs locates its vendored libvorbis/libogg C
+# sources with `std::env::current_dir()` instead of `CARGO_MANIFEST_DIR`.
+# Cargo happens to run build scripts with the manifest dir as cwd, so this
+# works under Cargo; rules_rust's cargo_build_script does not set the
+# process cwd that way, so under Bazel `current_dir()` resolves to the
+# execroot and the `cc::Build` step can't find lib/mdct.c etc. Patched to
+# use CARGO_MANIFEST_DIR, which rules_rust does set correctly.
+crate.annotation(
+    crate = "aotuv_lancer_vorbis_sys",
+    patch_args = ["-p1"],
+    patches = ["//patches:aotuv_lancer_vorbis_sys-manifest-dir.patch"],
+)
+
+use_repo(crate, "crates")

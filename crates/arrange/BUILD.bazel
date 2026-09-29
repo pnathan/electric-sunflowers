@@ -1,0 +1,47 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "arrange",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    deps = [
+        "//crates/core:sfcore",
+        "//crates/song",
+        "//crates/compose",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "arrange_unit_tests",
+    crate = ":arrange",
+    edition = "2021",
+    deps = [
+        "//crates/core:sfcore",
+        "//crates/song",
+        "//crates/compose",
+    ] + all_crate_deps(normal_dev = True),
+)
+
+rust_test(
+    name = "plans",
+    srcs = ["tests/plans.rs"],
+    # tests/plans.rs embeds engine/src/demo.json plus its own crate's
+    # Cargo.toml and several of its own src/*.rs files via include_str!.
+    compile_data = glob(["src/**/*.rs"]) + [
+        "Cargo.toml",
+        "//crates/engine:src/demo.json",
+    ],
+    edition = "2021",
+    deps = [
+        ":arrange",
+        "//crates/core:sfcore",
+        "//crates/song",
+        "//crates/compose",
+    ] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

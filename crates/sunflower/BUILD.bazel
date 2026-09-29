@@ -1,0 +1,44 @@
+load("@crates//:defs.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+SUNFLOWER_LOCAL_DEPS = [
+    "//crates/core:sfcore",
+    "//crates/song",
+    "//crates/engine",
+    "//crates/songwriter",
+    "//crates/settings",
+    "//crates/export",
+]
+
+rust_binary(
+    name = "sunflower",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = SUNFLOWER_LOCAL_DEPS + all_crate_deps(normal = True),
+)
+
+# main.rs has a #[cfg(test)] mod tests (line 646).
+rust_test(
+    name = "sunflower_unit_tests",
+    crate = ":sunflower",
+    edition = "2021",
+    deps = all_crate_deps(normal_dev = True),
+)
+
+# Integration tests: run the built `sunflower` binary against
+# tests/small_song.json (env!("CARGO_BIN_EXE_sunflower")).
+rust_test(
+    name = "render_cli",
+    srcs = ["tests/render_cli.rs"],
+    data = [
+        "tests/small_song.json",
+        ":sunflower",
+    ],
+    edition = "2021",
+    deps = SUNFLOWER_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

@@ -1,0 +1,9 @@
+# Cargo build output; Bazel must not walk it looking for packages. Other
+# agents are building here with Cargo concurrently.
+target
+# Not Bazel inputs; crate_universe fetches crate sources itself and does not
+# read the vendor/ directory or its .cargo/config.toml source replacement.
+vendor
+dist
+out
+ref
