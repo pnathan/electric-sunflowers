@@ -12,6 +12,7 @@ use crate::audio::{Output, Track};
 use crate::jobs::{self, Job, Loaded, RenderPlan, Via, WritePlan};
 use crate::library::{self, Entry, Source};
 use crate::lyrics::{clock, LyricsView};
+use crate::settings_panel::SettingsForm;
 use crate::sheetview::SheetView;
 
 /// Which views the central panel shows.
@@ -20,6 +21,20 @@ pub enum View {
     Lyrics,
     Sheet,
     Both,
+}
+
+/// Which sheet the sheet-music view is showing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SheetKind {
+    Lead,
+    Full,
+}
+
+fn sheet_of(kind: SheetKind, l: &Loaded) -> notation::Sheet {
+    match kind {
+        SheetKind::Lead => notation::Sheet::Lead(l.score.clone()),
+        SheetKind::Full => notation::Sheet::Full(l.full.clone()),
+    }
 }
 
 impl View {
@@ -70,6 +85,16 @@ struct NewSong {
     seed: String,
 }
 
+/// The "Render a new take" form: a chosen seed and voice, rendered
+/// beside the current song without replacing it.
+struct TakeForm {
+    open: bool,
+    /// Blank is a random seed.
+    seed: String,
+    /// `None` keeps the song's current voice.
+    voice: Option<Voice>,
+}
+
 /// Steps of the scripted run.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Step {
@@ -88,6 +113,7 @@ pub struct StudioApp {
     load: Option<Job<Loaded>>,
     loaded: Option<Loaded>,
     sheet: Option<SheetView>,
+    sheet_kind: SheetKind,
     lyrics: LyricsView,
     work: Option<Work>,
     /// Stems a render has been tried for, so a failure is not retried in a loop.
@@ -100,18 +126,42 @@ pub struct StudioApp {
     errors: Vec<String>,
     info: Option<String>,
     new_song: NewSong,
+    take: TakeForm,
+    settings: settings::Settings,
+    settings_form: SettingsForm,
     step: Step,
     start: std::time::Instant,
 }
 
-fn voices() -> [Voice; 5] {
+pub(crate) fn voices() -> [Voice; 5] {
     [Voice::Bass, Voice::Baritone, Voice::Tenor, Voice::Alto, Voice::Soprano]
+}
+
+fn via_of(t: songwriter::claude::Transport) -> Via {
+    match t {
+        songwriter::claude::Transport::Cli => Via::Cli,
+        songwriter::claude::Transport::Api => Via::Api,
+    }
 }
 
 impl StudioApp {
     pub fn new(cc: &eframe::CreationContext<'_>, opt: Options) -> StudioApp {
         let mut svg = usvg::Options::default();
         svg.fontdb_mut().load_system_fonts();
+        let loaded_settings = settings::load();
+        for w in &loaded_settings.warnings {
+            eprintln!("studio: warning: settings: {w}");
+        }
+        let settings = loaded_settings.settings;
+        let new_song = NewSong {
+            open: opt.new_song,
+            mood: String::new(),
+            style: String::new(),
+            voice: settings.songwriter.voice,
+            via: via_of(settings.claude.transport),
+            model: settings.claude.model.clone(),
+            seed: String::new(),
+        };
         let mut app = StudioApp {
             view: opt.view,
             svg_opt: Arc::new(svg),
@@ -120,6 +170,7 @@ impl StudioApp {
             load: None,
             loaded: None,
             sheet: None,
+            sheet_kind: SheetKind::Lead,
             lyrics: LyricsView::new(),
             work: None,
             tried: Vec::new(),
@@ -129,8 +180,11 @@ impl StudioApp {
             scrub: None,
             errors: Vec::new(),
             info: None,
-            new_song: NewSong { open: opt.new_song, mood: String::new(), style: String::new(), voice: None, via: Via::Cli, model: String::new(), seed: String::new() },
-            step: if opt.screenshot.is_some() || opt.play > 0.0 { Step::WaitReady } else { Step::Done },
+            new_song,
+            take: TakeForm { open: false, seed: String::new(), voice: None },
+            settings,
+            settings_form: SettingsForm::new(),
+            step: if opt.screenshot.is_some() || opt.play > 0.0 || opt.seek.is_some() { Step::WaitReady } else { Step::Done },
             start: std::time::Instant::now(),
             opt,
         };
@@ -213,12 +267,15 @@ impl StudioApp {
     }
 
     /// Starts rendering the loaded song. `take` renders to a new stem
-    /// beside it instead of the entry's own.
-    fn start_render(&mut self, ctx: &egui::Context, take: bool) {
+    /// beside it instead of the entry's own, using `seed`/`voice` when
+    /// given (else the song's own).
+    fn start_render_as(&mut self, ctx: &egui::Context, take: bool, seed: Option<u64>, voice: Option<Option<Voice>>) {
         if self.work.is_some() {
             return;
         }
         let Some(l) = &self.loaded else { return };
+        let seed = seed.unwrap_or(l.seed);
+        let voice = voice.unwrap_or(l.voice);
         let (stem, song_json) = match &l.entry.source {
             Source::Demo => {
                 let json = l.entry.sibling("json");
@@ -234,18 +291,24 @@ impl StudioApp {
             Source::File(p) => {
                 let stem = if take {
                     let dir = l.entry.stem.parent().map(Path::to_path_buf).unwrap_or_else(|| self.opt.dir.clone());
-                    library::fresh_stem(&dir, &format!("{}-seed{}", l.entry.name, l.seed))
+                    library::fresh_stem(&dir, &format!("{}-seed{}", l.entry.name, seed))
                 } else {
                     l.entry.stem.clone()
                 };
                 (stem, p.clone())
             }
         };
-        let plan = RenderPlan { song: l.song.clone(), seed: l.seed, voice: l.voice, stem: stem.clone(), song_json, model: None };
+        let plan = RenderPlan { song: l.song.clone(), seed, voice, stem: stem.clone(), song_json, model: None };
         self.tried.push(stem.clone());
         eprintln!("studio: rendering {} (seed {})", stem.display(), plan.seed);
         let job = Job::spawn(ctx, "Rendering", move |rep| jobs::render(&plan, rep));
         self.work = Some(Work::Render { job, stem, select: take });
+    }
+
+    /// Starts rendering the loaded song. `take` renders to a new stem
+    /// beside it instead of the entry's own.
+    fn start_render(&mut self, ctx: &egui::Context, take: bool) {
+        self.start_render_as(ctx, take, None, None);
     }
 
     fn start_write(&mut self, ctx: &egui::Context) {
@@ -289,7 +352,7 @@ impl StudioApp {
                     for n in &l.notes {
                         eprintln!("studio: {n}");
                     }
-                    self.sheet = Some(SheetView::new(l.score.clone(), self.svg_opt.clone()));
+                    self.sheet = Some(SheetView::new(sheet_of(self.sheet_kind, &l), self.svg_opt.clone()));
                     self.loaded = Some(l);
                     self.open_audio();
                 }
@@ -394,7 +457,7 @@ impl StudioApp {
                 }
                 ui.label(RichText::new(sub.join(", ")).small().weak());
                 ui.add_space(3.0);
-                if r.clicked() && !sel {
+                if r.clicked() {
                     pick = Some(i);
                 }
             }
@@ -407,9 +470,26 @@ impl StudioApp {
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let busy = self.work.is_some();
-            if ui.add_enabled(!busy, egui::Button::new("New song...")).on_disabled_hover_text("A render is running").clicked() {
+            let busy_msg = match &self.work {
+                Some(Work::Write { .. }) => Some("Claude is writing a song"),
+                Some(Work::Render { .. }) => Some("A render is running"),
+                None => None,
+            };
+            if ui.add_enabled(busy_msg.is_none(), egui::Button::new("New song...")).on_disabled_hover_text(busy_msg.unwrap_or_default()).clicked() {
+                self.new_song.voice = self.settings.songwriter.voice;
+                self.new_song.via = via_of(self.settings.claude.transport);
+                self.new_song.model = self.settings.claude.model.clone();
                 self.new_song.open = true;
+            }
+            ui.separator();
+            if ui.add_enabled(self.loaded.is_some() && busy_msg.is_none(), egui::Button::new("Render a new take...")).clicked() {
+                self.take.seed.clear();
+                self.take.voice = None;
+                self.take.open = true;
+            }
+            ui.separator();
+            if ui.button("Settings...").clicked() {
+                self.settings_form.open_from(&self.settings);
             }
             ui.separator();
             ui.selectable_value(&mut self.view, View::Lyrics, "Lyrics & chords");
@@ -420,6 +500,15 @@ impl StudioApp {
                 if self.view != View::Lyrics {
                     ui.label("Zoom");
                     ui.add(egui::Slider::new(&mut s.zoom, 0.5..=2.5).fixed_decimals(2));
+                    ui.separator();
+                    let before = self.sheet_kind;
+                    ui.selectable_value(&mut self.sheet_kind, SheetKind::Lead, "Lead sheet");
+                    ui.selectable_value(&mut self.sheet_kind, SheetKind::Full, "Full score");
+                    if self.sheet_kind != before {
+                        if let Some(l) = &self.loaded {
+                            s.set_sheet(sheet_of(self.sheet_kind, l));
+                        }
+                    }
                 }
             }
             ui.checkbox(&mut self.lyrics.follow, "Follow");
@@ -527,6 +616,9 @@ impl StudioApp {
                     ui.label(RichText::new(n).small());
                 }
             });
+        }
+        if let Some(g) = l.entry.render.as_ref().and_then(|r| r.generation.as_ref()) {
+            ui.label(RichText::new(g.summary()).small().weak());
         }
         if l.entry.audio.is_none() && self.track.is_none() && self.work.is_none() && self.tried.contains(&l.entry.stem) {
             ui.horizontal(|ui| {
@@ -660,6 +752,54 @@ impl StudioApp {
         }
     }
 
+    fn take_window(&mut self, ctx: &egui::Context) {
+        if !self.take.open {
+            return;
+        }
+        let mut open = true;
+        let mut submit = false;
+        egui::Window::new("Render a new take").open(&mut open).collapsible(false).default_width(360.0).show(ctx, |ui| {
+            let f = &mut self.take;
+            egui::Grid::new("take-grid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                ui.label("Seed");
+                ui.add(egui::TextEdit::singleline(&mut f.seed).hint_text("random").desired_width(220.0));
+                ui.end_row();
+                ui.label("Voice");
+                egui::ComboBox::from_id_salt("take-voice").selected_text(f.voice.map(|v| v.label()).unwrap_or("Same as now")).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut f.voice, None, "Same as now");
+                    for v in voices() {
+                        ui.selectable_value(&mut f.voice, Some(v), v.label());
+                    }
+                });
+                ui.end_row();
+            });
+            ui.add_space(6.0);
+            ui.label(RichText::new("Renders to a new stem beside this song; the current one is untouched.").small().weak());
+            if ui.button("Render").clicked() {
+                submit = true;
+            }
+        });
+        if !open {
+            self.take.open = false;
+        }
+        if submit {
+            self.take.open = false;
+            let seed = if self.take.seed.trim().is_empty() {
+                jobs::random_seed()
+            } else {
+                match self.take.seed.trim().parse() {
+                    Ok(s) => s,
+                    Err(_) => {
+                        self.errors.push(format!("seed {:?} is not a whole number", self.take.seed));
+                        return;
+                    }
+                }
+            };
+            let voice = self.take.voice.map(Some);
+            self.start_render_as(ctx, true, Some(seed), voice);
+        }
+    }
+
     /// Advances the scripted run.
     fn script(&mut self, ctx: &egui::Context) {
         let t = self.start.elapsed().as_secs_f64();
@@ -671,9 +811,16 @@ impl StudioApp {
         }
         match self.step {
             Step::WaitReady => {
-                let sheet_ready = self.view == View::Lyrics || self.sheet.as_ref().is_some_and(SheetView::ready);
-                let audio_ready = self.track.is_some() || self.audio_error.is_some();
-                if self.loaded.is_some() && sheet_ready && audio_ready && self.work.is_none() {
+                // With no song to open (--new and no SONG.json), the form
+                // itself is what the screenshot should show.
+                let ready = if self.loaded.is_none() && self.opt.song.is_none() && self.opt.open.is_none() {
+                    self.new_song.open
+                } else {
+                    let sheet_ready = self.view == View::Lyrics || self.sheet.as_ref().is_some_and(SheetView::ready);
+                    let audio_ready = self.track.is_some() || self.audio_error.is_some();
+                    self.loaded.is_some() && sheet_ready && audio_ready && self.work.is_none()
+                };
+                if ready {
                     if let Some(s) = self.opt.seek {
                         self.seek(s);
                         eprintln!("studio: seek to {s:.2} s -> position {:.3} s", self.pos());
@@ -763,6 +910,10 @@ impl eframe::App for StudioApp {
         egui::Panel::left("library").default_size(240.0).resizable(true).show(ui, |ui| self.library_panel(ui));
         egui::CentralPanel::default().show(ui, |ui| self.central(ui));
         self.new_song_window(&ctx);
+        self.take_window(&ctx);
+        if let Some(s) = self.settings_form.ui(&ctx) {
+            self.settings = s;
+        }
         self.script(&ctx);
         if self.playing() || self.work.is_some() || self.load.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));

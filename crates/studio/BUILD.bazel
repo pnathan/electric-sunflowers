@@ -7,10 +7,12 @@ STUDIO_LOCAL_DEPS = [
     "//crates/core:sfcore",
     "//crates/song",
     "//crates/compose",
+    "//crates/arrange",
     "//crates/engine",
     "//crates/export",
     "//crates/songwriter",
     "//crates/notation",
+    "//crates/settings",
 ]
 
 rust_binary(

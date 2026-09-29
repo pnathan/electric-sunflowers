@@ -6,7 +6,7 @@ use engine::{SheetLine, SheetSection, SongSheet};
 
 /// Time as m:ss.
 pub fn clock(t: f64) -> String {
-    let s = t.max(0.0).floor() as u64;
+    let s = t.max(0.0).round() as u64;
     format!("{}:{:02}", s / 60, s % 60)
 }
 
@@ -226,7 +226,8 @@ mod tests {
     #[test]
     fn clock_and_offsets() {
         assert_eq!(clock(0.0), "0:00");
-        assert_eq!(clock(61.9), "1:01");
+        assert_eq!(clock(61.4), "1:01");
+        assert_eq!(clock(61.9), "1:02");
         assert_eq!(clock(-3.0), "0:00");
         assert_eq!(byte_at("cafe\u{301} x", 5), 6);
         assert_eq!(byte_at("ab", 9), 2);

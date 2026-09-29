@@ -13,3 +13,5 @@ out/
 # Local-only Bazel overrides (e.g. a BuildBuddy API key). See .bazelrc.
 .bazelrc.local
 .claude/settings.local.json
+# Claude Code agent worktrees (scratch checkouts for background agents).
+.claude/worktrees/
