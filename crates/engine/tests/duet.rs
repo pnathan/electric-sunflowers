@@ -122,3 +122,21 @@ fn solo_demo_mix_is_bit_identical() {
     let h = fnv1a(&mix_bytes(&m.l, &m.r));
     assert_eq!(h, 0x1c28a9a15f79a15b, "solo demo mix checksum changed: {h:#x}");
 }
+
+/// A duet render is thread-count invariant, the same guarantee the solo
+/// demo already has (`render_test::one_and_eight_threads_are_bit_identical`):
+/// one thread and the default pool must produce the same mix bits.
+#[test]
+fn duet_render_is_thread_count_invariant() {
+    fn pool(n: usize) -> rayon::ThreadPool {
+        rayon::ThreadPoolBuilder::new().num_threads(n).start_handler(|_| sfcore::fp::flush_denormals()).build().expect("thread pool")
+    }
+    let song = demo_duet_song();
+    let render_mix = |s: &song::Song| {
+        let (_, stems) = render_with(s, 7, VoiceChoice::default(), &NoProgress);
+        mix(&stems, &s.band, 7)
+    };
+    let a = pool(1).install(|| render_mix(&song));
+    let b = pool(8).install(|| render_mix(&song));
+    assert_eq!(fnv1a(&mix_bytes(&a.l, &a.r)), fnv1a(&mix_bytes(&b.l, &b.r)), "1 and 8 threads differ on the duet demo");
+}
