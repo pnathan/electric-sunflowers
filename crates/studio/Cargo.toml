@@ -9,10 +9,12 @@ publish.workspace = true
 sfcore = { path = "../core" }
 song = { path = "../song" }
 compose = { path = "../compose" }
+arrange = { path = "../arrange" }
 engine = { path = "../engine" }
 export = { path = "../export" }
 songwriter = { path = "../songwriter" }
 notation = { path = "../notation" }
+settings = { path = "../settings" }
 eframe = "0.36"
 rodio = "0.22"
 resvg = "0.48"

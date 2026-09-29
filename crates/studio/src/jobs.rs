@@ -94,6 +94,8 @@ pub struct Loaded {
     pub seed_known: bool,
     pub sheet: engine::SongSheet,
     pub score: notation::Score,
+    /// The multipart score, for the Full score view.
+    pub full: notation::full::FullScore,
     /// Normaliser repairs and style problems, for the user.
     pub notes: Vec<String>,
 }
@@ -137,7 +139,9 @@ pub fn load(entry: Entry) -> Result<Loaded, String> {
     let mut sheet = engine::sheet_from(&song, seed, &prep);
     sheet.style_label = style_label(&song);
     let score = notation::Score::new(&song, &prep);
-    Ok(Loaded { entry, song, seed, voice, seed_known, sheet, score, notes })
+    let arr = arrange::arrange(&song, &prep, seed);
+    let full = notation::full::FullScore::new(&song, &prep, &arr);
+    Ok(Loaded { entry, song, seed, voice, seed_known, sheet, score, full, notes })
 }
 
 /// The label of the song's applied style.
