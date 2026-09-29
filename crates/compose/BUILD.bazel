@@ -21,6 +21,9 @@ rust_library(
 
 rust_test(
     name = "compose_unit_tests",
+    # The 4800-case compose-once equivalence test runs unoptimised under
+    # fastbuild; it needs more than the default 300 s.
+    timeout = "long",
     compile_data = COMPOSE_TEST_DATA,
     crate = ":compose",
     edition = "2021",
