@@ -99,7 +99,7 @@ const MIN_SHAPED: f64 = 0.05;
 /// - A note that is not `phrase_end` and has a following note ends at
 ///   `min(t1, t0 + max(MIN_SHAPED, sustain * (next.t0 - t0)))`.
 /// - A `phrase_end` note keeps `end_len` of its written length (`t1 - t0`),
-///   at least `MIN_SHAPED`.
+///   at least `MIN_SHAPED`, and never more than its written length.
 ///
 /// Borrows `notes` unchanged when `sustain == 1.0` and `end_len == 1.0`
 /// (`PhrasingParams::default()`), so the default phrasing cannot change a
@@ -114,7 +114,8 @@ pub fn phrase_notes<'a>(notes: &'a [VocalNote], p: &PhrasingParams) -> Cow<'a, [
         if n.phrase_end {
             if p.end_len != 1.0 {
                 let len = n.t1 - n.t0;
-                out[k].t1 = n.t0 + (p.end_len * len).max(MIN_SHAPED);
+                // Never lengthen: a note written shorter than MIN_SHAPED stays.
+                out[k].t1 = n.t1.min(n.t0 + (p.end_len * len).max(MIN_SHAPED));
             }
         } else if p.sustain != 1.0 {
             if let Some(next) = notes.get(k + 1) {
@@ -186,6 +187,6 @@ mod tests {
         let p = PhrasingParams { sustain: 0.01, end_len: 0.01, ..PhrasingParams::default() };
         let out = phrase_notes(&notes, &p);
         assert!((out[0].t1 - 0.0 - MIN_SHAPED).abs() < 1e-12);
-        assert!((out[1].t1 - 1.001 - MIN_SHAPED).abs() < 1e-12);
+        assert_eq!(out[1].t1, 1.002); // shorter than the floor: left alone, never lengthened
     }
 }

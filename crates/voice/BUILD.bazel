@@ -35,6 +35,17 @@ rust_test(
     ] + all_crate_deps(normal_dev = True),
 )
 
+rust_test(
+    name = "phrasing",
+    srcs = ["tests/phrasing.rs"],
+    edition = "2021",
+    deps = [
+        ":voice",
+        "//crates/core:sfcore",
+        "//crates/song",
+    ] + all_crate_deps(normal_dev = True),
+)
+
 # Vowel-distinctness probe used by the sound gate (tests/vow.js parity):
 # tools/vow.py / CLAUDE.md "the good reference is 13.2-13.6 dB".
 rust_binary(
