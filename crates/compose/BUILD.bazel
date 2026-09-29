@@ -8,6 +8,10 @@ package(default_visibility = ["//visibility:public"])
 # relative include_str!("../../engine/src/demo.json")) at compile time.
 COMPOSE_TEST_DATA = glob(["tests/songs/**"]) + ["//crates/engine:src/demo.json"]
 
+# crates/notation/tests/full_model.rs embeds this fixture too, via
+# include_str!("../../compose/tests/songs/duet.json").
+exports_files(["tests/songs/duet.json"])
+
 rust_library(
     name = "compose",
     srcs = glob(["src/**/*.rs"]),

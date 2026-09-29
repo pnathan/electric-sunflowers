@@ -190,9 +190,6 @@ pub struct Score {
     pub(crate) tempo: f64,
     /// Key signature: sharps positive, flats negative.
     pub(crate) fifths: i32,
-    /// Treble clef an octave down (bass, baritone, tenor): pitches are
-    /// written an octave above the sound. Singer A's clef outside a duet.
-    pub(crate) clef8: bool,
     pub(crate) grid: Grid,
     pub(crate) measures: Vec<Measure>,
     /// Whether the song is a duet: gates every duet-only drawing (labels,
@@ -342,7 +339,7 @@ fn spell_events(
     for ev in events.iter_mut() {
         let Some(ne) = ev.note.as_mut() else { continue };
         let m = notes.get(ne.note).map_or(60, |x| x.midi) + written;
-        let (l, a, step) = spell(m, fifths, &key_alt);
+        let (l, a, step) = spell(m, fifths, key_alt);
         ne.step = step;
         let cur = state
             .iter()
@@ -481,7 +478,6 @@ impl Score {
                 voice_b.unwrap_or(voice_a)
             }
         };
-        let clef8 = clef8_of(voice_a);
         let u = grid.unit();
         let bar_u = grid.bar_u;
 
@@ -662,7 +658,6 @@ impl Score {
             meter: song.meter,
             tempo: song.tempo_bpm,
             fifths,
-            clef8,
             grid,
             measures,
             duet: song.is_duet(),
