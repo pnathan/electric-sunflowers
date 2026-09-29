@@ -47,6 +47,10 @@
 //! (the per-seed rule allowed +2 on one take; the mean of 8 takes has a
 //! third of the take noise).
 
+// See crates/soundgate/src/compare.rs: `!(x <= tol)` must fail the gate on
+// a NaN measurement, which `x > tol` would not.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
+
 use crate::compare::{
     is_mid, LtasFile, MIX_PEAK, MIX_PEAK_TOL, MIX_RMS_DB, PITCH_FRACTION_DROP, REL_FLOOR_DB,
 };
@@ -372,12 +376,12 @@ pub fn band_table(name: &str, b: &FileStats, n: &FileStats, tol: &BandTol) -> St
         "-- {name}\n{:>7} {:>8} {:>7} {:>8} {:>7} {:>8} {:>8}\n",
         "Hz", "base", "base sd", "new", "new sd", "delta", "allowed"
     );
-    for i in 0..NOMINAL_HZ.len() {
+    for (i, hz) in NOMINAL_HZ.iter().enumerate() {
         let d = n.mean_db[i] - b.mean_db[i];
         let a = tol.allowed(i, b.std_db[i]);
         s += &format!(
             "{:>7} {:>8.2} {:>7.2} {:>8.2} {:>7.2} {:>+8.2} {:>8.2}{}\n",
-            NOMINAL_HZ[i],
+            hz,
             b.mean_db[i],
             b.std_db[i],
             n.mean_db[i],

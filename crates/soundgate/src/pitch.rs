@@ -17,6 +17,10 @@
 //! median f0 over voiced frames (frames that pass the threshold; all frames
 //! when none does), error in cents against the note's MIDI pitch.
 
+// See crates/soundgate/src/compare.rs: `!(x <= tol)` (and `!(...).is_finite()`
+// checks) must fail the gate on a NaN measurement, which `x > tol` would not.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
+
 use crate::fft::Fft;
 use serde::{Deserialize, Serialize};
 
@@ -109,6 +113,9 @@ impl Yin {
         let (n, w) = (self.n, self.w);
         let x = &x[..n];
         self.prefix[0] = 0.0;
+        // Prefix-sum recurrence: prefix[i + 1] reads prefix[i], so this is
+        // not an enumerate() over one slice.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..n {
             self.prefix[i + 1] = self.prefix[i] + x[i] * x[i];
         }
@@ -117,6 +124,10 @@ impl Yin {
         }
         // cross term c(tau) = sum_{j<w} x[j] x[j+tau]
         let m = self.fft.len();
+        // Fills four parallel buffers (a_re, a_im, b_re, b_im) from the
+        // same index, two of them conditionally from x: no single iterator
+        // covers this cleanly.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..m {
             self.a_re[i] = if i < w { x[i] } else { 0.0 };
             self.a_im[i] = 0.0;

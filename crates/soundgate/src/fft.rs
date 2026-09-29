@@ -40,6 +40,10 @@ impl Fft {
         self.n
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
     /// In-place transform of `re` + i*`im` (both of length n). `inverse`
     /// conjugates the twiddles and scales by 1/n.
     pub fn run(&self, re: &mut [f64], im: &mut [f64], inverse: bool) {

@@ -1,6 +1,12 @@
 //! Comparison of two runs: LTAS tables (per file) and pitch reports.
 //! Thresholds follow docs/engine-design.md section 12.
 
+// The gate's tolerance checks below write `!(x <= tol)` on purpose: a NaN
+// measurement must fail the gate, and `x <= tol` is false for NaN, so the
+// negation is true. Rewriting to `x > tol` (clippy's usual advice) would
+// make a NaN measurement pass instead, which is the opposite of intent.
+#![allow(clippy::neg_cmp_op_on_partial_ord)]
+
 use crate::ltas::{Ltas, NOMINAL_HZ};
 use crate::pitch::PitchReport;
 use serde::{Deserialize, Serialize};
