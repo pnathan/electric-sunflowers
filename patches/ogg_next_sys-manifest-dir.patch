@@ -1,0 +1,27 @@
+--- a/build.rs	2026-09-29 05:21:19.815261715 +0000
++++ b/build.rs	2026-09-29 05:21:19.818025820 +0000
+@@ -1,12 +1,20 @@
+-use std::env::current_dir;
++use std::env;
++use std::path::PathBuf;
++
++// Bazel's cargo_build_script does not run build scripts with the crate's
++// manifest directory as the process cwd (unlike Cargo), so `current_dir()`
++// resolves to the wrong place there (see the same fix in
++// aotuv_lancer_vorbis_sys, which depends on this crate's DEP_OGG_INCLUDE).
++// CARGO_MANIFEST_DIR is set correctly by both Cargo and rules_rust.
++fn manifest_dir() -> PathBuf {
++	PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"))
++}
+ 
+ #[cfg(feature = "build-time-bindgen")]
+ use bindgen::RustTarget;
+ 
+ fn main() {
+-	let ogg_vendor_path = current_dir()
+-		.expect("Could not get current working directory")
+-		.join("ogg_vendor");
++	let ogg_vendor_path = manifest_dir().join("ogg_vendor");
+ 
+ 	println!(
+ 		"cargo:rerun-if-changed={}",
