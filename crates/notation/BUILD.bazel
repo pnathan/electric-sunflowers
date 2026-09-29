@@ -55,6 +55,24 @@ rust_test(
 rust_test(
     name = "full_model",
     srcs = ["tests/full_model.rs"],
+    # duet_song() embeds compose/tests/songs/duet.json at compile time.
+    compile_data = ["//crates/compose:tests/songs/duet.json"],
+    edition = "2021",
+    deps = [
+        ":notation",
+        "//crates/engine",
+    ] + NOTATION_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "duet",
+    srcs = ["tests/duet.rs"],
+    # duet_song() / duet_song_lead_a() embed compose/tests/songs/duet.json
+    # at compile time.
+    compile_data = ["//crates/compose:tests/songs/duet.json"],
     edition = "2021",
     deps = [
         ":notation",
