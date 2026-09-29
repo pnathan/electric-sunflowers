@@ -19,6 +19,10 @@ build:release -c opt
 build:release --@rules_rust//rust/settings:lto=fat
 build:release --@rules_rust//rust/settings:codegen_units=1
 
+# --- CI: optimised without LTO. The render tests run the DSP crates over a
+# whole song; unoptimised they take 6+ minutes on a runner, optimised ~20 s.
+build:ci -c opt
+
 # --- Lint (opt-in): rustfmt-check and clippy aspects, self-employment's
 # convention. NOT wired into plain `build`/`test`: `cargo fmt --check`
 # already fails on this tree today (e.g. crates/arrange/src/bass.rs), so
