@@ -41,4 +41,10 @@ if [ -n "$NAME" ]; then
     STARTUP_ARGS=(--output_base="$OUTPUT_BASE")
 fi
 
-exec "$BAZEL_BIN" "${STARTUP_ARGS[@]}" "$@" --disk_cache="$DISK_CACHE"
+# BZ_REMOTE=1 adds the BuildBuddy remote cache and build results
+# (--config=buildbuddy; the API key is in the gitignored .bazelrc.local).
+# Off by default: sandboxed local agents have no network.
+EXTRA=()
+if [[ "${BZ_REMOTE:-0}" == 1 ]]; then EXTRA+=(--config=buildbuddy); fi
+
+exec "$BAZEL_BIN" "${STARTUP_ARGS[@]}" "$@" --disk_cache="$DISK_CACHE" "${EXTRA[@]}"
