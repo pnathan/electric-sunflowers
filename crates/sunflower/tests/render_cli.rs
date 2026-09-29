@@ -1,15 +1,39 @@
 //! Integration tests: run the built `sunflower` binary against
 //! `tests/small_song.json` and check the WAV it writes.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// The `sunflower` binary: cargo and Bazel (BUILD.bazel `rustc_env`) both
+/// set `CARGO_BIN_EXE_sunflower` at compile time; under Bazel it is a
+/// runfiles path, so it is resolved like the test data.
 fn bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_sunflower"))
+    find(env!("CARGO_BIN_EXE_sunflower"))
 }
 
 fn song_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/small_song.json")
+    find("crates/sunflower/tests/small_song.json")
+}
+
+/// Finds a file under cargo (an absolute path, or one relative to
+/// `CARGO_MANIFEST_DIR`) and under Bazel, where the compile-time manifest
+/// directory is a sandbox path that is gone at run time and the file is
+/// in the runfiles tree: relative to the current directory, or below
+/// `$RUNFILES_DIR` / `$TEST_SRCDIR` in the main repository.
+fn find(rel: &str) -> PathBuf {
+    let path = Path::new(rel);
+    let in_crate = path.strip_prefix("crates/sunflower").unwrap_or(path);
+    let mut tries = vec![path.to_path_buf(), Path::new(env!("CARGO_MANIFEST_DIR")).join(in_crate)];
+    for var in ["RUNFILES_DIR", "TEST_SRCDIR"] {
+        if let Some(root) = std::env::var_os(var) {
+            tries.push(Path::new(&root).join("_main").join(path));
+        }
+    }
+    tries
+        .iter()
+        .find(|p| p.exists())
+        .map(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()))
+        .unwrap_or_else(|| panic!("cannot find {rel}; tried {tries:?}"))
 }
 
 /// Reads a WAV file's header fields (as sunflower's own writer lays them
@@ -489,4 +513,42 @@ fn sidecar_parses_with_render_sidecar() {
     assert_eq!(side.seed, Some(7));
     assert_eq!(side.voice.as_deref(), Some("baritone"));
     assert!(side.generation.is_none());
+}
+
+#[test]
+fn demo_checks_the_format_before_it_writes_the_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("demo.txt");
+    let st = Command::new(bin()).args(["demo", "-o", out.to_str().unwrap()]).status().unwrap();
+    assert!(!st.success());
+    assert!(!dir.path().join("demo.json").exists());
+}
+
+#[test]
+fn demo_refuses_to_overwrite_another_song_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = dir.path().join("demo.json");
+    std::fs::write(&json, "{\"title\": \"mine\"}").unwrap();
+    let out = dir.path().join("demo.wav");
+    let o = Command::new(bin()).args(["demo", "-o", out.to_str().unwrap()]).output().unwrap();
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("--force"));
+    assert_eq!(std::fs::read_to_string(&json).unwrap(), "{\"title\": \"mine\"}");
+    assert!(!out.exists());
+}
+
+#[test]
+fn write_refuses_an_existing_output_before_it_calls_claude() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("taken.ogg");
+    std::fs::write(dir.path().join("taken.json"), "{}").unwrap();
+    // --via api with no key would fail too, but only after the check.
+    let o = Command::new(bin())
+        .env_remove("ANTHROPIC_API_KEY")
+        .args(["write", "a dry morning", "--via", "api", "-o", out.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("exists") && err.contains("--force"), "{err}");
 }

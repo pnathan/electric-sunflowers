@@ -28,15 +28,14 @@ rust_test(
 )
 
 # Integration tests: run the built `sunflower` binary against
-# tests/small_song.json (env!("CARGO_BIN_EXE_sunflower")).
+# tests/small_song.json. Cargo sets CARGO_BIN_EXE_sunflower itself; here
+# it is the binary's runfiles path, which the test resolves at run time.
 rust_test(
     name = "render_cli",
     srcs = ["tests/render_cli.rs"],
-    data = [
-        "tests/small_song.json",
-        ":sunflower",
-    ],
+    data = glob(["tests/**"]) + [":sunflower"],
     edition = "2021",
+    rustc_env = {"CARGO_BIN_EXE_sunflower": "$(rootpath :sunflower)"},
     deps = SUNFLOWER_LOCAL_DEPS + all_crate_deps(
         normal = True,
         normal_dev = True,

@@ -49,17 +49,29 @@ impl std::fmt::Display for DuetChoice {
     }
 }
 
+/// A duet choice that is not `auto`, `solo` or `duet`. Settings' own
+/// error, not `songwriter::claude::ClaudeError`: this type belongs to
+/// settings, not to the Claude transport.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnknownDuetChoice(pub String);
+
+impl std::fmt::Display for UnknownDuetChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown duet choice {:?} (want auto, solo, duet)", self.0)
+    }
+}
+
+impl std::error::Error for UnknownDuetChoice {}
+
 impl FromStr for DuetChoice {
-    /// A plain message, not `songwriter::claude::ClaudeError`: this type
-    /// belongs to settings, not to the Claude transport.
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, String> {
+    type Err = UnknownDuetChoice;
+    fn from_str(s: &str) -> Result<Self, UnknownDuetChoice> {
         let t = s.trim();
         DuetChoice::ALL
             .iter()
             .copied()
             .find(|d| t.eq_ignore_ascii_case(d.as_str()))
-            .ok_or_else(|| format!("unknown duet choice {s:?} (want auto, solo, duet)"))
+            .ok_or_else(|| UnknownDuetChoice(s.to_string()))
     }
 }
 
@@ -457,6 +469,14 @@ pub fn save(settings: &Settings, path: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn duet_choice_parses_and_names_a_bad_value() {
+        assert_eq!(" Duet ".parse::<DuetChoice>(), Ok(DuetChoice::Duet));
+        let e = "trio".parse::<DuetChoice>().unwrap_err();
+        assert_eq!(e, UnknownDuetChoice("trio".to_string()));
+        assert!(e.to_string().contains("\"trio\""));
+    }
 
     /// Serialises the env-var tests: `config_path` and `expand_home`
     /// read process-global environment state, so tests that set it
