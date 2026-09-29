@@ -16,5 +16,6 @@ actions:
         branches:
           - "*"
     steps:
+      - run: "sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libogg-dev pkg-config"
       - run: "bazel build --config=buildbuddy //..."
       - run: "bazel test --config=buildbuddy //... --test_output=errors"

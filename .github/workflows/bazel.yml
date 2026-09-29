@@ -18,7 +18,7 @@ jobs:
       # alsa-sys (audio playback in the studio) finds ALSA through pkg-config
       # at build time; X11 and GL are loaded at run time, so no headers.
       - name: system libraries
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libogg-dev pkg-config
 
       - uses: bazel-contrib/setup-bazel@0.19.0
         with:
