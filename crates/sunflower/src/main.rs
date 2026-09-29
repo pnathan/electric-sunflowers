@@ -485,14 +485,14 @@ fn resolve_mix(
     defaults: &MixSettings,
 ) -> Result<(MixSettings, Option<PathBuf>)> {
     if mix_args.no_mix {
-        return Ok((defaults.clone(), None));
+        return Ok((*defaults, None));
     }
     let path = match &mix_args.mix {
         Some(p) => Some(p.clone()),
         None => Some(stem_path(out, "mix.json")).filter(|p| p.exists()),
     };
     let Some(path) = path else {
-        return Ok((defaults.clone(), None));
+        return Ok((*defaults, None));
     };
     let text = std::fs::read_to_string(&path)
         .with_context(|| format!("reading mix settings from {}", path.display()))?;
@@ -620,6 +620,9 @@ fn scale(s: &mut engine::Stereo, g: f32) {
 /// Renders `song`, mixes the parts `band` turns on (folding in a mix
 /// sidecar per `mix_args`) and writes `out` in the format its extension
 /// names.
+// Each parameter is a distinct CLI input; grouping them into a struct here
+// would just move the same count into a constructor call at both sites.
+#[allow(clippy::too_many_arguments)]
 fn pipeline(
     song: &Song,
     render: &RenderArgs,
@@ -737,6 +740,9 @@ fn song_meta(song: &Song) -> Meta {
     }
 }
 
+// Each parameter is a distinct CLI input; grouping them into a struct here
+// would just move the same count into a constructor call at both sites.
+#[allow(clippy::too_many_arguments)]
 fn cmd_write(
     mood: &str,
     force: bool,
