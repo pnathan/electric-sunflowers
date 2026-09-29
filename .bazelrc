@@ -31,17 +31,16 @@ build:lint --output_groups=+rustfmt_checks,+clippy_checks
 
 # Format the tree with: bazel run @rules_rust//tools/rustfmt
 
-# --- BuildBuddy (opt-in, disabled): mirrors self-employment/.bazelrc's
-# pattern. This endpoint and any credentials are NOT filled in - fill in
-# this org's BuildBuddy endpoint below and enable with --config=buildbuddy
-# if wanted. A local API key would go in the gitignored .bazelrc.local
+# --- BuildBuddy remote cache and build results (opt in per invocation with
+# --config=buildbuddy), as in self-employment/.bazelrc. The API key lives
+# only in the gitignored .bazelrc.local
 # (common --remote_header=x-buildbuddy-api-key=<key>), never here.
-# build:buildbuddy --bes_results_url=https://<org>.buildbuddy.io/invocation/
-# build:buildbuddy --bes_backend=grpcs://<org>.buildbuddy.io
-# build:buildbuddy --remote_cache=grpcs://<org>.buildbuddy.io
-# build:buildbuddy --remote_timeout=10m
-# build:buildbuddy --remote_cache_compression
-# build:buildbuddy --remote_upload_local_results
+build:buildbuddy --bes_results_url=https://beitnatan.buildbuddy.io/invocation/
+build:buildbuddy --bes_backend=grpcs://beitnatan.buildbuddy.io
+build:buildbuddy --remote_cache=grpcs://beitnatan.buildbuddy.io
+build:buildbuddy --remote_timeout=10m
+build:buildbuddy --remote_cache_compression
+build:buildbuddy --remote_upload_local_results
 
 # A gitignored file for anything that must not be committed: a local
 # BuildBuddy API key (see above), or other machine-specific overrides.
