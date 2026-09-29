@@ -1,9 +1,10 @@
 --- a/build.rs	2026-09-29 05:21:19.815261715 +0000
-+++ b/build.rs	2026-09-29 05:21:19.818025820 +0000
-@@ -1,12 +1,20 @@
++++ b/build.rs	2026-09-29 05:24:56.434895768 +0000
+@@ -1,12 +1,34 @@
 -use std::env::current_dir;
 +use std::env;
-+use std::path::PathBuf;
++use std::fs;
++use std::path::{Path, PathBuf};
 +
 +// Bazel's cargo_build_script does not run build scripts with the crate's
 +// manifest directory as the process cwd (unlike Cargo), so `current_dir()`
@@ -12,6 +13,19 @@
 +// CARGO_MANIFEST_DIR is set correctly by both Cargo and rules_rust.
 +fn manifest_dir() -> PathBuf {
 +	PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"))
++}
++
++fn copy_dir_recursive(src: &Path, dst: &Path) {
++	fs::create_dir_all(dst).expect("could not create directory");
++	for entry in fs::read_dir(src).expect("could not read directory") {
++		let entry = entry.expect("could not read directory entry");
++		let dst_path = dst.join(entry.file_name());
++		if entry.file_type().expect("could not read file type").is_dir() {
++			copy_dir_recursive(&entry.path(), &dst_path);
++		} else {
++			fs::copy(entry.path(), &dst_path).expect("could not copy file");
++		}
++	}
 +}
  
  #[cfg(feature = "build-time-bindgen")]
@@ -25,3 +39,23 @@
  
  	println!(
  		"cargo:rerun-if-changed={}",
+@@ -14,7 +36,18 @@
+ 	);
+ 
+ 	let include_path = ogg_vendor_path.join("include");
+-	println!("cargo:include={}", include_path.to_str().unwrap());
++
++	// rules_rust propagates a DEP_<LINKS>_* variable (here DEP_OGG_INCLUDE,
++	// read by aotuv_lancer_vorbis_sys's build.rs) to a downstream build
++	// script's sandbox only when it points inside this crate's OUT_DIR (a
++	// Bazel-declared, cross-action artifact); a path under the source tree,
++	// even a correct CARGO_MANIFEST_DIR-relative one, is not wired as an
++	// input there. Copy the small vendored header set into OUT_DIR and
++	// advertise that copy instead; identical, harmless, under Cargo.
++	let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR not set"));
++	let out_include = out_dir.join("include");
++	copy_dir_recursive(&include_path, &out_include);
++	println!("cargo:include={}", out_include.to_str().unwrap());
+ 
+ 	#[cfg(feature = "build-time-bindgen")]
+ 	bindgen::Builder::default()

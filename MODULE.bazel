@@ -50,14 +50,15 @@ crate.annotation(
     patches = ["//patches:aotuv_lancer_vorbis_sys-manifest-dir.patch"],
 )
 
-# ogg_next_sys's build.rs has the identical std::env::current_dir() bug (see
-# above): under Bazel it prints `cargo:include=<execroot>/ogg_vendor/include`
-# instead of the crate's own manifest-relative path. aotuv_lancer_vorbis_sys
-# reads that value as DEP_OGG_INCLUDE to compile mdct.c and the rest of
-# libvorbis against libogg's headers, so the bad path broke that build
-# ("ogg/ogg.h: No such file or directory") even though ogg_next_sys's own
-# cc::Build step (compiling its own bitwise.c/framing.c) happened to still
-# work. Patched the same way, with CARGO_MANIFEST_DIR.
+# ogg_next_sys's build.rs has the same std::env::current_dir() bug (see
+# above), which its patch alone does not fix: aotuv_lancer_vorbis_sys reads
+# ogg_next_sys's `cargo:include=` line as DEP_OGG_INCLUDE, to compile mdct.c
+# and the rest of libvorbis against libogg's headers, and rules_rust's
+# cargo_build_script only wires an upstream build script's OUT_DIR into a
+# downstream build script's sandbox, not its source tree (even a correctly
+# CARGO_MANIFEST_DIR-based path under it). Patched to also copy the vendored
+# ogg_vendor/include headers into OUT_DIR and advertise that copy; harmless,
+# identical, under Cargo.
 crate.annotation(
     crate = "ogg_next_sys",
     patch_args = ["-p1"],
