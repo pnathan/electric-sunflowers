@@ -111,6 +111,26 @@ fn lead_sheet_is_byte_identical_to_before_this_wave() {
     assert_eq!(got, LEAD_SHEET_SHA256, "lead sheet SVG changed; wave 1 must not touch its bytes");
 }
 
+/// The demo full score (seed 1234), captured with `cargo run --release -p
+/// notation --example fullscore -- 1234` before wave 3's polish pass
+/// (`StaffDef.name`/`.abbrev` becoming owned `String`; `LeadB` lyrics):
+/// neither change may touch a solo song's full-score bytes, since both
+/// only add behavior gated on a duet (`song.is_duet()`, or a `LeadB`
+/// staff that a solo song never has).
+const FULL_SCORE_SHA256: &str = "1409cb24d8f8cb535d3cdac726287efa3d812752430f883e1e16e53580632459";
+
+#[test]
+fn solo_full_score_is_byte_identical_to_before_wave_3_polish() {
+    let song = demo();
+    let prep = prepare(&song, 1234, None);
+    let arr = arrange(&song, &prep, 1234);
+    let full = FullScore::new(&song, &prep, &arr);
+    let page = Sheet::Full(full).page(notation::DEFAULT_WIDTH);
+    let got = sha256_hex(page.svg.as_bytes());
+    assert_eq!(got.len(), 64, "digest length");
+    assert_eq!(got, FULL_SCORE_SHA256, "full score SVG changed for a solo song; wave 3's polish pass must not touch its bytes");
+}
+
 #[test]
 fn full_score_parses_and_has_a_staff_per_score_staff() {
     let song = demo();

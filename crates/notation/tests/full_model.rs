@@ -3,10 +3,10 @@
 //! multi-rests.
 
 use arrange::arrange;
-use compose::prepare::prepare;
+use compose::prepare::{prepare, prepare_voices, VoiceChoice};
 use compose::timeline::Timeline;
 use notation::full::{Clef, FullScore, Notehead, PartBar, PartId};
-use song::Song;
+use song::{SingerId, Song};
 
 fn song_of(json: serde_json::Value) -> Song {
     song::normalize_value(&json).expect("fixture normalises").0
@@ -14,6 +14,16 @@ fn song_of(json: serde_json::Value) -> Song {
 
 fn demo() -> Song {
     engine::demo_song().clone()
+}
+
+/// The wave-3 duet fixture (also used by `tests/duet.rs`).
+fn duet_song() -> Song {
+    let raw: serde_json::Value =
+        serde_json::from_str(include_str!("../../compose/tests/songs/duet.json")).expect("duet.json is JSON");
+    let (s, repairs) = song::normalize_value(&raw).expect("duet fixture normalises");
+    assert!(repairs.is_empty(), "{repairs:?}");
+    assert!(s.is_duet());
+    s
 }
 
 /// The demo song's JSON, for tests that flip a `band` flag.
@@ -266,6 +276,42 @@ fn staves_absent_when_the_band_is_off() {
     // Lead and guitar always play.
     assert!(score.staves.iter().any(|s| s.part == PartId::Lead));
     assert!(score.staves.iter().any(|s| s.part == PartId::Guitar));
+}
+
+/// The LeadB staff's notes carry singer B's own syllables (design 4.6/6.1),
+/// sourced from `Prepared.comp.lead`/`comp.second` (`compose::melody::
+/// LeadNote`), not from `song::events::VocalNote` (which has no lyric
+/// text): every syllable text drawn on the LeadB staff must be one of B's
+/// own syllables, and at least one is drawn.
+#[test]
+fn lead_b_carries_its_own_lyric_syllables() {
+    let song = duet_song();
+    let prep = prepare_voices(&song, 3, VoiceChoice::default());
+    let arr = arrange(&song, &prep, 3);
+    let score = FullScore::new(&song, &prep, &arr);
+    let idx = score.staves.iter().position(|s| s.part == PartId::LeadB).expect("LeadB staff present in a duet");
+
+    let expected: std::collections::HashSet<&str> = prep
+        .comp
+        .lead
+        .iter()
+        .chain(prep.comp.second.iter())
+        .filter(|n| n.singer == SingerId::B)
+        .map(|n| n.syl.text.as_str())
+        .collect();
+
+    let mut found = 0;
+    for bar in &score.bars {
+        for voice in &bar.cells[idx].voices {
+            for e in voice {
+                if let Some(l) = e.chord.as_ref().and_then(|c| c.lyric.as_deref()) {
+                    assert!(expected.contains(l), "unexpected LeadB syllable {l:?}");
+                    found += 1;
+                }
+            }
+        }
+    }
+    assert!(found > 0, "no lyric syllables drawn on the LeadB staff");
 }
 
 #[test]

@@ -8,10 +8,10 @@
 
 use compose::form::Form;
 use compose::melody::LeadNote;
-use compose::prepare::{prepare, Prepared};
+use compose::prepare::{prepare_voices, Prepared, VoiceChoice};
 use compose::timeline::Timeline;
 use serde::Serialize;
-use song::{Meter, Mode, SectionKind, Song, Voice};
+use song::{Meter, Mode, Part, SectionKind, SingerId, Song, Voice};
 
 /// Tolerance in beats when matching a chord onset to a note.
 const EPS: f64 = 1e-6;
@@ -36,6 +36,8 @@ pub struct SongSheet {
     /// Beats per minute before the final ritard.
     pub tempo: f64,
     pub voice: Voice,
+    /// Singer B's voice; `None` outside a duet.
+    pub voice_b: Option<Voice>,
     pub seed: u64,
     /// Length of the rendered audio in seconds, tail included.
     pub duration_s: f64,
@@ -84,6 +86,34 @@ pub struct SheetLine {
     pub words: Vec<SheetWord>,
     /// In time order.
     pub chords: Vec<SheetChord>,
+    /// Which singer(s) carry this line; `None` for an instrumental
+    /// section's chord line.
+    pub singer: Option<SheetPart>,
+}
+
+/// A lyric line's singer(s) (design 4.6): `part` is `"A"`, `"B"` or
+/// `"both"`; `melody` is whichever of `"A"`/`"B"` carries the tune; `label`
+/// names the voice(s), e.g. "Baritone" or "Baritone + Alto".
+#[derive(Clone, Debug, Serialize)]
+pub struct SheetPart {
+    pub part: String,
+    pub melody: String,
+    pub label: String,
+}
+
+/// `part`'s `SheetPart`, `voice_a`/`voice_b` naming each singer's voice.
+fn sheet_part(part: Part, voice_a: Voice, voice_b: Option<Voice>) -> SheetPart {
+    let voice_of = |id: SingerId| if id == SingerId::A { voice_a } else { voice_b.unwrap_or(voice_a) };
+    match part {
+        Part::Solo(id) => {
+            SheetPart { part: id.as_str().to_string(), melody: id.as_str().to_string(), label: capitalize(voice_of(id).as_str()) }
+        }
+        Part::Both { melody, .. } => SheetPart {
+            part: "both".to_string(),
+            melody: melody.as_str().to_string(),
+            label: format!("{} + {}", capitalize(voice_of(SingerId::A).as_str()), capitalize(voice_of(SingerId::B).as_str())),
+        },
+    }
 }
 
 /// One sung syllable.
@@ -130,9 +160,16 @@ pub struct SheetChord {
 }
 
 /// The sheet of `song` rendered with `seed` and `voice` (`None` keeps the
-/// song's voice). Same preparation as `render`, so the times match.
+/// song's voice). Same preparation as `render`, so the times match. A thin
+/// shim over `song_sheet_with` with `VoiceChoice { a: voice, b: None }`.
 pub fn song_sheet(song: &Song, seed: u64, voice: Option<Voice>) -> SongSheet {
-    let p = prepare(song, seed, voice);
+    song_sheet_with(song, seed, VoiceChoice { a: voice, b: None })
+}
+
+/// `song_sheet`, choosing both singers' voices (`voice.b` ignored outside
+/// a duet; see `VoiceChoice`).
+pub fn song_sheet_with(song: &Song, seed: u64, voice: VoiceChoice) -> SongSheet {
+    let p = prepare_voices(song, seed, voice);
     sheet_from(song, seed, &p)
 }
 
@@ -174,7 +211,9 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
                 .map(|(li, l)| {
                     let lb0 = l.start_bar * bpb;
                     let lb1 = (l.start_bar + l.n_bars) * bpb;
-                    sung_line(form, tl, si, sec.start_bar, l.syls.as_slice(), &notes[li], lb0, lb1)
+                    let mut line = sung_line(form, tl, si, sec.start_bar, l.syls.as_slice(), &notes[li], lb0, lb1);
+                    line.singer = Some(sheet_part(l.part, p.voice, p.voice_b));
+                    line
                 })
                 .collect()
         } else {
@@ -186,6 +225,7 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
                 syllables: Vec::new(),
                 words: Vec::new(),
                 chords: chords.into_iter().map(|(c, _)| c).collect(),
+                singer: None,
             }]
         };
         let kind_name = capitalize(sec.kind.as_str());
@@ -220,6 +260,7 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
         meter: song.meter,
         tempo: song.tempo_bpm,
         voice: p.voice,
+        voice_b: p.voice_b,
         seed,
         duration_s: tl.end,
         sections,
@@ -314,7 +355,7 @@ fn sung_line(
 
     let t0 = syllables.first().map_or(bar_t0, |s| s.t0.min(bar_t0));
     let t1 = syllables.last().map_or(bar_t1, |s| s.t1.max(bar_t1));
-    SheetLine { t0, t1, text, syllables, words, chords }
+    SheetLine { t0, t1, text, syllables, words, chords, singer: None }
 }
 
 /// Char offset for a chord onset at beat `b`: the syllable whose note
@@ -380,6 +421,12 @@ impl SongSheet {
                     out.push_str(chords.trim_end());
                     out.push('\n');
                 }
+                let prefix = match (self.voice_b.is_some(), line.singer.as_ref().map(|s| s.part.as_str())) {
+                    (true, Some("B")) => "[B] ",
+                    (true, Some("both")) => "[A+B] ",
+                    _ => "",
+                };
+                out.push_str(prefix);
                 out.push_str(lyric.trim_end());
                 out.push('\n');
             }
@@ -431,7 +478,7 @@ mod tests {
     }
 
     fn line(text: &str, chords: Vec<SheetChord>) -> SheetLine {
-        SheetLine { t0: 0.0, t1: 1.0, text: text.into(), syllables: Vec::new(), words: Vec::new(), chords }
+        SheetLine { t0: 0.0, t1: 1.0, text: text.into(), syllables: Vec::new(), words: Vec::new(), chords, singer: None }
     }
 
     #[test]

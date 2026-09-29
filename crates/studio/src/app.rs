@@ -12,6 +12,7 @@ use crate::audio::{Output, Track};
 use crate::jobs::{self, Job, Loaded, RenderPlan, Via, WritePlan};
 use crate::library::{self, Entry, Source};
 use crate::lyrics::{clock, LyricsView};
+use crate::mixer::{self, MixerPanel, StemCache};
 use crate::settings_panel::SettingsForm;
 use crate::sheetview::SheetView;
 
@@ -65,12 +66,27 @@ pub struct Options {
     pub volume: f32,
     /// Open the new-song form at start.
     pub new_song: bool,
+    /// Open the mixer at start.
+    pub mixer: bool,
 }
 
 /// A render or a write running in the background.
 enum Work {
-    Render { job: Job<PathBuf>, stem: PathBuf, select: bool },
-    Write { job: Job<PathBuf> },
+    Render { job: Job<jobs::Rendered>, stem: PathBuf, seed: u64, select: bool },
+    Write { job: Job<jobs::Written>, seed: u64 },
+}
+
+/// The result of a finished `Work`.
+enum Finished {
+    Rendered(jobs::Rendered),
+    Written(jobs::Written),
+}
+
+/// A mixer job: stems for the song at `stem`, or a re-mix of them.
+struct MixJob<T> {
+    stem: PathBuf,
+    seed: u64,
+    job: Job<T>,
 }
 
 /// The new-song form.
@@ -129,6 +145,11 @@ pub struct StudioApp {
     take: TakeForm,
     settings: settings::Settings,
     settings_form: SettingsForm,
+    mixer: MixerPanel,
+    /// The stems of the open song, once a render or a stems job made them.
+    stems: Option<StemCache>,
+    stems_job: Option<MixJob<Arc<engine::Stems>>>,
+    remix_job: Option<MixJob<jobs::Remixed>>,
     step: Step,
     start: std::time::Instant,
 }
@@ -184,10 +205,15 @@ impl StudioApp {
             take: TakeForm { open: false, seed: String::new(), voice: None },
             settings,
             settings_form: SettingsForm::new(),
+            mixer: MixerPanel::new(),
+            stems: None,
+            stems_job: None,
+            remix_job: None,
             step: if opt.screenshot.is_some() || opt.play > 0.0 || opt.seek.is_some() { Step::WaitReady } else { Step::Done },
             start: std::time::Instant::now(),
             opt,
         };
+        app.mixer.open = app.opt.mixer;
         if let Err(e) = std::fs::create_dir_all(&app.opt.dir) {
             app.errors.push(format!("cannot create the library {}: {e}", app.opt.dir.display()));
         }
@@ -236,12 +262,18 @@ impl StudioApp {
     fn select(&mut self, ctx: &egui::Context, i: usize) {
         let Some(entry) = self.entries.get(i).cloned() else { return };
         self.selected = Some(i);
+        self.flush_mix();
         self.track = None;
         self.audio_error = None;
         self.loaded = None;
         self.sheet = None;
         self.info = None;
         self.lyrics = LyricsView::new();
+        // Stems are large (hundreds of MB): keep them only for this song.
+        if self.stems.as_ref().is_some_and(|c| c.stem != entry.stem) {
+            self.stems = None;
+        }
+        self.mixer.reset_for(&entry.stem, entry.audio.as_deref());
         eprintln!("studio: opening {}", entry.name);
         self.load = Some(Job::spawn(ctx, "Composing the melody", move |_| jobs::load(entry)));
     }
@@ -299,10 +331,12 @@ impl StudioApp {
             }
         };
         let plan = RenderPlan { song: l.song.clone(), seed, voice, stem: stem.clone(), song_json, model: None };
+        // The render reads <stem>.mix.json; make it current first.
+        self.flush_mix();
         self.tried.push(stem.clone());
         eprintln!("studio: rendering {} (seed {})", stem.display(), plan.seed);
         let job = Job::spawn(ctx, "Rendering", move |rep| jobs::render(&plan, rep));
-        self.work = Some(Work::Render { job, stem, select: take });
+        self.work = Some(Work::Render { job, stem, seed, select: take });
     }
 
     /// Starts rendering the loaded song. `take` renders to a new stem
@@ -338,7 +372,7 @@ impl StudioApp {
             seed,
         };
         eprintln!("studio: writing a song (seed {seed})");
-        self.work = Some(Work::Write { job: Job::spawn(ctx, "Claude is writing the song", move |rep| jobs::write(&plan, rep)) });
+        self.work = Some(Work::Write { job: Job::spawn(ctx, "Claude is writing the song", move |rep| jobs::write(&plan, rep)), seed });
         self.new_song.open = false;
     }
 
@@ -353,6 +387,11 @@ impl StudioApp {
                         eprintln!("studio: {n}");
                     }
                     self.sheet = Some(SheetView::new(sheet_of(self.sheet_kind, &l), self.svg_opt.clone()));
+                    // With the seed unknown, stems would be another take:
+                    // play the file until the user opens the mixer.
+                    if !l.seed_known {
+                        self.mixer.auto_load = false;
+                    }
                     self.loaded = Some(l);
                     self.open_audio();
                 }
@@ -366,15 +405,18 @@ impl StudioApp {
             }
         }
         let done = match &self.work {
-            Some(Work::Render { job, .. }) => job.poll(),
-            Some(Work::Write { job }) => job.poll(),
+            Some(Work::Render { job, .. }) => job.poll().map(|r| r.map(Finished::Rendered)),
+            Some(Work::Write { job, .. }) => job.poll().map(|r| r.map(Finished::Written)),
             None => None,
         };
         if let Some(r) = done {
             let work = self.work.take();
             match (work, r) {
-                (Some(Work::Render { stem, select, job }), Ok(path)) => {
-                    eprintln!("studio: rendered {} in {:.1} s", path.display(), job.elapsed());
+                (Some(Work::Render { stem, seed, select, job }), Ok(Finished::Rendered(rendered))) => {
+                    eprintln!("studio: rendered {} in {:.1} s", rendered.audio.display(), job.elapsed());
+                    if select || self.loaded.as_ref().is_some_and(|l| l.entry.stem == stem) {
+                        self.stems = Some(StemCache { stem: stem.clone(), seed, stems: rendered.stems });
+                    }
                     self.rescan();
                     if select {
                         if let Some(i) = self.entries.iter().position(|e| e.stem == stem) {
@@ -384,18 +426,141 @@ impl StudioApp {
                         l.entry.refresh();
                         l.seed_known = true;
                         self.open_audio();
+                        // The file holds the mix the sidecar had when the
+                        // render began; edits made since need a re-mix.
+                        let had = self.mixer.attached();
+                        self.attach_stems();
+                        if had {
+                            self.mixer.touch_now_due(std::time::Instant::now());
+                        }
                     }
                 }
-                (Some(Work::Write { job }), Ok(json)) => {
-                    eprintln!("studio: wrote {} in {:.1} s", json.display(), job.elapsed());
+                (Some(Work::Write { job, seed }), Ok(Finished::Written(w))) => {
+                    eprintln!("studio: wrote {} in {:.1} s", w.json.display(), job.elapsed());
+                    self.stems = Some(StemCache { stem: w.stem, seed, stems: w.rendered.stems });
                     self.rescan();
-                    let i = self.find_or_add(&json);
+                    let i = self.find_or_add(&w.json);
                     self.select(ctx, i);
                 }
                 (Some(Work::Render { .. }), Err(e)) => self.errors.push(format!("render failed: {e}")),
                 (Some(Work::Write { .. }), Err(e)) => self.errors.push(format!("new song failed: {e}")),
-                (None, _) => {}
+                (_, Ok(_)) | (None, Err(_)) => {}
             }
+        }
+        self.poll_mixer(ctx);
+    }
+
+    /// Hands cached stems for the loaded song to the mixer window.
+    /// Returns what `MixerPanel::attach` returns, or `None` without stems.
+    fn attach_stems(&mut self) -> Option<bool> {
+        let l = self.loaded.as_ref()?;
+        let c = self.stems.as_ref().filter(|c| c.stem == l.entry.stem)?;
+        if self.mixer.stem() != Some(l.entry.stem.as_path()) {
+            return None;
+        }
+        Some(self.mixer.attach(&c.stems, &l.song.band))
+    }
+
+    /// Writes pending mixer edits to `<stem>.mix.json` now.
+    fn flush_mix(&mut self) {
+        if self.mixer.dirty() {
+            if let Err(e) = self.mixer.save() {
+                self.errors.push(format!("could not save the mix: {e}"));
+            }
+        }
+    }
+
+    /// The mixer's jobs: loads stems when the window (or a saved mix)
+    /// needs them, starts a re-mix once edits settle, and plays each
+    /// finished re-mix.
+    fn poll_mixer(&mut self, ctx: &egui::Context) {
+        let now = std::time::Instant::now();
+        // Finished stems.
+        if let Some(r) = self.stems_job.as_ref().and_then(|j| j.job.poll()) {
+            let MixJob { stem, seed, job } = self.stems_job.take().expect("polled");
+            let current = self.loaded.as_ref().is_some_and(|l| l.entry.stem == stem);
+            match r {
+                Ok(stems) if current => {
+                    eprintln!("studio: stems for {} in {:.1} s", stem.display(), job.elapsed());
+                    self.stems = Some(StemCache { stem, seed, stems });
+                    // Play the sidecar's mix: the file may not hold it.
+                    if self.attach_stems() == Some(true) {
+                        self.mixer.touch_now_due(now);
+                    }
+                }
+                Ok(_) => {}
+                Err(e) if current => {
+                    self.mixer.stems_failed = true;
+                    self.mixer.auto_load = false;
+                    self.errors.push(format!("could not load stems for the mixer: {e}"));
+                }
+                Err(_) => {}
+            }
+        }
+        // Finished re-mix.
+        if let Some(r) = self.remix_job.as_ref().and_then(|j| j.job.poll()) {
+            let MixJob { stem, job, .. } = self.remix_job.take().expect("polled");
+            let current = self.loaded.as_ref().is_some_and(|l| l.entry.stem == stem);
+            match r {
+                Ok(m) if current => {
+                    eprintln!("studio: re-mix in {:.2} s (mix {:.2} s)", job.elapsed(), m.mix_s);
+                    self.play_remix(m.buf);
+                }
+                Ok(_) => {}
+                Err(e) => self.errors.push(format!("re-mix failed: {e}")),
+            }
+        }
+        let Some(l) = &self.loaded else { return };
+        let have = self.stems.as_ref().is_some_and(|c| c.stem == l.entry.stem);
+        if have && !self.mixer.attached() {
+            self.attach_stems();
+        }
+        let Some(l) = &self.loaded else { return };
+        // Stems for the window, or for a saved mix to play.
+        let want = (self.mixer.open || self.mixer.auto_load) && !self.mixer.stems_failed;
+        if want && !have && self.stems_job.is_none() && self.work.is_none() {
+            let (song, seed, voice, stem) = (l.song.clone(), l.seed, l.voice, l.entry.stem.clone());
+            eprintln!("studio: loading stems for {} (seed {seed})", stem.display());
+            let job = Job::spawn(ctx, "Loading stems for the mixer", move |rep| Ok(jobs::stems(&song, seed, voice, rep)));
+            self.stems_job = Some(MixJob { stem, seed, job });
+            return;
+        }
+        // A re-mix once the edits have settled; one at a time.
+        if !have || self.remix_job.is_some() {
+            return;
+        }
+        let Some(settings) = self.mixer.take_due(now) else { return };
+        if let Err(e) = self.mixer.save() {
+            self.errors.push(format!("could not save the mix: {e}"));
+        }
+        let c = self.stems.as_ref().expect("have");
+        let (stems, seed, stem, band) = (c.stems.clone(), c.seed, c.stem.clone(), l.song.band);
+        let job = Job::spawn(ctx, "Re-mixing", move |_| Ok(jobs::remix(&stems, &band, seed, &settings)));
+        self.remix_job = Some(MixJob { stem, seed, job });
+    }
+
+    /// Swaps playback to a re-mix at the current position, keeping play
+    /// or pause.
+    fn play_remix(&mut self, buf: rodio::buffer::SamplesBuffer) {
+        if self.output.is_none() {
+            self.output = Some(Output::open());
+        }
+        let out = match self.output.as_ref() {
+            Some(Ok(out)) => out,
+            Some(Err(e)) => {
+                self.audio_error = Some(e.clone());
+                return;
+            }
+            None => return,
+        };
+        match Track::take_over(out, self.track.as_ref(), buf, self.opt.volume) {
+            Ok(t) => {
+                eprintln!("studio: playing the re-mix from {:.3} s (playing={})", t.position(), t.playing());
+                // The old player stops when dropped here, after the new one runs.
+                self.track = Some(t);
+                self.audio_error = None;
+            }
+            Err(e) => self.errors.push(format!("could not play the re-mix: {e}")),
         }
     }
 
@@ -491,6 +656,9 @@ impl StudioApp {
             if ui.button("Settings...").clicked() {
                 self.settings_form.open_from(&self.settings);
             }
+            if ui.add_enabled(self.loaded.is_some(), egui::Button::new("Mixer...")).clicked() {
+                self.mixer.open = true;
+            }
             ui.separator();
             ui.selectable_value(&mut self.view, View::Lyrics, "Lyrics & chords");
             ui.selectable_value(&mut self.view, View::Sheet, "Sheet music");
@@ -523,7 +691,7 @@ impl StudioApp {
         // Jobs.
         let status = match &self.work {
             Some(Work::Render { job, .. }) => Some((job.status(), job.elapsed())),
-            Some(Work::Write { job }) => Some((job.status(), job.elapsed())),
+            Some(Work::Write { job, .. }) => Some((job.status(), job.elapsed())),
             None => None,
         };
         if let Some((st, el)) = status {
@@ -544,6 +712,13 @@ impl StudioApp {
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(j.status().stage);
+            });
+        }
+        if let Some(j) = &self.stems_job {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                let st = j.job.status();
+                ui.label(format!("{}  ({:.0} s)", st.stage, j.job.elapsed()));
             });
         }
         let mut dismiss = None;
@@ -800,6 +975,38 @@ impl StudioApp {
         }
     }
 
+    fn mixer_window(&mut self, ctx: &egui::Context) {
+        if !self.mixer.open {
+            return;
+        }
+        let Some(l) = &self.loaded else {
+            let info = mixer::Info { status: mixer::Status::NoStems, lead_voice: "", seed_known: true };
+            self.mixer.ui(ctx, &info);
+            return;
+        };
+        let have = self.stems.as_ref().is_some_and(|c| c.stem == l.entry.stem);
+        let status = if have {
+            mixer::Status::Ready { remixing: self.remix_job.is_some() }
+        } else if let Some(j) = &self.stems_job {
+            let st = j.job.status();
+            mixer::Status::Loading { stage: st.stage, frac: st.frac }
+        } else if matches!(&self.work, Some(Work::Render { stem, .. }) if *stem == l.entry.stem) {
+            mixer::Status::WaitRender
+        } else if self.mixer.stems_failed {
+            mixer::Status::NoStems
+        } else {
+            // `poll_mixer` starts the stems job on the next frame, or once
+            // the running render or write ends.
+            ctx.request_repaint();
+            let stage = if self.work.is_some() { "Waiting for the running job" } else { "Starting" };
+            mixer::Status::Loading { stage: stage.into(), frac: None }
+        };
+        let info = mixer::Info { status, lead_voice: l.sheet.voice.label(), seed_known: l.seed_known };
+        if self.mixer.ui(ctx, &info) == mixer::Ask::RetryStems {
+            self.mixer.stems_failed = false;
+        }
+    }
+
     /// Advances the scripted run.
     fn script(&mut self, ctx: &egui::Context) {
         let t = self.start.elapsed().as_secs_f64();
@@ -818,7 +1025,11 @@ impl StudioApp {
                 } else {
                     let sheet_ready = self.view == View::Lyrics || self.sheet.as_ref().is_some_and(SheetView::ready);
                     let audio_ready = self.track.is_some() || self.audio_error.is_some();
-                    self.loaded.is_some() && sheet_ready && audio_ready && self.work.is_none()
+                    // Mixer work (stems for an open mixer or a saved mix,
+                    // then its re-mix) is done.
+                    let mixer_idle = self.stems_job.is_none() && self.remix_job.is_none() && !self.mixer.dirty() && !self.mixer.auto_load;
+                    let mixer_ready = mixer_idle && (!self.mixer.open || self.mixer.attached() || self.mixer.stems_failed);
+                    self.loaded.is_some() && sheet_ready && audio_ready && self.work.is_none() && mixer_ready
                 };
                 if ready {
                     if let Some(s) = self.opt.seek {
@@ -883,6 +1094,17 @@ impl StudioApp {
     }
 }
 
+impl Drop for StudioApp {
+    /// Saves mixer edits made within the last `mixer::DEBOUNCE`.
+    fn drop(&mut self) {
+        if self.mixer.dirty() {
+            if let Err(e) = self.mixer.save() {
+                eprintln!("studio: could not save the mix: {e}");
+            }
+        }
+    }
+}
+
 fn save_png(img: &egui::ColorImage, path: &Path) -> Result<(), String> {
     let [w, h] = img.size;
     let mut data = Vec::with_capacity(w * h * 4);
@@ -914,9 +1136,13 @@ impl eframe::App for StudioApp {
         if let Some(s) = self.settings_form.ui(&ctx) {
             self.settings = s;
         }
+        self.mixer_window(&ctx);
         self.script(&ctx);
-        if self.playing() || self.work.is_some() || self.load.is_some() {
+        if self.playing() || self.work.is_some() || self.load.is_some() || self.stems_job.is_some() || self.remix_job.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
+        } else if self.mixer.dirty() {
+            // Wake up when the debounce runs out.
+            ctx.request_repaint_after(mixer::DEBOUNCE);
         }
     }
 }
