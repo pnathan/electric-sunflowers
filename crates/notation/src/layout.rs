@@ -3,8 +3,10 @@
 
 use std::fmt::Write as _;
 
+use crate::drawn;
 use crate::glyphs::{self, Glyph};
 use crate::score::{Event, Measure, NoteEv, Score};
+use song::SingerId;
 
 /// Staff space in px.
 pub(crate) const SP: f64 = 8.0;
@@ -205,6 +207,10 @@ pub(crate) fn layout(score: &Score) -> Page {
     let mut body = String::new();
     let mut notes_out: Vec<TimedBox> = Vec::new();
     let mut sys_out: Vec<TimedBox> = Vec::new();
+    // First appearance of each duet singer's system label (design 4.8):
+    // full the first time, short after.
+    let mut seen_a = false;
+    let mut seen_b = false;
 
     // Title, tempo mark, caption.
     let mut cursor = MARGIN;
@@ -238,6 +244,17 @@ pub(crate) fn layout(score: &Score) -> Page {
             (avail / natural).min(2.0)
         };
 
+        // A shared line (design 4.8): a second staff is drawn below the
+        // melody staff's lyric row, with its own lyric row under it. Never
+        // true outside a duet. `swap_staves` routes the physically higher
+        // staff (drawn first, at the system's top) to whichever singer's
+        // range centre is higher (`Measure::melody_on_top`), so the melody
+        // is drawn on top only when it is also the higher singer; a
+        // non-shared bar always keeps the melody on top (there is nothing
+        // to swap it with).
+        let is_shared = score.duet && ms[first].shared;
+        let swap_staves = is_shared && !ms[first].melody_on_top;
+
         // Horizontal placement.
         let mut pns: Vec<Pn> = Vec::new();
         let mut rests: Vec<(f64, &Event)> = Vec::new();
@@ -247,7 +264,8 @@ pub(crate) fn layout(score: &Score) -> Page {
             let mw = nat[first + k].0 * scale;
             mx.push((x, mw));
             let mut ex = x + PAD_L * scale;
-            for (e, &(lo, w)) in m.events.iter().zip(&nat[first + k].1) {
+            let top_events = if swap_staves { &m.second } else { &m.events };
+            for (e, &(lo, w)) in top_events.iter().zip(&nat[first + k].1) {
                 match &e.note {
                     Some(n) => pns.push(Pn {
                         ev: e,
@@ -344,7 +362,8 @@ pub(crate) fn layout(score: &Score) -> Page {
         let y_label = y_chord - 2.2 * SP;
         let y_lyric = (7.4 * SP).max(bot + 2.2 * SP);
         let sys_top = if has_label { y_label - 1.8 * SP } else { y_chord - 2.0 * SP };
-        let sys_bot = y_lyric + 1.4 * SP;
+        let y2 = y_lyric + 3.0 * SP;
+        let sys_bot = if is_shared { y2 + 4.0 * SP + 3.6 * SP } else { y_lyric + 1.4 * SP };
         let oy = cursor - sys_top;
 
         let t0 = ms[first].t0;
@@ -357,7 +376,8 @@ pub(crate) fn layout(score: &Score) -> Page {
         for l in 0..5 {
             line(&mut s, MARGIN, l as f64 * SP, sys_end, l as f64 * SP, 0.13 * SP);
         }
-        glyph(&mut s, if score.clef8 { &glyphs::G_CLEF8VB } else { &glyphs::G_CLEF }, MARGIN + 0.5 * SP, 3.0 * SP, 1.0);
+        let clef8 = if swap_staves { ms[first].second_clef8 } else { ms[first].clef8 };
+        glyph(&mut s, if clef8 { &glyphs::G_CLEF8VB } else { &glyphs::G_CLEF }, MARGIN + 0.5 * SP, 3.0 * SP, 1.0);
         let mut hx = MARGIN + 3.6 * SP;
         let (steps, acc) = if score.fifths > 0 {
             ([38, 35, 39, 36, 33, 37, 34], &glyphs::ACCIDENTAL_SHARP)
@@ -378,6 +398,39 @@ pub(crate) fn layout(score: &Score) -> Page {
             for (d, y) in [(num, SP), (den, 3.0 * SP)] {
                 let g = &glyphs::TIME_SIG[d];
                 glyph(&mut s, g, tx - glyph_w(g) * 0.5, y, 1.0);
+            }
+        }
+
+        // Duet system label ("A (Baritone)", "B", "A+B"): the melody
+        // singer of this system's line, first full then short, or "A+B"
+        // on a shared line. Never drawn outside a duet, so a solo song's
+        // SVG is unchanged.
+        if score.duet {
+            let m0 = &ms[first];
+            let lbl = if m0.shared {
+                Some("A+B".to_string())
+            } else {
+                m0.singer.map(|sid| match sid {
+                    SingerId::A => {
+                        if seen_a {
+                            "A".to_string()
+                        } else {
+                            seen_a = true;
+                            format!("A ({})", score.voice_a.label())
+                        }
+                    }
+                    SingerId::B => {
+                        if seen_b {
+                            "B".to_string()
+                        } else {
+                            seen_b = true;
+                            format!("B ({})", score.voice_b.map_or("", song::Voice::label))
+                        }
+                    }
+                })
+            };
+            if let Some(lbl) = lbl {
+                text(&mut s, MARGIN, y_label, LABEL_PX, "start", r#" font-weight="bold""#, &esc(&lbl));
             }
         }
 
@@ -568,10 +621,103 @@ pub(crate) fn layout(score: &Score) -> Page {
             }
         }
 
+        // Second staff (shared lines only, design 4.8): the other singer's
+        // notes on their own staff, joined to the melody staff by a
+        // bracket, with a small "melody" label over whichever staff is
+        // physically the melody staff (`swap_staves` above already routed
+        // the higher-centre singer to the top row, per design 4.8's
+        // "higher singer on top"; the label follows the melody, not the
+        // top row). Rendering is simpler than the top staff's: no beam
+        // grouping, each note its own stem and flag.
+        if is_shared {
+            for l in 0..5 {
+                line(&mut s, MARGIN, y2 + l as f64 * SP, sys_end, y2 + l as f64 * SP, 0.13 * SP);
+            }
+            let clef2 = if swap_staves { ms[first].clef8 } else { ms[first].second_clef8 };
+            glyph(&mut s, if clef2 { &glyphs::G_CLEF8VB } else { &glyphs::G_CLEF }, MARGIN + 0.5 * SP, y2 + 3.0 * SP, 1.0);
+            drawn::bracket(&mut s, MARGIN - 0.3 * SP, 0.0, y2 + 4.0 * SP, 1.0);
+            let melody_label_y = if swap_staves { y2 - 0.3 * SP } else { -0.3 * SP };
+            text(&mut s, MARGIN + head, melody_label_y, 10.0, "start", r#" font-style="italic""#, "melody");
+            let y_lyric2 = y2 + 6.2 * SP;
+
+            for (k, m) in ms[first..end].iter().enumerate() {
+                let (bx0, _) = mx[k];
+                let gi = first + k;
+                let mut ex = bx0 + PAD_L * scale;
+                let bot_events: &Vec<Event> = if swap_staves { &m.events } else { &m.second };
+                for (e, &(lo, w)) in bot_events.iter().zip(&nat[gi].1) {
+                    let xx = ex + lo * scale;
+                    match &e.note {
+                        None => {
+                            let (g, y) = rest_glyph(e.d);
+                            glyph(&mut s, g, xx + 0.2 * SP, y2 + y, 1.0);
+                            if matches!(e.d, 3 | 6 | 12) {
+                                glyph(&mut s, &glyphs::AUGMENTATION_DOT, xx + 0.2 * SP + glyph_w(g) + 0.3 * SP, y2 + 1.5 * SP, 1.0);
+                            }
+                        }
+                        Some(n) => {
+                            let py = y_of(n.step);
+                            let hw = if e.d >= 16 { WHOLE_W } else { HEAD_W };
+                            let up = n.step < 34;
+                            let stem_x = if up { xx + hw - STEM_W * 0.5 } else { xx + STEM_W * 0.5 };
+                            let stem_end = if up { (py - STEM_LEN).min(2.0 * SP) } else { (py + STEM_LEN).max(2.0 * SP) };
+                            let mut lp = 28;
+                            while lp >= n.step {
+                                line(&mut s, xx - 0.4 * SP, y2 + y_of(lp), xx + hw + 0.4 * SP, y2 + y_of(lp), 0.16 * SP);
+                                lp -= 2;
+                            }
+                            let mut lp = 40;
+                            while lp <= n.step {
+                                line(&mut s, xx - 0.4 * SP, y2 + y_of(lp), xx + hw + 0.4 * SP, y2 + y_of(lp), 0.16 * SP);
+                                lp += 2;
+                            }
+                            if let Some(a) = n.accidental {
+                                let g = match a {
+                                    1 => &glyphs::ACCIDENTAL_SHARP,
+                                    -1 => &glyphs::ACCIDENTAL_FLAT,
+                                    _ => &glyphs::ACCIDENTAL_NATURAL,
+                                };
+                                glyph(&mut s, g, xx - glyph_w(g) - 0.3 * SP, y2 + py, 1.0);
+                            }
+                            glyph(&mut s, head_glyph(e.d), xx, y2 + py, 1.0);
+                            if matches!(e.d, 3 | 6 | 12) {
+                                let dy = if n.step % 2 == 0 { py - 0.5 * SP } else { py };
+                                glyph(&mut s, &glyphs::AUGMENTATION_DOT, xx + hw + 0.35 * SP, y2 + dy, 1.0);
+                            }
+                            if e.d < 16 {
+                                line(&mut s, stem_x, y2 + py, stem_x, y2 + stem_end, STEM_W);
+                                if e.d < 4 {
+                                    let g = match (e.d == 1, up) {
+                                        (true, true) => &glyphs::FLAG16TH_UP,
+                                        (true, false) => &glyphs::FLAG16TH_DOWN,
+                                        (false, true) => &glyphs::FLAG8TH_UP,
+                                        (false, false) => &glyphs::FLAG8TH_DOWN,
+                                    };
+                                    glyph(&mut s, g, stem_x - STEM_W * 0.5, y2 + stem_end, 1.0);
+                                }
+                            }
+                            if let Some(l) = &n.lyric {
+                                text(&mut s, xx + hw * 0.5, y_lyric2, LYRIC_PX, "middle", r#" class="lyric""#, &esc(l));
+                            }
+                            let bw = (hw + SP).max(n.lyric.as_deref().map_or(0.0, lyric_w) + 0.4 * SP);
+                            notes_out.push((n.t0, n.t1, xx + hw * 0.5 - bw * 0.5, oy + y2 - 1.0 * SP, bw, y_lyric2 - y2 + 0.6 * SP + SP));
+                        }
+                    }
+                    ex += w * scale;
+                }
+            }
+        }
+
         s.push_str("</g>");
         body.push_str(&s);
         cursor += sys_bot - sys_top;
     }
+
+    // A shared system's second-staff boxes are appended after its melody
+    // boxes; a stable sort by t0 alone puts everything in time order while
+    // keeping the melody box first on a tie (design 4.8's note-box rule).
+    // A no-op for a solo score, already in time order.
+    notes_out.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
     let height = (cursor + MARGIN * 0.5).ceil();
     let mut svg = String::with_capacity(body.len() + 20_000);

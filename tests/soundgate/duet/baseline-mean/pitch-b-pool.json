@@ -1,0 +1,8 @@
+{
+  "seeds": 8,
+  "notes_analysed": 608,
+  "within_50c": 583,
+  "fraction_within_50c": 0.958882,
+  "octave_errors": 18,
+  "octave_errors_per_seed": 2.250000
+}

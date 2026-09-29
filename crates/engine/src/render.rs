@@ -1,16 +1,18 @@
 //! Song rendering (design section 3.7): compose (`compose::prepare`),
-//! arrange (`arrange::arrange`), then one `rayon::scope` of 14 tasks:
+//! arrange (`arrange::arrange`), then one `rayon::scope` of tasks (14 in a
+//! solo song; a duet adds a lead B task and two more doubles takes):
 //!
-//! - voice: lead; harmony; doubles take 1; doubles take 2; choir parts in
-//!   plan order (bass, tenor, alto, soprano), each rendering its singers in
-//!   plan order into a part stem;
+//! - voice: lead; lead B (a duet only); harmony; doubles takes (2 in a solo
+//!   song, A's two then B's two in a duet); choir parts in plan order
+//!   (bass, tenor, alto, soprano), each rendering its singers in plan order
+//!   into a part stem;
 //! - band: guitar; harmony guitar; bass; drums; harp; violin.
 //!
 //! Each task renders its instrument, convolves with its body (if any), runs
 //! its channel strip (`strip::run_strip`) and stores the `ProcessedStem`.
-//! The doubles stem is take 1 plus take 2 and the choir stem is the sum of
-//! the four part stems in part order; the task that finishes last of its
-//! group does the sum and runs the strip.
+//! The doubles stem is every take summed in index order and the choir stem
+//! is the sum of the four part stems in part order; the task that finishes
+//! last of its group does the sum and runs the strip.
 //!
 //! Determinism: every random stream derives from (seed, tag, index), no
 //! stream is shared between tasks, and every sum has a fixed order, so the
@@ -19,8 +21,9 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use compose::prepare::{prepare, Prepared};
+use compose::prepare::{prepare_voices, Prepared, VoiceChoice};
 use sfcore::time::len_samples;
+use song::events::Singer;
 use song::{Song, Voice};
 
 use crate::band;
@@ -29,7 +32,8 @@ use crate::strip::{run_strip, ProcessedStem};
 use crate::track::{TrackId, N_TRACKS};
 use crate::vocals::{self, choir_index, singer_seed};
 
-/// Tasks in one render.
+/// Tasks in a solo render (band 6, lead, harmony, 2 doubles, 4 choir
+/// parts). A duet adds a lead B task and 2 more doubles takes.
 pub const TASKS: usize = 14;
 
 /// Render progress: called once per finished task with the count of
@@ -108,18 +112,59 @@ impl<const N: usize> Joint<N> {
     }
 }
 
-/// Renders `song` with `seed`. `voice` `None` uses the song's voice.
+/// Like `Joint`, sized at runtime: the doubles takes are 2 in a solo song,
+/// 4 in a duet (A's two takes, then B's two).
+struct VecJoint {
+    parts: Mutex<Vec<Option<[SparseBuf; 2]>>>,
+}
+
+impl VecJoint {
+    fn new(n: usize) -> Self {
+        VecJoint { parts: Mutex::new((0..n).map(|_| None).collect()) }
+    }
+
+    /// Stores part `i`; returns the sum of all parts when this was the last.
+    fn deposit(&self, i: usize, part: [SparseBuf; 2]) -> Option<[SparseBuf; 2]> {
+        let mut g = lock(&self.parts);
+        g[i] = Some(part);
+        if g.iter().any(Option::is_none) {
+            return None;
+        }
+        let mut it = g.iter_mut().filter_map(Option::take);
+        let mut acc = it.next()?;
+        for p in it {
+            acc[0].add(&p[0]);
+            acc[1].add(&p[1]);
+        }
+        Some(acc)
+    }
+}
+
+/// Renders `song` with `seed`. `voice` `None` uses the song's voice. A thin
+/// shim over `render_with` with `VoiceChoice { a: voice, b: None }`.
 pub fn render(song: &Song, seed: u64, voice: Option<Voice>, progress: &dyn Progress) -> (Prepared, Stems) {
+    render_with(song, seed, VoiceChoice { a: voice, b: None }, progress)
+}
+
+/// Renders `song` with `seed`, choosing both singers' voices (`voice.b` is
+/// ignored outside a duet; see `VoiceChoice`). The render's primary entry;
+/// `render` is a shim over this for the common one-voice case.
+pub fn render_with(song: &Song, seed: u64, voice: VoiceChoice, progress: &dyn Progress) -> (Prepared, Stems) {
     sfcore::fp::flush_denormals();
-    let prepared = prepare(song, seed, voice);
+    let prepared = prepare_voices(song, seed, voice);
     let len = len_samples(prepared.timeline.end);
     let arr = arrange::arrange(song, &prepared, seed);
     let v = &arr.vocals;
 
+    // 6 band tasks, lead, harmony, lead B (a duet only), each doubles take,
+    // each choir part: 14 in a solo song, as `TASKS` documents.
+    let tasks = 6 + 2 + usize::from(v.lead_b.is_some()) + v.doubles.len() + v.choir.len();
+    debug_assert!(v.lead_b.is_some() || tasks == TASKS);
+
     let results = Store { tracks: Mutex::new(Default::default()) };
-    let (doubles, choir, done) = (Joint::<2>::new(), Joint::<4>::new(), AtomicUsize::new(0));
+    let (doubles, choir, done) = (VecJoint::new(v.doubles.len()), Joint::<4>::new(), AtomicUsize::new(0));
     let (store, doubles, choir, done, arr) = (&results, &doubles, &choir, &done, &arr);
-    let finish = move || progress.advance(done.fetch_add(1, Ordering::Relaxed) + 1, TASKS);
+    let finish = move || progress.advance(done.fetch_add(1, Ordering::Relaxed) + 1, tasks);
 
     rayon::scope(|s| {
         // Longest tasks first: the guitar (render plus body) is the critical path.
@@ -132,7 +177,11 @@ pub fn render(song: &Song, seed: u64, voice: Option<Voice>, progress: &dyn Progr
                 finish();
             });
         }
-        for (id, singer, k) in [(TrackId::Lead, &v.lead, vocals::LEAD), (TrackId::Harmony, &v.harmony, vocals::HARMONY)] {
+        let mut leads: Vec<(TrackId, &Singer, u64)> = vec![(TrackId::Lead, &v.lead, vocals::LEAD), (TrackId::Harmony, &v.harmony, vocals::HARMONY)];
+        if let Some(lb) = &v.lead_b {
+            leads.push((TrackId::LeadB, lb, vocals::LEAD_B));
+        }
+        for (id, singer, k) in leads {
             s.spawn(move |_| {
                 sfcore::fp::flush_denormals();
                 let mut buf = SparseBuf::new(len);

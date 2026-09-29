@@ -31,14 +31,20 @@ pub mod vocals;
 pub use mix::{mix, mix_with, premix, Stereo};
 pub use mixset::{MixSettings, TrackMix};
 pub use print::{mix_gain, print_reverb, print_stem};
-pub use render::{render, NoProgress, Progress, Stems};
-pub use sheet::{sheet_from, song_sheet, SheetBar, SheetChord, SheetLine, SheetSection, SheetSyllable, SheetWord, SongSheet};
+pub use render::{render, render_with, NoProgress, Progress, Stems};
+pub use sheet::{
+    sheet_from, song_sheet, song_sheet_with, SheetBar, SheetChord, SheetLine, SheetPart, SheetSection, SheetSyllable, SheetWord,
+    SongSheet,
+};
 pub use stem::{SparseBuf, Stem};
 pub use strip::ProcessedStem;
 pub use track::{BandPart, TrackId, STRIPS};
 
 /// The demo song's reply JSON, embedded at compile time.
 pub const DEMO_JSON: &str = include_str!("demo.json");
+
+/// The demo duet song's reply JSON, embedded at compile time.
+pub const DEMO_DUET_JSON: &str = include_str!("demo_duet.json");
 
 /// The demo song, normalised (it normalises with no repairs). Built once.
 pub fn demo_song() -> &'static song::Song {
@@ -48,5 +54,18 @@ pub fn demo_song() -> &'static song::Song {
     }) {
         Ok((s, _)) => s,
         Err(e) => panic!("crates/engine/src/demo.json does not normalise: {e}"),
+    })
+}
+
+/// The demo duet song (a solo song's duet counterpart, used by wave 2's
+/// tests and examples), normalised (it normalises with no repairs). Built
+/// once.
+pub fn demo_duet_song() -> &'static song::Song {
+    static DEMO: OnceLock<song::Song> = OnceLock::new();
+    DEMO.get_or_init(|| match serde_json::from_str(DEMO_DUET_JSON).map_err(|e| e.to_string()).and_then(|v| {
+        song::normalize_value(&v).map_err(|e| e.to_string())
+    }) {
+        Ok((s, _)) => s,
+        Err(e) => panic!("crates/engine/src/demo_duet.json does not normalise: {e}"),
     })
 }
