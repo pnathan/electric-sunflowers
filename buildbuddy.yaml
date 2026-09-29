@@ -1,0 +1,20 @@
+# BuildBuddy Workflows: https://www.buildbuddy.io/docs/workflows-config
+#
+# Runs on this org's BuildBuddy (beitnatan.buildbuddy.io) once the repo is
+# linked under Workflows in that org. The runner injects BES/remote-cache
+# auth (x-buildbuddy-api-key) into every step; --config=buildbuddy here only
+# adds the cache/BES endpoint flags from .bazelrc. Builds and tests run on
+# BuildBuddy's machines, not the laptop, and share the remote cache with
+# local and cloud-agent builds.
+actions:
+  - name: "Build and test"
+    triggers:
+      push:
+        branches:
+          - "trunk"
+      pull_request:
+        branches:
+          - "*"
+    steps:
+      - run: "bazel build --config=buildbuddy //..."
+      - run: "bazel test --config=buildbuddy //... --test_output=errors"
