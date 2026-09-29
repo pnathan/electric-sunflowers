@@ -15,5 +15,6 @@ import base64, sys
 t = open('crates/wasm/page.tpl.html').read()
 w = base64.b64encode(open('target/wasm32-unknown-unknown/release/sfwasm.wasm', 'rb').read()).decode()
 s = open('crates/wasm/short-demo.json').read()
-open(sys.argv[1], 'w').write(t.replace('__SONG__', s).replace('__WASM__', w))
+f = open('crates/wasm/full-demo.json').read()
+open(sys.argv[1], 'w').write(t.replace('__SONG__', s).replace('__FULL__', f).replace('__WASM__', w))
 PY

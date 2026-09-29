@@ -60,6 +60,9 @@ progress, input[type=range] { width: 100%; accent-color: var(--accent); }
 details { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
 summary { cursor: pointer; font-family: var(--mono); font-size: 0.85rem; }
 textarea { width: 100%; height: 260px; margin-top: 12px; font: 400 0.78rem/1.5 var(--mono); background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+select { font: 500 0.95rem var(--mono); padding: 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; }
+.chk { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 0.8rem; }
+.chk input { width: 18px; height: 18px; accent-color: var(--accent); }
 [hidden] { display: none !important; }
 </style>
 
@@ -80,6 +83,23 @@ textarea { width: 100%; height: 260px; margin-top: 12px; font: 400 0.78rem/1.5 v
     </div>
     <progress id="prog" max="1" value="0" hidden></progress>
     <div class="status" id="status" role="status">Ready. Rendering takes a few seconds and runs off the main thread.</div>
+  </section>
+
+
+  <section class="card" aria-label="Arrangement">
+    <h2>Arrangement</h2>
+    <div class="row">
+      <label class="field" for="len">Length
+        <select id="len"><option value="short">Short cut (89 s)</option><option value="full">Full song (3 min, slower)</option></select></label>
+      <label class="field" for="voice">Voice
+        <select id="voice"><option>bass</option><option>baritone</option><option>tenor</option><option>alto</option><option>soprano</option></select></label>
+      <label class="field" for="drums">Drums
+        <select id="drums"><option>none</option><option>brushes</option><option>soft</option><option>full</option></select></label>
+      <label class="field" for="guitar">Guitar
+        <select id="guitar"><option>strum</option><option>fingerpick</option><option>travis</option><option>arpeggio</option></select></label>
+    </div>
+    <div class="row" id="parts"></div>
+    <div class="row"><button id="dice" type="button" class="quiet">Random seed</button></div>
   </section>
 
   <section class="card" aria-label="Player" id="player" hidden>
@@ -109,6 +129,7 @@ textarea { width: 100%; height: 260px; margin-top: 12px; font: 400 0.78rem/1.5 v
 </main>
 
 <script id="song-json" type="application/json">__SONG__</script>
+<script id="full-json" type="application/json">__FULL__</script>
 <script id="wasm-b64" type="text/plain">__WASM__</script>
 <script id="worker-src" type="text/plain">
 var inst = null;
@@ -171,6 +192,35 @@ onmessage = function (e) {
   }
   meta(songText);
   $('json').addEventListener('input', function () { meta($('json').value); });
+
+  // Arrangement controls edit the song JSON in place, so the text box stays the single input.
+  var PARTS = ['bass', 'harmonyGuitar', 'harp', 'violin', 'choir', 'harmonies', 'doubles'];
+  var BASES = { short: JSON.parse($('song-json').textContent), full: JSON.parse($('full-json').textContent) };
+  function cur() { try { return JSON.parse($('json').value); } catch (e) { return null; } }
+  function put(d) { $('json').value = JSON.stringify(d, null, 1); meta($('json').value); }
+  function sync() {
+    var d = cur(); if (!d) return;
+    if (d.voice) $('voice').value = d.voice;
+    if (d.guitar) $('guitar').value = d.guitar;
+    var b = d.band || {}; if (b.drums) $('drums').value = b.drums;
+    PARTS.forEach(function (p) { $('p_' + p).checked = !!b[p]; });
+  }
+  PARTS.forEach(function (p) {
+    var l = document.createElement('label'); l.className = 'chk'; l.htmlFor = 'p_' + p;
+    l.innerHTML = '<input type="checkbox" id="p_' + p + '"> ' + p; $('parts').appendChild(l);
+    $('p_' + p).addEventListener('change', function () { var d = cur(); if (!d) return; d.band = d.band || {}; d.band[p] = $('p_' + p).checked; put(d); });
+  });
+  $('voice').addEventListener('change', function () { var d = cur(); if (d) { d.voice = $('voice').value; put(d); } });
+  $('guitar').addEventListener('change', function () { var d = cur(); if (d) { d.guitar = $('guitar').value; put(d); } });
+  $('drums').addEventListener('change', function () { var d = cur(); if (d) { d.band = d.band || {}; d.band.drums = $('drums').value; put(d); } });
+  $('len').addEventListener('change', function () {
+    var d = JSON.parse(JSON.stringify(BASES[$('len').value])), o = cur() || {};
+    ['voice', 'guitar', 'band'].forEach(function (k) { if (o[k] !== undefined) d[k] = o[k]; });
+    put(d);
+  });
+  $('dice').addEventListener('click', function () { $('seed').value = Math.floor(Math.random() * 100000); });
+  $('json').addEventListener('input', sync);
+  sync();
 
   function render() {
     if (busy) return;
