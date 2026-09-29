@@ -1,0 +1,287 @@
+<title>Electric Sunflowers Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column. Header, song card, render controls, player, lyrics with chords, facts, editable song JSON. */
+:root {
+  --bg: #f6f3ea; --surface: #ffffff; --fg: #1d1a12; --muted: #6a6452; --line: #d9d3bf;
+  --accent: #b87d00; --accent-ink: #ffffff; --hot: #ffd23f; --hot-ink: #1d1a12; --bad: #b3261e;
+  --display: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14120c; --surface: #1e1b12; --fg: #f2ecd8; --muted: #a39b82; --line: #372f1c;
+    --accent: #ffc933; --accent-ink: #14120c; --hot: #ffc933; --hot-ink: #14120c; --bad: #ff8a80; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14120c; --surface: #1e1b12; --fg: #f2ecd8; --muted: #a39b82; --line: #372f1c;
+  --accent: #ffc933; --accent-ink: #14120c; --hot: #ffc933; --hot-ink: #14120c; --bad: #ff8a80; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.5; padding-inline: 16px; padding-block: 24px 40px; }
+main { max-width: 720px; margin-inline: auto; display: flex; flex-direction: column; gap: 24px; min-width: 0; }
+h1 { font-family: var(--display); font-weight: 800; font-size: clamp(2rem, 8vw, 3.2rem); line-height: 1; letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 1.15rem; margin: 0; }
+p { margin: 0; }
+.eyebrow { font-family: var(--mono); font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede, .note { color: var(--muted); max-width: 60ch; }
+.note { font-size: 0.85rem; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.title { font-family: var(--display); font-weight: 600; font-size: 1.4rem; }
+.meta { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.row { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; }
+button { font: 600 1rem var(--display); background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px; padding: 12px 24px; min-width: 112px; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.quiet { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-family: var(--mono); font-size: 0.75rem; color: var(--muted); }
+.field input[type=number] { font: 500 1rem var(--mono); width: 110px; padding: 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; }
+progress, input[type=range] { width: 100%; accent-color: var(--accent); }
+.status { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); min-height: 1.5em; }
+.status.err { color: var(--bad); white-space: pre-wrap; }
+.time { font-family: var(--mono); font-size: 0.85rem; font-variant-numeric: tabular-nums; color: var(--muted); display: flex; justify-content: space-between; }
+.lyrics { display: flex; flex-direction: column; gap: 16px; max-height: 60vh; overflow-y: auto; padding-right: 4px; }
+.sec { display: flex; flex-direction: column; gap: 6px; }
+.sec h3 { font-family: var(--mono); font-weight: 500; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.line { border-left: 3px solid transparent; padding-left: 10px; }
+.line.on { border-left-color: var(--accent); }
+.chords { font-family: var(--mono); font-size: 0.9rem; color: var(--accent); white-space: pre; overflow-x: auto; }
+.text { font-size: 1.1rem; overflow-wrap: anywhere; }
+.syl { border-radius: 3px; }
+.syl.on { background: var(--hot); color: var(--hot-ink); }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin: 0; }
+.facts div { display: flex; flex-direction: column; }
+.facts dt { font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.facts dd { margin: 0; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
+summary { cursor: pointer; font-family: var(--mono); font-size: 0.85rem; }
+textarea { width: 100%; height: 260px; margin-top: 12px; font: 400 0.78rem/1.5 var(--mono); background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+[hidden] { display: none !important; }
+</style>
+
+<main>
+  <header style="display:flex;flex-direction:column;gap:12px">
+    <span class="eyebrow">Rust song engine in your browser</span>
+    <h1>Electric Sunflowers</h1>
+    <p class="lede">Claude writes a song as JSON. The Rust engine (voice, guitar, violin, drums, mix) is compiled to WebAssembly and renders it here, on your device. Same song and seed, same recording.</p>
+  </header>
+
+  <section class="card" aria-label="Song">
+    <span class="title" id="songTitle">Every Harbor</span>
+    <p class="note" id="songNote"></p>
+    <div class="meta" id="songMeta"></div>
+    <div class="row">
+      <label class="field" for="seed">Seed <input id="seed" type="number" value="1234" min="0" max="4294967295"></label>
+      <button id="render" type="button">Render</button>
+    </div>
+    <progress id="prog" max="1" value="0" hidden></progress>
+    <div class="status" id="status" role="status">Ready. Rendering takes a few seconds and runs off the main thread.</div>
+  </section>
+
+  <section class="card" aria-label="Player" id="player" hidden>
+    <div class="row" style="align-items:center">
+      <button id="play" type="button">Play</button>
+      <button id="restart" type="button" class="quiet">Restart</button>
+    </div>
+    <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Position">
+    <div class="time"><span id="tNow">0:00</span><span id="tTot">0:00</span></div>
+  </section>
+
+  <section id="sheetWrap" style="display:flex;flex-direction:column;gap:12px" hidden>
+    <h2>Song sheet from the engine</h2>
+    <div class="lyrics card" id="lyrics"></div>
+  </section>
+
+  <section id="factsWrap" style="display:flex;flex-direction:column;gap:12px" hidden>
+    <h2>Render</h2>
+    <dl class="facts" id="facts"></dl>
+  </section>
+
+  <details>
+    <summary>Song JSON (editable)</summary>
+    <textarea id="json" spellcheck="false" aria-label="Song JSON"></textarea>
+    <p class="note">This is the whole input: title, key, tempo, band and syllables with ARPAbet. Edit it and press Render. The engine makes no writing decisions. This cut keeps the intro, first verse, first chorus and outro of the engine's demo song so a phone can render it.</p>
+  </details>
+</main>
+
+<script id="song-json" type="application/json">__SONG__</script>
+<script id="wasm-b64" type="text/plain">__WASM__</script>
+<script id="worker-src" type="text/plain">
+var inst = null;
+onmessage = function (e) {
+  var m = e.data;
+  try {
+    var t0 = Date.now();
+    var mod = new WebAssembly.Module(m.wasm);
+    inst = new WebAssembly.Instance(mod, { env: { sf_progress: function (d, t) { postMessage({ type: 'progress', done: d, total: t }); } } });
+    var x = inst.exports, json = new TextEncoder().encode(m.json);
+    var p = x.sf_alloc(json.length);
+    new Uint8Array(x.memory.buffer, p, json.length).set(json);
+    var seed = m.seed >>> 0;
+    var rc = x.sf_render(p, json.length, seed, 0);
+    if (rc) {
+      var el = x.sf_out_error_len(), msg = new TextDecoder().decode(new Uint8Array(x.memory.buffer, x.sf_out_error_ptr(), el));
+      postMessage({ type: 'error', message: msg }); return;
+    }
+    var n = x.sf_out_frames();
+    var L = new Float32Array(x.memory.buffer, x.sf_out_left(), n).slice();
+    var R = new Float32Array(x.memory.buffer, x.sf_out_right(), n).slice();
+    var sl = x.sf_out_sheet_len();
+    var sheet = new TextDecoder().decode(new Uint8Array(x.memory.buffer, x.sf_out_sheet_ptr(), sl));
+    postMessage({ type: 'done', L: L, R: R, sr: x.sf_sample_rate(), sheet: sheet, ms: Date.now() - t0, mem: x.memory.buffer.byteLength }, [L.buffer, R.buffer]);
+    inst = null;
+  } catch (err) { postMessage({ type: 'error', message: String(err && err.message || err) }); }
+};
+</script>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var wasmB64 = $('wasm-b64').textContent.trim();
+  var songText = JSON.stringify(JSON.parse($('song-json').textContent), null, 1);
+  $('json').value = songText;
+  var wasmBytes = null, worker = null, busy = false;
+  var ctx = null, buf = null, src = null, sheet = null, startedAt = 0, offset = 0, playing = false, raf = 0;
+  var lineEls = [], sylEls = [];
+
+  function fmt(s) { s = Math.max(0, s); var m = Math.floor(s / 60), r = Math.floor(s % 60); return m + ':' + (r < 10 ? '0' : '') + r; }
+  function setStatus(t, err) { var s = $('status'); s.textContent = t; s.className = 'status' + (err ? ' err' : ''); }
+
+  function bytes() {
+    if (wasmBytes) return wasmBytes;
+    var bin = atob(wasmB64), a = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+    return (wasmBytes = a.buffer);
+  }
+
+  function meta(j) {
+    try {
+      var d = JSON.parse(j);
+      $('songTitle').textContent = d.title || 'Untitled';
+      $('songNote').textContent = d.note || '';
+      $('songMeta').innerHTML = '';
+      [d.key + ' ' + d.mode, d.meter, d.tempo + ' bpm', d.voice, d.guitar].forEach(function (t) {
+        if (!t || /undefined/.test(t)) return; var s = document.createElement('span'); s.textContent = t; $('songMeta').appendChild(s);
+      });
+    } catch (e) {}
+  }
+  meta(songText);
+  $('json').addEventListener('input', function () { meta($('json').value); });
+
+  function render() {
+    if (busy) return;
+    stop(true);
+    busy = true; $('render').disabled = true; $('prog').hidden = false; $('prog').value = 0;
+    setStatus('Starting the engine...');
+    var blob = new Blob([$('worker-src').textContent], { type: 'text/javascript' });
+    var url = URL.createObjectURL(blob);
+    try { worker = new Worker(url); } catch (e) { fail('This browser blocked the render worker: ' + e.message); return; }
+    var t = Date.now();
+    worker.onmessage = function (ev) {
+      var m = ev.data;
+      if (m.type === 'progress') { $('prog').value = m.done / m.total; setStatus('Rendering track tasks ' + m.done + ' of ' + m.total + ' (' + ((Date.now() - t) / 1000).toFixed(1) + ' s)'); }
+      else if (m.type === 'error') { fail(m.message); }
+      else if (m.type === 'done') { finish(m); }
+    };
+    worker.onerror = function (e) { fail('Worker error: ' + (e.message || 'unknown')); };
+    var seed = Math.max(0, Math.min(4294967295, parseInt($('seed').value, 10) || 0));
+    var wb = bytes().slice(0);
+    worker.postMessage({ wasm: wb, json: $('json').value, seed: seed }, [wb]);
+  }
+  function endWorker() { if (worker) { worker.terminate(); worker = null; } busy = false; $('render').disabled = false; $('prog').hidden = true; }
+  function fail(msg) { endWorker(); setStatus('Render failed: ' + msg, true); }
+
+  function finish(m) {
+    endWorker();
+    var AC = window.AudioContext || window.webkitAudioContext;
+    ctx = ctx || new AC();
+    buf = ctx.createBuffer(2, m.L.length, m.sr);
+    buf.copyToChannel(m.L, 0); buf.copyToChannel(m.R, 1);
+    sheet = JSON.parse(m.sheet);
+    var pk = 0; for (var i = 0; i < m.L.length; i += 7) { var a = Math.abs(m.L[i]); if (a > pk) pk = a; }
+    setStatus('Rendered ' + buf.duration.toFixed(1) + ' s of audio in ' + (m.ms / 1000).toFixed(1) + ' s. Press Play.');
+    $('player').hidden = false; $('sheetWrap').hidden = false; $('factsWrap').hidden = false;
+    $('tTot').textContent = fmt(buf.duration); offset = 0; updateUI(0);
+    var f = [['Duration', buf.duration.toFixed(1) + ' s'], ['Sample rate', m.sr + ' Hz'], ['Render time', (m.ms / 1000).toFixed(2) + ' s'], ['Engine memory', Math.round(m.mem / 1048576) + ' MB'], ['Seed', $('seed').value], ['Style', sheet.style_label || sheet.voice + ', ' + sheet.tempo + ' bpm']];
+    $('facts').innerHTML = f.map(function (r) { return '<div><dt>' + r[0] + '</dt><dd>' + r[1] + '</dd></div>'; }).join('');
+    buildSheet();
+  }
+
+  function esc(s) { return s.replace(/[&<>]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]; }); }
+  function buildSheet() {
+    var root = $('lyrics'); root.innerHTML = ''; lineEls = []; sylEls = [];
+    sheet.sections.forEach(function (sec) {
+      var d = document.createElement('div'); d.className = 'sec';
+      d.innerHTML = '<h3>' + esc(sec.label) + '</h3>';
+      if (!sec.sung) {
+        var bars = document.createElement('div'); bars.className = 'chords';
+        bars.textContent = sec.bars.map(function (b) { return b.chords.join('/'); }).join('  ');
+        d.appendChild(bars);
+      } else sec.lines.forEach(function (ln) {
+        var row = document.createElement('div'); row.className = 'line';
+        var ch = document.createElement('div'); ch.className = 'chords';
+        var chars = new Array(ln.text.length + 8).fill(' ');
+        ln.chords.forEach(function (c) {
+          var at = c.at || 0, nm = c.name || c.chord || ''; if (typeof c === 'string') nm = c;
+          for (var i = 0; i < nm.length; i++) chars[at + i] = nm[i];
+        });
+        ch.textContent = chars.join('').replace(/\s+$/, '');
+        var tx = document.createElement('div'); tx.className = 'text';
+        var spans = [];
+        // Rebuild the text with one span per syllable, in order.
+        var last = 0, html = '';
+        var chs = Array.from(ln.text);
+        ln.syllables.forEach(function (s, i) {
+          var end = i + 1 < ln.syllables.length ? ln.syllables[i + 1].at : chs.length;
+          html += '<span class="syl" data-i="' + i + '">' + esc(chs.slice(s.at, end).join('')) + '</span>';
+          last = end;
+        });
+        tx.innerHTML = html;
+        spans = Array.prototype.slice.call(tx.children);
+        row.appendChild(ch); row.appendChild(tx); d.appendChild(row);
+        lineEls.push({ el: row, t0: ln.t0, t1: ln.t1 }); sylEls.push({ els: spans, syl: ln.syllables });
+      });
+      root.appendChild(d);
+    });
+  }
+
+  function now() { return playing ? offset + (ctx.currentTime - startedAt) : offset; }
+  function play() {
+    if (!buf) return;
+    if (ctx.state === 'suspended') ctx.resume();
+    if (offset >= buf.duration - 0.05) offset = 0;
+    src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+    src.onended = function () { if (playing && now() >= buf.duration - 0.1) { playing = false; offset = 0; $('play').textContent = 'Play'; updateUI(0); } };
+    startedAt = ctx.currentTime; src.start(0, offset); playing = true; $('play').textContent = 'Pause'; tick();
+  }
+  function stop(reset) {
+    if (playing) { offset = now(); try { src.onended = null; src.stop(); } catch (e) {} }
+    playing = false; cancelAnimationFrame(raf); $('play').textContent = 'Play';
+    if (reset) { offset = 0; }
+  }
+  function tick() { if (!playing) return; updateUI(now()); raf = requestAnimationFrame(tick); }
+  function updateUI(t) {
+    if (!buf) return;
+    $('tNow').textContent = fmt(t);
+    if (document.activeElement !== $('seek')) $('seek').value = Math.round(1000 * t / buf.duration);
+    var scrolled = false;
+    lineEls.forEach(function (l, i) {
+      var on = t >= l.t0 && t < l.t1;
+      if (on !== l.el.classList.contains('on')) { l.el.classList.toggle('on', on); if (on && playing && !scrolled) { scrolled = true; l.el.scrollIntoView({ block: 'nearest' }); } }
+      var s = sylEls[i];
+      s.syl.forEach(function (sy, k) { var o = on && t >= sy.t0 && t < sy.t1; if (o !== s.els[k].classList.contains('on')) s.els[k].classList.toggle('on', o); });
+    });
+  }
+
+  $('render').addEventListener('click', render);
+  $('play').addEventListener('click', function () { playing ? stop(false) : play(); });
+  $('restart').addEventListener('click', function () { var was = playing; stop(true); updateUI(0); if (was || true) play(); });
+  $('seek').addEventListener('input', function () {
+    if (!buf) return; var was = playing; stop(false); offset = buf.duration * $('seek').value / 1000; updateUI(offset); if (was) play();
+  });
+})();
+</script>
