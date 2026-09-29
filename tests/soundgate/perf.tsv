@@ -35,3 +35,4 @@ w0-close	03a8c3c8+dirty	fail	3	3.48	2.69	694	7.53	523	yes
 w0	03a8c3c8+dirty	fail	3	3.99	2.68	680	7.75	523	yes
 w0-rebase	6036d0a1	pass	3	3.01	2.39	694	6.92	523	yes
 w0-check	6036d0a1	pass	3	3.51	2.40	694	6.97	523	yes
+cloud1	5e418881	pass	3	1.56	5.32	625	9.95	523	yes
