@@ -42,6 +42,7 @@ Read this before changing anything. It records what the system is, how to work i
 
 ## Build and run
 
+- Bazel is the only build system on this machine; cargo is banned here: a PreToolUse hook in the gitignored `.claude/settings.local.json` runs `.claude/hooks/no-cargo.sh`, which denies any cargo command. `Cargo.toml` and `Cargo.lock` stay as the manifests `crate.from_cargo` reads. The Bazel setup (MODULE.bazel, per-crate BUILD.bazel, `scripts/bz` with one output base per agent and a shared disk cache) is being brought up; the cargo commands below are the old way and will be replaced.
 - `cargo build --release`; `cargo test --release --workspace`. Dependencies are in `vendor/` via `.cargo/config.toml`. To add a crate: add it to the manifest, run `cargo vendor vendor` outside the sandbox, commit `vendor/`. `.gitignore` anchors `/target/` and never ignores `vendor/` (cargo checks every vendored file's checksum).
 - CLI: `sunflower demo`, `sunflower render song.json [--style KEY] [--no PART] [--seed N] [--voice V] -o x.ogg`, `sunflower write "mood" [--style KEY] [--via cli|api] [--model ID]`, `sunflower sheet song.json --seed N`, `sunflower styles`. The extension picks the format. `render`, `write` and `demo` write `<stem>.render.json` (seed, voice, style) and `<stem>.sheet.json` beside the audio; `write` saves Claude's raw JSON as `<stem>.json` before validating it.
 - Studio: `target/release/studio [SONG.json] [--dir DIR]`; the library defaults to `~/Music/sunflower`.
