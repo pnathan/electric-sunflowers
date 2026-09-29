@@ -163,8 +163,8 @@ fn duet_render_is_thread_count_invariant() {
         let (_, stems) = render_with(s, 7, VoiceChoice::default(), &NoProgress);
         mix(&stems, &s.band, 7)
     };
-    let a = pool(1).install(|| render_mix(&song));
-    let b = pool(8).install(|| render_mix(&song));
+    let a = pool(1).install(|| render_mix(song));
+    let b = pool(8).install(|| render_mix(song));
     assert_eq!(
         fnv1a(&mix_bytes(&a.l, &a.r)),
         fnv1a(&mix_bytes(&b.l, &b.r)),
