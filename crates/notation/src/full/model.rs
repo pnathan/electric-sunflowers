@@ -30,9 +30,8 @@ use crate::score::{key_alterations, key_fifths, spell, Grid};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PartId {
     Lead,
-    /// The duet's second lead. No source exists yet: this part never gets
-    /// a staff until the duet arrangement (wave 3) adds
-    /// `Vocals::lead_b`.
+    /// The duet's second lead, from `Vocals::lead_b`; absent (no staff) in
+    /// a solo song, where that field is `None`.
     LeadB,
     Harmony,
     Doubles,
@@ -327,7 +326,10 @@ fn raw_notes_of(part: PartId, song: &Song, prep: &Prepared, arr: &arrange::Arran
             .iter()
             .map(|n| RawNote { lyric: Some(n.syl.text.clone()), hyphen: !n.syl.word_end, ..RawNote::pitched(n.t0, n.t1, n.midi as f64) })
             .collect(),
-        PartId::LeadB => return None,
+        PartId::LeadB => {
+            let b = arr.vocals.lead_b.as_ref()?;
+            vocal(&b.notes)
+        }
         PartId::Harmony => {
             if !song.band.harmonies {
                 return None;
@@ -644,10 +646,7 @@ impl FullScore {
             }
             let clef = match part {
                 PartId::Lead => vocal_clef(prep.voice),
-                // raw_notes_of(LeadB) is always None before wave 3 adds
-                // singer B, so this arm is unreached; it must not borrow
-                // singer A's voice once LeadB notes do appear.
-                PartId::LeadB => unreachable!("LeadB has no notes before wave 3"),
+                PartId::LeadB => vocal_clef(arr.vocals.lead_b.as_ref().map_or(prep.voice, |b| b.voice)),
                 PartId::Harmony => vocal_clef(arr.vocals.harmony.voice),
                 PartId::Doubles => vocal_clef(arr.vocals.doubles[0].voice),
                 PartId::ChoirS | PartId::ChoirA => Clef::Treble,

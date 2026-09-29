@@ -77,9 +77,10 @@ pub const DUCK_RELEASE: f64 = 0.35;
 const _: () = assert!(STEM_BLOCK.is_multiple_of(MIX_BLOCK));
 
 /// Tracks that carry the lead melody: never ducked, and their summed
-/// post-fader power keys the ducker (design section 3.3). Wave 2 adds
-/// `TrackId::LeadB` here.
-pub(crate) const LEAD_TRACKS: [TrackId; 1] = [TrackId::Lead];
+/// post-fader power keys the ducker (design section 3.3). `TrackId::LeadB`
+/// only ever contributes when a duet's stems include it; `duck_gains` and
+/// `routes` both filter on stem presence, so this is a no-op in a solo song.
+pub(crate) const LEAD_TRACKS: [TrackId; 2] = [TrackId::Lead, TrackId::LeadB];
 
 /// A stereo signal.
 #[derive(Clone, Debug, Default, PartialEq)]

@@ -7,7 +7,8 @@
 //!
 //! A singer's `offset` shifts its notes before rendering. Singer k draws
 //! from the stream seed `Rng::event(seed, SINGER, k).next_u32()` widened to
-//! u64: lead 0, harmony 1, doubles 2 and 3, choir 16 + 16 part + i.
+//! u64: lead 0, harmony 1, doubles 2..=5 (A's two takes 2 and 3, B's two
+//! takes 4 and 5 in a duet), lead B 6, choir 16 + 16 part + i.
 
 use dsp::pan::equal_power;
 use sfcore::random::{tag, Rng, Tag};
@@ -22,6 +23,9 @@ const SINGER: Tag = tag("voice.singer");
 pub const LEAD: u64 = 0;
 pub const HARMONY: u64 = 1;
 pub const DOUBLES: u64 = 2;
+/// Singer B's lead (a duet only); leaves room for up to 4 doubles takes
+/// (2..=5) between `DOUBLES` and here.
+pub const LEAD_B: u64 = 6;
 pub const CHOIR: u64 = 16;
 
 /// Seed of singer `index` (see the module doc).
