@@ -80,18 +80,26 @@ fn doubles_count_follows_duet() {
     assert_eq!(a.vocals.doubles[3].voice, a.vocals.lead_b.as_ref().unwrap().voice);
 }
 
-/// The solo demo's arrangement is unchanged bit for bit by this wave's
-/// duet wiring (`Vocals` gaining `lead_b`/`doubles: Vec<Singer>`, and
-/// `plan`'s harmony/doubles filters): an FNV-1a64 checksum of the
-/// arrangement's `Debug` text. `0xc913df9fc17a4643` was captured from HEAD
-/// (`e7647d2a`) via a `git worktree` checkout, before this wave's
-/// `arrange::vocals::plan` edits landed, with a throwaway example (built,
-/// run, then removed with the worktree) over `demo()` at seed 1.
+/// The solo demo's arrangement content is unchanged bit for bit by this
+/// wave's duet wiring: an FNV-1a64 checksum over the `Debug` text of every
+/// field that existed before this wave (the band parts, and the vocals'
+/// `lead`, `harmony`, `doubles` and `choir`), deliberately leaving out
+/// `Vocals.lead_b` (a new field, `None` in a solo song, whose own text
+/// would not appear in the pre-wave `Debug` output at all).
+/// `0x6c1999626d93ac0f` was captured from commit `e7647d2a` (the commit
+/// before this wave's arrange/engine work) via a `git worktree` checkout,
+/// with a throwaway example (built, run, then removed with the worktree)
+/// running this same formatting over `demo()` at seed 1.
 #[test]
 fn solo_arrangement_is_unchanged() {
     let solo = demo();
     let p = prepare(&solo, 1, None);
     let a = arrange(&solo, &p, 1);
-    let h = fnv1a(format!("{a:?}").as_bytes());
-    assert_eq!(h, 0xc913df9fc17a4643, "solo arrangement checksum changed: {h:#x}");
+    let v = &a.vocals;
+    let stable = format!(
+        "{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
+        a.guitar, a.bass, a.harp, a.drums, a.violin, a.harmony_guitar, v.lead, v.harmony, v.doubles, v.choir
+    );
+    let h = fnv1a(stable.as_bytes());
+    assert_eq!(h, 0x6c1999626d93ac0f, "solo arrangement checksum changed: {h:#x}");
 }
