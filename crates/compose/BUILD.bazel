@@ -6,6 +6,8 @@ package(default_visibility = ["//visibility:public"])
 # crates/compose/src/prepare.rs embeds tests/songs/duet.json (its own
 # fixture) and, in its #[cfg(test)] unit tests, engine/src/demo.json (via
 # relative include_str!("../../engine/src/demo.json")) at compile time.
+exports_files(["tests/songs/duet.json"])
+
 COMPOSE_TEST_DATA = glob(["tests/songs/**"]) + ["//crates/engine:src/demo.json"]
 
 rust_library(

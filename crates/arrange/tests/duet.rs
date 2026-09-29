@@ -6,12 +6,14 @@ use compose::prepare::{prepare, prepare_voices, VoiceChoice};
 use song::{Song, Voice};
 
 fn demo() -> Song {
-    let v: serde_json::Value = serde_json::from_str(include_str!("../../engine/src/demo.json")).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(include_str!("../../engine/src/demo.json")).unwrap();
     song::normalize_value(&v).unwrap().0
 }
 
 fn demo_duet() -> Song {
-    let v: serde_json::Value = serde_json::from_str(include_str!("../../engine/src/demo_duet.json")).unwrap();
+    let v: serde_json::Value =
+        serde_json::from_str(include_str!("../../engine/src/demo_duet.json")).unwrap();
     let (s, repairs) = song::normalize_value(&v).unwrap();
     assert!(repairs.is_empty(), "{repairs:?}");
     s
@@ -53,10 +55,24 @@ fn singers_notes_are_ordered_and_non_overlapping() {
         let p = prepare_voices(&duet, seed, VoiceChoice::default());
         let a = arrange(&duet, &p, seed);
         let v = &a.vocals;
-        for singer in std::iter::once(&v.lead).chain(v.lead_b.iter()).chain(std::iter::once(&v.harmony)).chain(v.doubles.iter()) {
+        for singer in std::iter::once(&v.lead)
+            .chain(v.lead_b.iter())
+            .chain(std::iter::once(&v.harmony))
+            .chain(v.doubles.iter())
+        {
             for w in singer.notes.windows(2) {
-                assert!(w[0].t0 <= w[1].t0, "seed {seed}: {:?} then {:?}", w[0], w[1]);
-                assert!(w[0].t1 <= w[1].t0 + 1e-6, "seed {seed}: overlap {:?} then {:?}", w[0], w[1]);
+                assert!(
+                    w[0].t0 <= w[1].t0,
+                    "seed {seed}: {:?} then {:?}",
+                    w[0],
+                    w[1]
+                );
+                assert!(
+                    w[0].t1 <= w[1].t0 + 1e-6,
+                    "seed {seed}: overlap {:?} then {:?}",
+                    w[0],
+                    w[1]
+                );
             }
         }
     }
@@ -76,8 +92,14 @@ fn doubles_count_follows_duet() {
     assert_eq!(a.vocals.doubles.len(), 4);
     assert_eq!(a.vocals.doubles[0].voice, a.vocals.lead.voice);
     assert_eq!(a.vocals.doubles[1].voice, a.vocals.lead.voice);
-    assert_eq!(a.vocals.doubles[2].voice, a.vocals.lead_b.as_ref().unwrap().voice);
-    assert_eq!(a.vocals.doubles[3].voice, a.vocals.lead_b.as_ref().unwrap().voice);
+    assert_eq!(
+        a.vocals.doubles[2].voice,
+        a.vocals.lead_b.as_ref().unwrap().voice
+    );
+    assert_eq!(
+        a.vocals.doubles[3].voice,
+        a.vocals.lead_b.as_ref().unwrap().voice
+    );
 }
 
 /// The solo demo's arrangement content is unchanged bit for bit by this
@@ -98,8 +120,20 @@ fn solo_arrangement_is_unchanged() {
     let v = &a.vocals;
     let stable = format!(
         "{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
-        a.guitar, a.bass, a.harp, a.drums, a.violin, a.harmony_guitar, v.lead, v.harmony, v.doubles, v.choir
+        a.guitar,
+        a.bass,
+        a.harp,
+        a.drums,
+        a.violin,
+        a.harmony_guitar,
+        v.lead,
+        v.harmony,
+        v.doubles,
+        v.choir
     );
     let h = fnv1a(stable.as_bytes());
-    assert_eq!(h, 0x6c1999626d93ac0f, "solo arrangement checksum changed: {h:#x}");
+    assert_eq!(
+        h, 0x6c1999626d93ac0f,
+        "solo arrangement checksum changed: {h:#x}"
+    );
 }

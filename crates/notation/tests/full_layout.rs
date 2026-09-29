@@ -152,7 +152,10 @@ fn solo_full_score_is_byte_identical_to_before_wave_3_polish() {
     let page = Sheet::Full(full).page(notation::DEFAULT_WIDTH);
     let got = sha256_hex(page.svg.as_bytes());
     assert_eq!(got.len(), 64, "digest length");
-    assert_eq!(got, FULL_SCORE_SHA256, "full score SVG changed for a solo song; wave 3's polish pass must not touch its bytes");
+    assert_eq!(
+        got, FULL_SCORE_SHA256,
+        "full score SVG changed for a solo song; wave 3's polish pass must not touch its bytes"
+    );
 }
 
 #[test]

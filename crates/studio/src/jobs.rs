@@ -47,9 +47,19 @@ pub struct Job<T> {
 }
 
 impl<T: Send + 'static> Job<T> {
-    pub fn spawn(ctx: &egui::Context, stage: &str, f: impl FnOnce(&Reporter) -> Result<T, String> + Send + 'static) -> Job<T> {
-        let status = Arc::new(Mutex::new(Status { stage: stage.to_string(), frac: None }));
-        let rep = Reporter { status: status.clone(), ctx: ctx.clone() };
+    pub fn spawn(
+        ctx: &egui::Context,
+        stage: &str,
+        f: impl FnOnce(&Reporter) -> Result<T, String> + Send + 'static,
+    ) -> Job<T> {
+        let status = Arc::new(Mutex::new(Status {
+            stage: stage.to_string(),
+            frac: None,
+        }));
+        let rep = Reporter {
+            status: status.clone(),
+            ctx: ctx.clone(),
+        };
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&rep)))
@@ -57,7 +67,11 @@ impl<T: Send + 'static> Job<T> {
             let _ = tx.send(r);
             rep.ctx.request_repaint();
         });
-        Job { rx, status, started: std::time::Instant::now() }
+        Job {
+            rx,
+            status,
+            started: std::time::Instant::now(),
+        }
     }
 
     /// The result, once; `None` while running.
@@ -65,7 +79,9 @@ impl<T: Send + 'static> Job<T> {
         match self.rx.try_recv() {
             Ok(r) => Some(r),
             Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => Some(Err("the job thread stopped without a result".into())),
+            Err(TryRecvError::Disconnected) => {
+                Some(Err("the job thread stopped without a result".into()))
+            }
         }
     }
 
@@ -79,7 +95,10 @@ impl<T: Send + 'static> Job<T> {
 }
 
 fn panic_text(p: &Box<dyn std::any::Any + Send>) -> String {
-    p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into())
+    p.downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| p.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "panic".into())
 }
 
 /// A song ready to show: the normalised, styled song and everything drawn
@@ -109,8 +128,10 @@ fn read_song(entry: &Entry, notes: &mut Vec<String>) -> Result<Song, String> {
         Source::Demo => engine::demo_song().clone(),
         Source::File(p) => {
             let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
-            let raw: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{}: not JSON: {e}", p.display()))?;
-            let (song, repairs) = song::normalize_value(&raw).map_err(|e| format!("{}: {e}", p.display()))?;
+            let raw: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|e| format!("{}: not JSON: {e}", p.display()))?;
+            let (song, repairs) =
+                song::normalize_value(&raw).map_err(|e| format!("{}: {e}", p.display()))?;
             notes.extend(repairs.iter().map(|r| format!("repair: {r}")));
             song
         }
@@ -141,12 +162,25 @@ pub fn load(entry: Entry) -> Result<Loaded, String> {
     let score = notation::Score::new(&song, &prep);
     let arr = arrange::arrange(&song, &prep, seed);
     let full = notation::full::FullScore::new(&song, &prep, &arr);
-    Ok(Loaded { entry, song, seed, voice, seed_known, sheet, score, full, notes })
+    Ok(Loaded {
+        entry,
+        song,
+        seed,
+        voice,
+        seed_known,
+        sheet,
+        score,
+        full,
+        notes,
+    })
 }
 
 /// The label of the song's applied style.
 pub fn style_label(song: &Song) -> Option<String> {
-    song.style.as_deref().and_then(|k| songwriter::styles::style(k).ok()).map(|s| s.label.to_string())
+    song.style
+        .as_deref()
+        .and_then(|k| songwriter::styles::style(k).ok())
+        .map(|s| s.label.to_string())
 }
 
 /// Where a render goes and what its sidecar records.
@@ -166,7 +200,10 @@ struct Progress<'a>(&'a Reporter);
 impl engine::Progress for Progress<'_> {
     fn advance(&self, done: usize, total: usize) {
         let f = done as f32 / total.max(1) as f32;
-        self.0.set(&format!("Rendering ({done}/{total} tracks)"), Some(0.05 + 0.8 * f));
+        self.0.set(
+            &format!("Rendering ({done}/{total} tracks)"),
+            Some(0.05 + 0.8 * f),
+        );
     }
 }
 
@@ -200,16 +237,27 @@ pub fn render(plan: &RenderPlan, rep: &Reporter) -> Result<Rendered, String> {
     let m = engine::mix_with(&stems, &plan.song.band, plan.seed, &settings);
     rep.set("Encoding Ogg Vorbis", Some(0.93));
     let tmp = with_ext(&plan.stem, "ogg.part");
-    export::write(&tmp, &m.l, &m.r, sfcore::SR as u32, &song_meta(&plan.song), Format::Ogg { quality: 0.6 })
-        .map_err(|e| format!("writing {}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, &out).map_err(|e| format!("moving {} to {}: {e}", tmp.display(), out.display()))?;
+    export::write(
+        &tmp,
+        &m.l,
+        &m.r,
+        sfcore::SR as u32,
+        &song_meta(&plan.song),
+        Format::Ogg { quality: 0.6 },
+    )
+    .map_err(|e| format!("writing {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &out)
+        .map_err(|e| format!("moving {} to {}: {e}", tmp.display(), out.display()))?;
     rep.set("Writing sidecars", Some(0.98));
     let mut sheet = engine::sheet_from(&plan.song, plan.seed, &prepared);
     sheet.style_label = style_label(&plan.song);
     let applied = file.is_some().then_some(mix_path.as_path());
     write_sidecars(plan, &out, &sheet, applied)?;
     rep.set("Done", Some(1.0));
-    Ok(Rendered { audio: out, stems: Arc::new(stems) })
+    Ok(Rendered {
+        audio: out,
+        stems: Arc::new(stems),
+    })
 }
 
 /// Renders the stems only, for the mixer of a song whose audio was made
@@ -230,11 +278,19 @@ pub struct Remixed {
 }
 
 /// Mixes `stems` with `settings` into a playable buffer.
-pub fn remix(stems: &engine::Stems, band: &song::Band, seed: u64, settings: &engine::MixSettings) -> Remixed {
+pub fn remix(
+    stems: &engine::Stems,
+    band: &song::Band,
+    seed: u64,
+    settings: &engine::MixSettings,
+) -> Remixed {
     let t = std::time::Instant::now();
     let m = engine::mix_with(stems, band, seed, settings);
     let mix_s = t.elapsed().as_secs_f64();
-    Remixed { buf: crate::audio::stereo_buffer(&m.l, &m.r, sfcore::SR as u32), mix_s }
+    Remixed {
+        buf: crate::audio::stereo_buffer(&m.l, &m.r, sfcore::SR as u32),
+        mix_s,
+    }
 }
 
 /// `<stem>.mix.json`.
@@ -246,7 +302,9 @@ pub fn mix_path(stem: &Path) -> PathBuf {
 /// exists but is not JSON.
 pub fn read_mix(path: &Path) -> Result<Option<serde_json::Value>, String> {
     match std::fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).map(Some).map_err(|e| format!("{}: not JSON: {e}", path.display())),
+        Ok(text) => serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|e| format!("{}: not JSON: {e}", path.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("{}: {e}", path.display())),
     }
@@ -254,7 +312,10 @@ pub fn read_mix(path: &Path) -> Result<Option<serde_json::Value>, String> {
 
 /// The mix settings a sidecar value gives against the defaults for
 /// `stems`; the defaults when there is no sidecar.
-pub fn settings_from(file: Option<&serde_json::Value>, stems: &engine::Stems) -> (engine::MixSettings, Vec<String>) {
+pub fn settings_from(
+    file: Option<&serde_json::Value>,
+    stems: &engine::Stems,
+) -> (engine::MixSettings, Vec<String>) {
     let defaults = engine::MixSettings::default_for(stems);
     match file {
         Some(v) => engine::MixSettings::from_json(v, &defaults),
@@ -265,14 +326,20 @@ pub fn settings_from(file: Option<&serde_json::Value>, stems: &engine::Stems) ->
 /// Whether a mix sidecar value changes anything: `to_json` writes only
 /// the fields that differ from the defaults.
 pub fn mix_changes_anything(v: &serde_json::Value) -> bool {
-    v.as_object().is_some_and(|o| o.keys().any(|k| k != "version"))
+    v.as_object()
+        .is_some_and(|o| o.keys().any(|k| k != "version"))
 }
 
 /// Writes `settings` to `path` as a mix sidecar (only what differs from
 /// `defaults`), through a `.tmp` file and a rename, so a reader never sees
 /// half a file.
-pub fn write_mix(path: &Path, settings: &engine::MixSettings, defaults: &engine::MixSettings) -> Result<(), String> {
-    let text = serde_json::to_string_pretty(&settings.to_json(defaults)).map_err(|e| e.to_string())?;
+pub fn write_mix(
+    path: &Path,
+    settings: &engine::MixSettings,
+    defaults: &engine::MixSettings,
+) -> Result<(), String> {
+    let text =
+        serde_json::to_string_pretty(&settings.to_json(defaults)).map_err(|e| e.to_string())?;
     let tmp = with_ext(path, "tmp");
     std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
@@ -285,11 +352,21 @@ fn with_ext(stem: &Path, ext: &str) -> PathBuf {
     PathBuf::from(s)
 }
 
-fn write_sidecars(plan: &RenderPlan, out: &Path, sheet: &engine::SongSheet, mix: Option<&Path>) -> Result<(), String> {
+fn write_sidecars(
+    plan: &RenderPlan,
+    out: &Path,
+    sheet: &engine::SongSheet,
+    mix: Option<&Path>,
+) -> Result<(), String> {
     let sheet_path = with_ext(&plan.stem, "sheet.json");
     let text = serde_json::to_string_pretty(sheet).map_err(|e| e.to_string())?;
     std::fs::write(&sheet_path, text).map_err(|e| format!("{}: {e}", sheet_path.display()))?;
-    let abs = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).display().to_string();
+    let abs = |p: &Path| {
+        std::fs::canonicalize(p)
+            .unwrap_or_else(|_| p.to_path_buf())
+            .display()
+            .to_string()
+    };
     let side = serde_json::json!({
         "seed": plan.seed,
         "voice": sheet.voice.as_str(),
@@ -347,13 +424,19 @@ pub struct Written {
 pub fn write(plan: &WritePlan, rep: &Reporter) -> Result<Written, String> {
     let claude: Box<dyn songwriter::claude::Claude> = match plan.via {
         Via::Cli => Box::new(songwriter::claude::ClaudeCli::default()),
-        Via::Api => Box::new(songwriter::claude::ClaudeApi::from_env().map_err(|e| format!("API client: {e}"))?),
+        Via::Api => Box::new(
+            songwriter::claude::ClaudeApi::from_env().map_err(|e| format!("API client: {e}"))?,
+        ),
     };
     write_with(claude.as_ref(), plan, rep)
 }
 
 /// `write` with a given Claude client.
-pub fn write_with(claude: &dyn songwriter::claude::Claude, plan: &WritePlan, rep: &Reporter) -> Result<Written, String> {
+pub fn write_with(
+    claude: &dyn songwriter::claude::Claude,
+    plan: &WritePlan,
+    rep: &Reporter,
+) -> Result<Written, String> {
     std::fs::create_dir_all(&plan.dir).map_err(|e| format!("{}: {e}", plan.dir.display()))?;
     let year = civil_from_days((now_secs() / 86400) as i64).0;
     let mut rng = songwriter::Rng::stream(plan.seed, songwriter::WRITE_TAG);
@@ -366,13 +449,24 @@ pub fn write_with(claude: &dyn songwriter::claude::Claude, plan: &WritePlan, rep
         effort: Default::default(),
     };
     rep.set("Claude is writing the song", None);
-    let w = songwriter::write_song(claude, &req, &mut rng).map_err(|e| format!("songwriter: {e}"))?;
-    let title = w.raw.get("title").and_then(|t| t.as_str()).unwrap_or("song").to_string();
+    let w =
+        songwriter::write_song(claude, &req, &mut rng).map_err(|e| format!("songwriter: {e}"))?;
+    let title = w
+        .raw
+        .get("title")
+        .and_then(|t| t.as_str())
+        .unwrap_or("song")
+        .to_string();
     let stem = library::fresh_stem(&plan.dir, &title);
     let json_path = with_ext(&stem, "json");
     let text = serde_json::to_string_pretty(&w.raw).map_err(|e| e.to_string())?;
     std::fs::write(&json_path, text).map_err(|e| format!("{}: {e}", json_path.display()))?;
-    let (mut song, _) = song::normalize_value(&w.raw).map_err(|e| format!("the written song failed to normalise ({e}); saved as {}", json_path.display()))?;
+    let (mut song, _) = song::normalize_value(&w.raw).map_err(|e| {
+        format!(
+            "the written song failed to normalise ({e}); saved as {}",
+            json_path.display()
+        )
+    })?;
     let key = w.direction.style.as_str();
     songwriter::styles::apply_style(key, &mut song).map_err(|e| format!("style {key}: {e}"))?;
     let plan = RenderPlan {
@@ -384,26 +478,41 @@ pub fn write_with(claude: &dyn songwriter::claude::Claude, plan: &WritePlan, rep
         model: w.model.or_else(|| plan.model.clone()),
     };
     let rendered = render(&plan, rep)?;
-    Ok(Written { json: json_path, stem, rendered })
+    Ok(Written {
+        json: json_path,
+        stem,
+        rendered,
+    })
 }
 
 /// A random 64-bit seed from the clock and the process id (not
 /// cryptographic).
 pub fn random_seed() -> u64 {
-    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
     let pid = std::process::id() as u128;
     (nanos ^ (pid << 32) ^ 0x9E37_79B9_7F4A_7C15) as u64 ^ ((nanos >> 64) as u64)
 }
 
 fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// `secs` after the epoch as ISO 8601 UTC.
 fn iso_of(secs: u64) -> String {
     let (y, m, d) = civil_from_days((secs / 86400) as i64);
     let r = secs % 86400;
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", r / 3600, r / 60 % 60, r % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        r / 3600,
+        r / 60 % 60,
+        r % 60
+    )
 }
 
 /// (year, month, day) of `days` after 1970-01-01, proleptic Gregorian
@@ -437,7 +546,13 @@ mod tests {
         let l = load(Entry::demo(&dir)).unwrap();
         assert!(l.seed_known);
         assert_eq!(l.seed, DEFAULT_SEED);
-        let sung: usize = l.sheet.sections.iter().flat_map(|s| &s.lines).map(|l| l.syllables.len()).sum();
+        let sung: usize = l
+            .sheet
+            .sections
+            .iter()
+            .flat_map(|s| &s.lines)
+            .map(|l| l.syllables.len())
+            .sum();
         assert!(sung > 50);
         assert!(!notation::note_boxes(&l.score).is_empty());
     }
@@ -445,7 +560,10 @@ mod tests {
     struct Canned(String);
 
     impl songwriter::claude::Claude for Canned {
-        fn complete(&self, _: &songwriter::claude::Request) -> Result<songwriter::claude::Reply, songwriter::claude::ClaudeError> {
+        fn complete(
+            &self,
+            _: &songwriter::claude::Request,
+        ) -> Result<songwriter::claude::Reply, songwriter::claude::ClaudeError> {
             Ok(songwriter::claude::Reply {
                 model: Some("canned".into()),
                 ..songwriter::claude::Reply::text_only(self.0.clone())
@@ -454,14 +572,25 @@ mod tests {
     }
 
     fn reporter() -> Reporter {
-        Reporter { status: Arc::new(Mutex::new(Status::default())), ctx: egui::Context::default() }
+        Reporter {
+            status: Arc::new(Mutex::new(Status::default())),
+            ctx: egui::Context::default(),
+        }
     }
 
     #[test]
     fn write_saves_renders_and_lists_a_song() {
         let dir = std::env::temp_dir().join(format!("studio-write-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let plan = WritePlan { mood: "x".into(), style: None, voice: Some(Voice::Alto), via: Via::Cli, model: None, dir: dir.clone(), seed: 5 };
+        let plan = WritePlan {
+            mood: "x".into(),
+            style: None,
+            voice: Some(Voice::Alto),
+            via: Via::Cli,
+            model: None,
+            dir: dir.clone(),
+            seed: 5,
+        };
         let reply = format!("Here it is:\n```json\n{}\n```", engine::DEMO_JSON);
         let written = write_with(&Canned(reply), &plan, &reporter()).unwrap();
         assert_eq!(written.json, dir.join("every-harbor.json"));
@@ -473,7 +602,10 @@ mod tests {
         let v = library::scan(&dir).unwrap();
         let e = v.iter().find(|e| e.name == "every-harbor").unwrap();
         let r = e.render.as_ref().unwrap();
-        assert_eq!((r.seed, r.voice, r.model.as_deref()), (Some(5), Some(Voice::Alto), Some("canned")));
+        assert_eq!(
+            (r.seed, r.voice, r.model.as_deref()),
+            (Some(5), Some(Voice::Alto), Some("canned"))
+        );
         assert!(r.style.is_some());
         // The loaded sheet uses the render's seed, voice and style.
         let l = load(e.clone()).unwrap();
@@ -495,12 +627,31 @@ mod tests {
         let stem = dir.join("demo");
         let song_json = dir.join("demo.json");
         std::fs::write(&song_json, engine::DEMO_JSON).unwrap();
-        std::fs::write(mix_path(&stem), r#"{"version": 1, "tracks": {"drums": {"mute": true}}, "duck_db": 2.0}"#).unwrap();
-        let (song, _) = song::normalize_value(&serde_json::from_str(engine::DEMO_JSON).unwrap()).unwrap();
-        let plan = RenderPlan { song: song.clone(), seed: 3, voice: None, stem: stem.clone(), song_json, model: None };
+        std::fs::write(
+            mix_path(&stem),
+            r#"{"version": 1, "tracks": {"drums": {"mute": true}}, "duck_db": 2.0}"#,
+        )
+        .unwrap();
+        let (song, _) =
+            song::normalize_value(&serde_json::from_str(engine::DEMO_JSON).unwrap()).unwrap();
+        let plan = RenderPlan {
+            song: song.clone(),
+            seed: 3,
+            voice: None,
+            stem: stem.clone(),
+            song_json,
+            model: None,
+        };
         let r = render(&plan, &reporter()).unwrap();
-        let side: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("demo.render.json")).unwrap()).unwrap();
-        assert!(side["mix"].as_str().is_some_and(|m| m.ends_with("demo.mix.json")), "{side}");
+        let side: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("demo.render.json")).unwrap())
+                .unwrap();
+        assert!(
+            side["mix"]
+                .as_str()
+                .is_some_and(|m| m.ends_with("demo.mix.json")),
+            "{side}"
+        );
 
         let file = read_mix(&mix_path(&stem)).unwrap();
         let (settings, warn) = settings_from(file.as_ref(), &r.stems);

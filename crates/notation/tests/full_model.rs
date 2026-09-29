@@ -19,7 +19,8 @@ fn demo() -> Song {
 /// The wave-3 duet fixture (also used by `tests/duet.rs`).
 fn duet_song() -> Song {
     let raw: serde_json::Value =
-        serde_json::from_str(include_str!("../../compose/tests/songs/duet.json")).expect("duet.json is JSON");
+        serde_json::from_str(include_str!("../../compose/tests/songs/duet.json"))
+            .expect("duet.json is JSON");
     let (s, repairs) = song::normalize_value(&raw).expect("duet fixture normalises");
     assert!(repairs.is_empty(), "{repairs:?}");
     assert!(s.is_duet());
@@ -339,7 +340,11 @@ fn lead_b_carries_its_own_lyric_syllables() {
     let prep = prepare_voices(&song, 3, VoiceChoice::default());
     let arr = arrange(&song, &prep, 3);
     let score = FullScore::new(&song, &prep, &arr);
-    let idx = score.staves.iter().position(|s| s.part == PartId::LeadB).expect("LeadB staff present in a duet");
+    let idx = score
+        .staves
+        .iter()
+        .position(|s| s.part == PartId::LeadB)
+        .expect("LeadB staff present in a duet");
 
     let expected: std::collections::HashSet<&str> = prep
         .comp

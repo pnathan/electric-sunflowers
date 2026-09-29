@@ -80,7 +80,9 @@ impl Store {
         if audio.is_silent() {
             return;
         }
-        let Some(stem) = run_strip(id.strip(), audio) else { return };
+        let Some(stem) = run_strip(id.strip(), audio) else {
+            return;
+        };
         lock(&self.tracks)[id.index()] = Some(stem);
     }
 }
@@ -92,7 +94,9 @@ struct Joint<const N: usize> {
 
 impl<const N: usize> Joint<N> {
     fn new() -> Self {
-        Joint { parts: Mutex::new(std::array::from_fn(|_| None)) }
+        Joint {
+            parts: Mutex::new(std::array::from_fn(|_| None)),
+        }
     }
 
     /// Stores part `i`; returns the sum of all parts when this was the last.
@@ -120,7 +124,9 @@ struct VecJoint {
 
 impl VecJoint {
     fn new(n: usize) -> Self {
-        VecJoint { parts: Mutex::new((0..n).map(|_| None).collect()) }
+        VecJoint {
+            parts: Mutex::new((0..n).map(|_| None).collect()),
+        }
     }
 
     /// Stores part `i`; returns the sum of all parts when this was the last.
@@ -142,14 +148,24 @@ impl VecJoint {
 
 /// Renders `song` with `seed`. `voice` `None` uses the song's voice. A thin
 /// shim over `render_with` with `VoiceChoice { a: voice, b: None }`.
-pub fn render(song: &Song, seed: u64, voice: Option<Voice>, progress: &dyn Progress) -> (Prepared, Stems) {
+pub fn render(
+    song: &Song,
+    seed: u64,
+    voice: Option<Voice>,
+    progress: &dyn Progress,
+) -> (Prepared, Stems) {
     render_with(song, seed, VoiceChoice { a: voice, b: None }, progress)
 }
 
 /// Renders `song` with `seed`, choosing both singers' voices (`voice.b` is
 /// ignored outside a duet; see `VoiceChoice`). The render's primary entry;
 /// `render` is a shim over this for the common one-voice case.
-pub fn render_with(song: &Song, seed: u64, voice: VoiceChoice, progress: &dyn Progress) -> (Prepared, Stems) {
+pub fn render_with(
+    song: &Song,
+    seed: u64,
+    voice: VoiceChoice,
+    progress: &dyn Progress,
+) -> (Prepared, Stems) {
     sfcore::fp::flush_denormals();
     let prepared = prepare_voices(song, seed, voice);
     let len = len_samples(prepared.timeline.end);
@@ -161,14 +177,27 @@ pub fn render_with(song: &Song, seed: u64, voice: VoiceChoice, progress: &dyn Pr
     let tasks = 6 + 2 + usize::from(v.lead_b.is_some()) + v.doubles.len() + v.choir.len();
     debug_assert!(v.lead_b.is_some() || tasks == TASKS);
 
-    let results = Store { tracks: Mutex::new(Default::default()) };
-    let (doubles, choir, done) = (VecJoint::new(v.doubles.len()), Joint::<4>::new(), AtomicUsize::new(0));
+    let results = Store {
+        tracks: Mutex::new(Default::default()),
+    };
+    let (doubles, choir, done) = (
+        VecJoint::new(v.doubles.len()),
+        Joint::<4>::new(),
+        AtomicUsize::new(0),
+    );
     let (store, doubles, choir, done, arr) = (&results, &doubles, &choir, &done, &arr);
     let finish = move || progress.advance(done.fetch_add(1, Ordering::Relaxed) + 1, tasks);
 
     rayon::scope(|s| {
         // Longest tasks first: the guitar (render plus body) is the critical path.
-        for id in [TrackId::Guitar, TrackId::Violin, TrackId::Harp, TrackId::HarmonyGuitar, TrackId::Bass, TrackId::Drums] {
+        for id in [
+            TrackId::Guitar,
+            TrackId::Violin,
+            TrackId::Harp,
+            TrackId::HarmonyGuitar,
+            TrackId::Bass,
+            TrackId::Drums,
+        ] {
             s.spawn(move |_| {
                 sfcore::fp::flush_denormals();
                 if let Some(stem) = band::render(id, arr, seed, len) {
@@ -177,7 +206,10 @@ pub fn render_with(song: &Song, seed: u64, voice: VoiceChoice, progress: &dyn Pr
                 finish();
             });
         }
-        let mut leads: Vec<(TrackId, &Singer, u64)> = vec![(TrackId::Lead, &v.lead, vocals::LEAD), (TrackId::Harmony, &v.harmony, vocals::HARMONY)];
+        let mut leads: Vec<(TrackId, &Singer, u64)> = vec![
+            (TrackId::Lead, &v.lead, vocals::LEAD),
+            (TrackId::Harmony, &v.harmony, vocals::HARMONY),
+        ];
         if let Some(lb) = &v.lead_b {
             leads.push((TrackId::LeadB, lb, vocals::LEAD_B));
         }
@@ -194,7 +226,11 @@ pub fn render_with(song: &Song, seed: u64, voice: VoiceChoice, progress: &dyn Pr
             s.spawn(move |_| {
                 sfcore::fp::flush_denormals();
                 let mut take = [SparseBuf::new(len), SparseBuf::new(len)];
-                vocals::panned_into(singer, singer_seed(seed, vocals::DOUBLES + i as u64), &mut take);
+                vocals::panned_into(
+                    singer,
+                    singer_seed(seed, vocals::DOUBLES + i as u64),
+                    &mut take,
+                );
                 if let Some(sum) = doubles.deposit(i, take) {
                     store.put(TrackId::Doubles, Stem::Stereo(sum));
                 }

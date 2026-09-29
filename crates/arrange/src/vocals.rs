@@ -79,7 +79,10 @@ fn event(n: &ComposedNote, offset: f64) -> VocalNote {
 }
 
 fn notes(lead: &[LeadNote], amp: f64) -> Vec<VocalNote> {
-    vocal_notes(lead, amp).iter().map(|n| event(n, 0.0)).collect()
+    vocal_notes(lead, amp)
+        .iter()
+        .map(|n| event(n, 0.0))
+        .collect()
 }
 
 /// The voice type not in `exclude` whose range centre is nearest `median`
@@ -109,8 +112,12 @@ fn harmony_voice(exclude: &[Voice], median: i32) -> Voice {
 /// order (and is a no-op in a solo song, whose one singer's notes are
 /// already in order).
 fn singer_notes(id: SingerId, lead: &[LeadNote], second: &[LeadNote]) -> Vec<LeadNote> {
-    let mut v: Vec<LeadNote> =
-        lead.iter().filter(|n| n.singer == id).cloned().chain(second.iter().filter(|n| n.singer == id).cloned()).collect();
+    let mut v: Vec<LeadNote> = lead
+        .iter()
+        .filter(|n| n.singer == id)
+        .cloned()
+        .chain(second.iter().filter(|n| n.singer == id).cloned())
+        .collect();
     v.sort_by(|a, b| a.t0.partial_cmp(&b.t0).expect("finite t0"));
     v
 }
@@ -135,7 +142,10 @@ fn double_takes(voice: Voice, phrasing: Phrasing, notes: &[VocalNote]) -> [Singe
         pan,
         offset,
     };
-    [make(-0.6, 0.013, 0.97, 7.0, 0.94), make(0.6, 0.021, 1.03, -6.0, 1.07)]
+    [
+        make(-0.6, 0.013, 0.97, 7.0, 0.94),
+        make(0.6, 0.021, 1.03, -6.0, 1.07),
+    ]
 }
 
 /// Every singer of the song.
@@ -148,15 +158,27 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
 
     let phrasing = song.phrasing_of(SingerId::A);
     let notes_a = singer_notes(SingerId::A, lead_notes, second);
-    let lead_style = SingStyle { phrasing, ..SingStyle::LEAD };
-    let lead = Singer { voice: p.voice, style: lead_style, notes: notes(&notes_a, 1.0), pan: 0.0, offset: 0.0 };
+    let lead_style = SingStyle {
+        phrasing,
+        ..SingStyle::LEAD
+    };
+    let lead = Singer {
+        voice: p.voice,
+        style: lead_style,
+        notes: notes(&notes_a, 1.0),
+        pan: 0.0,
+        offset: 0.0,
+    };
 
     let lead_b = p.voice_b.map(|vb| {
         let phrasing_b = song.phrasing_of(SingerId::B);
         let notes_b = singer_notes(SingerId::B, lead_notes, second);
         Singer {
             voice: vb,
-            style: SingStyle { phrasing: phrasing_b, ..SingStyle::LEAD },
+            style: SingStyle {
+                phrasing: phrasing_b,
+                ..SingStyle::LEAD
+            },
             notes: notes(&notes_b, 1.0),
             pan: 0.0,
             offset: 0.0,
@@ -165,17 +187,41 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
 
     // Harmony: only solo lines (never a shared `Both` line), so a duet's
     // harmony never doubles up on a line the two leads already share.
-    let lifted_solo: Vec<&LeadNote> =
-        lead_notes.iter().filter(|n| n.lift && matches!(form.lines[n.line_idx].part, Part::Solo(_))).collect();
+    let lifted_solo: Vec<&LeadNote> = lead_notes
+        .iter()
+        .filter(|n| n.lift && matches!(form.lines[n.line_idx].part, Part::Solo(_)))
+        .collect();
     let mut hl: Vec<LeadNote> = Vec::new();
-    let lifted_a: Vec<LeadNote> = lifted_solo.iter().filter(|n| n.singer == SingerId::A).map(|&n| n.clone()).collect();
+    let lifted_a: Vec<LeadNote> = lifted_solo
+        .iter()
+        .filter(|n| n.singer == SingerId::A)
+        .map(|&n| n.clone())
+        .collect();
     if !lifted_a.is_empty() {
-        hl.extend(harmony_line(&lifted_a, form, &p.timeline, song, p.tonic, p.voice != Voice::Soprano));
+        hl.extend(harmony_line(
+            &lifted_a,
+            form,
+            &p.timeline,
+            song,
+            p.tonic,
+            p.voice != Voice::Soprano,
+        ));
     }
     if let Some(vb) = p.voice_b {
-        let lifted_b: Vec<LeadNote> = lifted_solo.iter().filter(|n| n.singer == SingerId::B).map(|&n| n.clone()).collect();
+        let lifted_b: Vec<LeadNote> = lifted_solo
+            .iter()
+            .filter(|n| n.singer == SingerId::B)
+            .map(|&n| n.clone())
+            .collect();
         if !lifted_b.is_empty() {
-            hl.extend(harmony_line(&lifted_b, form, &p.timeline, song, p.tonic, vb != Voice::Soprano));
+            hl.extend(harmony_line(
+                &lifted_b,
+                form,
+                &p.timeline,
+                song,
+                p.tonic,
+                vb != Voice::Soprano,
+            ));
         }
     }
     hl.sort_by(|a, b| a.t0.partial_cmp(&b.t0).expect("finite t0"));
@@ -190,7 +236,12 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
     }
     let harmony = Singer {
         voice: harmony_voice(&exclude, median),
-        style: SingStyle { vibrato_scale: 0.8, breath_scale: 1.2, phrasing, ..SingStyle::LEAD },
+        style: SingStyle {
+            vibrato_scale: 0.8,
+            breath_scale: 1.2,
+            phrasing,
+            ..SingStyle::LEAD
+        },
         notes: notes(&hl, 0.9),
         pan: 0.0,
         offset: 0.008,
@@ -198,24 +249,37 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
 
     // Doubles: each singer's own melody notes (not a shared line's second
     // voice) in repeated lifted sections; A's two takes first, then B's.
-    let repeated_a: Vec<LeadNote> =
-        lead_notes.iter().filter(|n| n.singer == SingerId::A && n.lift && sec_of(n).is_repeat_lift()).cloned().collect();
+    let repeated_a: Vec<LeadNote> = lead_notes
+        .iter()
+        .filter(|n| n.singer == SingerId::A && n.lift && sec_of(n).is_repeat_lift())
+        .cloned()
+        .collect();
     let mut doubles: Vec<Singer> = double_takes(p.voice, phrasing, &notes(&repeated_a, 0.8)).into();
     if let Some(vb) = p.voice_b {
         let phrasing_b = song.phrasing_of(SingerId::B);
-        let repeated_b: Vec<LeadNote> =
-            lead_notes.iter().filter(|n| n.singer == SingerId::B && n.lift && sec_of(n).is_repeat_lift()).cloned().collect();
+        let repeated_b: Vec<LeadNote> = lead_notes
+            .iter()
+            .filter(|n| n.singer == SingerId::B && n.lift && sec_of(n).is_repeat_lift())
+            .cloned()
+            .collect();
         doubles.extend(double_takes(vb, phrasing_b, &notes(&repeated_b, 0.8)));
     }
 
-    Vocals { lead, lead_b, harmony, doubles, choir: choir_singers(p, seed) }
+    Vocals {
+        lead,
+        lead_b,
+        harmony,
+        doubles,
+        choir: choir_singers(p, seed),
+    }
 }
 
 /// The choir singers (see the module docs).
 pub fn choir_singers(p: &Prepared, seed: u64) -> [Vec<Singer>; 4] {
     let form = &p.form;
     let tl = &p.timeline;
-    let sings = |s: &Sec| s.is_repeat_lift() || matches!(s.kind, SectionKind::Bridge | SectionKind::Outro);
+    let sings =
+        |s: &Sec| s.is_repeat_lift() || matches!(s.kind, SectionKind::Bridge | SectionKind::Outro);
     let vs = choir::voicings(form, tl, sings);
     let mut parts: [Vec<Singer>; 4] = Default::default();
     if vs.is_empty() {
@@ -249,12 +313,22 @@ pub fn choir_singers(p: &Prepared, seed: u64) -> [Vec<Singer>; 4] {
                 let sec = &form.sections[sg.sec];
                 let t0 = tl.to_time(sg.b0) + 0.015 * r.bipolar();
                 let sec_end = sg.b1 == sec.beats(&form.meter).end;
-                let early = if sec_end { r.range(0.1, 0.18) } else { r.range(0.01, 0.03) };
+                let early = if sec_end {
+                    r.range(0.1, 0.18)
+                } else {
+                    r.range(0.01, 0.03)
+                };
                 let t1 = tl.to_time(sg.b1) - early;
-                let level = if sec.kind == SectionKind::Bridge { 0.65 } else { 0.8 };
+                let level = if sec.kind == SectionKind::Bridge {
+                    0.65
+                } else {
+                    0.8
+                };
                 let amp = level * r.range(0.88, 1.08);
                 // Phrase breaks use the sung onset, lateness included.
-                let phrase_start = notes.last().is_none_or(|pn| t0 + style.lateness as f64 - pn.t1 > CHOIR_PHRASE_GAP);
+                let phrase_start = notes
+                    .last()
+                    .is_none_or(|pn| t0 + style.lateness as f64 - pn.t1 > CHOIR_PHRASE_GAP);
                 notes.push(VocalNote {
                     t0,
                     t1,
@@ -269,10 +343,19 @@ pub fn choir_singers(p: &Prepared, seed: u64) -> [Vec<Singer>; 4] {
             }
             let n = notes.len();
             for k in 0..n {
-                notes[k].phrase_end = k + 1 == n || notes[k + 1].t0 + style.lateness as f64 - notes[k].t1 > CHOIR_PHRASE_GAP;
+                notes[k].phrase_end = k + 1 == n
+                    || notes[k + 1].t0 + style.lateness as f64 - notes[k].t1 > CHOIR_PHRASE_GAP;
             }
-            let pan = (CHOIR_PANS[part] + (i as f64 - (CHOIR_SINGERS as f64 - 1.0) / 2.0) * CHOIR_SPREAD).clamp(-0.9, 0.9);
-            singers.push(Singer { voice: CHOIR_VOICES[part], style, notes, pan: pan as f32, offset: 0.0 });
+            let pan = (CHOIR_PANS[part]
+                + (i as f64 - (CHOIR_SINGERS as f64 - 1.0) / 2.0) * CHOIR_SPREAD)
+                .clamp(-0.9, 0.9);
+            singers.push(Singer {
+                voice: CHOIR_VOICES[part],
+                style,
+                notes,
+                pan: pan as f32,
+                offset: 0.0,
+            });
         }
     }
     parts
