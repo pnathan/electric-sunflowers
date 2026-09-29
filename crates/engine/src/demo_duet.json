@@ -1,0 +1,131 @@
+{
+ "title": "Two Whistles",
+ "note": "A duet demo: a man and a woman on the same road, verses apart, chorus together, a bridge of call and response.",
+ "key": "D",
+ "mode": "major",
+ "meter": "4/4",
+ "tempo": 100,
+ "guitar": "travis",
+ "voice": "baritone",
+ "phrasing": {"delivery": "flowing", "endings": "released"},
+ "duet": {"voice": "alto", "phrasing": {"delivery": "legato", "endings": "held"}},
+ "band": {
+  "drums": "brushes",
+  "bass": true,
+  "harmonyGuitar": true,
+  "harp": false,
+  "violin": true,
+  "choir": false,
+  "harmonies": true,
+  "doubles": true
+ },
+ "sections": [
+  {
+   "type": "intro",
+   "chords": ["D", "G", "D", "A"]
+  },
+  {
+   "type": "verse",
+   "lines": [
+    {
+     "syl": "I set out at break of day",
+     "ph": "ay|s eh t|aw t|ae t|b r ey k|ah v|d ey",
+     "chords": ["D", "G"]
+    },
+    {
+     "syl": "West wind blew cold and sharp",
+     "ph": "w eh s t|w ih n d|b l uw|k ow l d|ae n d|sh aa r p",
+     "chords": ["D", "A"]
+    },
+    {
+     "syl": "I thought of her back home",
+     "ph": "ay|th ao t|ah v|hh er|b ae k|hh ow m",
+     "chords": ["Bm", "G"]
+    },
+    {
+     "syl": "The gate stood gold at dawn",
+     "ph": "dh ax|g ey t|s t uh d|g ow l d|ae t|d ao n",
+     "chords": ["D", "A"]
+    }
+   ]
+  },
+  {
+   "type": "verse",
+   "sing": "B",
+   "lines": [
+    {
+     "syl": "I rose up while the house was still",
+     "ph": "ay|r ow z|ah p|w ay l|dh ax|hh aw s|w ah z|s t ih l",
+     "chords": ["D", "G"]
+    },
+    {
+     "syl": "I packed my shawl and left the door",
+     "ph": "ay|p ae k t|m ay|sh ao l|ae n d|l eh f t|dh ax|d ao r",
+     "chords": ["D", "A"]
+    },
+    {
+     "syl": "I thought of him on that same road",
+     "ph": "ay|th ao t|ah v|hh ih m|aa n|dh ae t|s ey m|r ow d",
+     "chords": ["Bm", "G"]
+    },
+    {
+     "syl": "And hoped that he was near",
+     "ph": "ae n d|hh ow p t|dh ae t|hh iy|w ah z|n ih r",
+     "chords": ["D", "A"]
+    }
+   ]
+  },
+  {
+   "type": "chorus",
+   "sing": "both",
+   "lead": "B",
+   "blend": "harmony",
+   "lines": [
+    {
+     "syl": "So we walk side by side down the road",
+     "ph": "s ow|w iy|w ao k|s ay d|b ay|s ay d|d aw n|dh ax|r ow d",
+     "chords": ["G", "D"]
+    },
+    {
+     "syl": "Hand in hand we sing this song",
+     "ph": "hh ae n d|ih n|hh ae n d|w iy|s ih ng|dh ih s|s ao ng",
+     "chords": ["A", "D"],
+     "blend": "octave"
+    }
+   ]
+  },
+  {
+   "type": "bridge",
+   "lines": [
+    {
+     "syl": "Where does this road lead love",
+     "ph": "w eh r|d ah z|dh ih s|r ow d|l iy d|l ah v",
+     "chords": ["Em", "A"],
+     "sing": "A"
+    },
+    {
+     "syl": "It leads us on my dear",
+     "ph": "ih t|l iy d z|ah s|aa n|m ay|d ih r",
+     "chords": ["G", "D"],
+     "sing": "B"
+    },
+    {
+     "syl": "Will you still be there at dusk",
+     "ph": "w ih l|y uw|s t ih l|b iy|dh eh r|ae t|d ah s k",
+     "chords": ["Em", "A"],
+     "sing": "A"
+    },
+    {
+     "syl": "I will wait as long as you ask",
+     "ph": "ay|w ih l|w ey t|ae z|l ao ng|ae z|y uw|ae s k",
+     "chords": ["G", "A"],
+     "sing": "B"
+    }
+   ]
+  },
+  {
+   "type": "chorus",
+   "same": true
+  }
+ ]
+}

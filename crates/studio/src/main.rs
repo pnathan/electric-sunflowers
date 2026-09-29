@@ -8,13 +8,14 @@
 //! `<stem>.ogg` audio and `<stem>.render.json` sidecars. `--screenshot`
 //! runs a script: open the song, wait until it is ready, seek, play for
 //! `--play` seconds (logging the position), save the window and quit.
-//! `--new` opens the new-song form.
+//! `--new` opens the new-song form; `--mixer` opens the mixer.
 
 mod app;
 mod audio;
 mod jobs;
 mod library;
 mod lyrics;
+mod mixer;
 mod settings_panel;
 mod sheetview;
 
@@ -23,7 +24,7 @@ use std::process::ExitCode;
 
 use app::{Options, View};
 
-const USAGE: &str = "usage: studio [SONG.json] [--dir DIR] [--open NAME] [--view lyrics|sheet|both] [--volume V] [--seek SECS] [--play SECS] [--screenshot PNG] [--new]";
+const USAGE: &str = "usage: studio [SONG.json] [--dir DIR] [--open NAME] [--view lyrics|sheet|both] [--volume V] [--seek SECS] [--play SECS] [--screenshot PNG] [--new] [--mixer]";
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
     let mut o = Options {
@@ -36,6 +37,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
         play: 0.0,
         volume: 0.8,
         new_song: false,
+        mixer: false,
     };
     let mut it = args.peekable();
     while let Some(a) = it.next() {
@@ -50,6 +52,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
             "-h" | "--help" => return Err(USAGE.into()),
             "--dir" => o.dir = PathBuf::from(val("--dir")?),
             "--new" => o.new_song = true,
+            "--mixer" => o.mixer = true,
             "--open" => o.open = Some(val("--open")?),
             "--view" => {
                 let v = val("--view")?;
@@ -122,6 +125,8 @@ mod tests {
         assert_eq!(o.dir, PathBuf::from("/x"));
         assert_eq!(o.view, View::Sheet);
         assert_eq!((o.play, o.seek), (3.0, Some(40.5)));
+        assert!(!o.mixer);
+        assert!(args("--mixer").unwrap().mixer);
         assert!(args("--view nope").is_err());
         assert!(args("--play").is_err());
         assert!(args("--play -1").is_err());

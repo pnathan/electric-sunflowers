@@ -52,24 +52,21 @@ pub struct MixSettings {
 
 impl MixSettings {
     /// Strip pans, 0 dB faders, nothing muted or soloed, the shipped
-    /// ducking depth. `stems` is unused for now; wave 2 reads it to tell
-    /// whether a `TrackId::LeadB` is present and, if so, pans the two leads
-    /// to `DUET_PAN_A`/`DUET_PAN_B` instead of their strip pan (both 0
-    /// today).
-    pub fn default_for(_stems: &Stems) -> MixSettings {
+    /// ducking depth. When `stems` has a `TrackId::LeadB` stem (a duet),
+    /// the two leads pan to `DUET_PAN_A`/`DUET_PAN_B` instead of their
+    /// strip pan (both 0); a solo song (no `LeadB` stem) is unchanged.
+    pub fn default_for(stems: &Stems) -> MixSettings {
+        let duet = stems.get(TrackId::LeadB).is_some();
         let tracks = std::array::from_fn(|i| {
             let id = TrackId::ALL[i];
-            TrackMix {
-                gain_db: 0.0,
-                pan: id.strip().pan,
-                mute: false,
-                solo: false,
-            }
+            let pan = match id {
+                TrackId::Lead if duet => DUET_PAN_A,
+                TrackId::LeadB if duet => DUET_PAN_B,
+                _ => id.strip().pan,
+            };
+            TrackMix { gain_db: 0.0, pan, mute: false, solo: false }
         });
-        MixSettings {
-            tracks,
-            duck_db: crate::mix::DUCK_DB as f32,
-        }
+        MixSettings { tracks, duck_db: crate::mix::DUCK_DB as f32 }
     }
 
     /// Whether `id` sounds: not muted, and soloed when any track is soloed.
@@ -183,10 +180,7 @@ mod tests {
     use super::*;
 
     fn stub_stems() -> Stems {
-        Stems {
-            len: 0,
-            tracks: Default::default(),
-        }
+        Stems { len: 0, tracks: Default::default() }
     }
 
     #[test]
@@ -252,10 +246,7 @@ mod tests {
             "unknown_top": true,
         });
         let (out, warn) = MixSettings::from_json(&v, &d);
-        assert_eq!(
-            out.tracks[TrackId::Violin.index()].gain_db,
-            d.tracks[TrackId::Violin.index()].gain_db
-        );
+        assert_eq!(out.tracks[TrackId::Violin.index()].gain_db, d.tracks[TrackId::Violin.index()].gain_db);
         assert_eq!(out.tracks[TrackId::Violin.index()].pan, PAN_MAX);
         assert_eq!(out.duck_db, DUCK_DB_MAX);
         assert!(warn.iter().any(|w| w.contains("violin.gain_db")));

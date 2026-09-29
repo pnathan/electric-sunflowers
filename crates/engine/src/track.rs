@@ -14,6 +14,8 @@ use song::{Band, DrumKit};
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum TrackId {
     Lead,
+    /// Singer B of a duet; present only when the song is a duet.
+    LeadB,
     Doubles,
     Harmony,
     Choir,
@@ -26,12 +28,13 @@ pub enum TrackId {
 }
 
 /// Number of tracks.
-pub const N_TRACKS: usize = 10;
+pub const N_TRACKS: usize = 11;
 
 impl TrackId {
     /// Every track in mix order (`id as usize` is the position).
     pub const ALL: [TrackId; N_TRACKS] = [
         TrackId::Lead,
+        TrackId::LeadB,
         TrackId::Doubles,
         TrackId::Harmony,
         TrackId::Choir,
@@ -55,6 +58,7 @@ impl TrackId {
     pub const fn name(self) -> &'static str {
         match self {
             TrackId::Lead => "lead",
+            TrackId::LeadB => "lead_b",
             TrackId::Doubles => "doubles",
             TrackId::Harmony => "harmony",
             TrackId::Choir => "choir",
@@ -257,6 +261,17 @@ pub const LEAD_SLAP: Slapback = Slapback {
 pub const STRIPS: [Strip; N_TRACKS] = [
     Strip {
         label: "Lead vocal",
+        gain: 1.25,
+        pan: 0.0,
+        send: 0.2,
+        band: None,
+        eq: &[hp(90.0), pk(250.0, 1.0, -1.5), pk(2900.0, 1.0, 1.5)],
+        body: None,
+        comp: Some(VOCAL_COMP),
+        slapback: Some(LEAD_SLAP),
+    },
+    Strip {
+        label: "Lead vocal B",
         gain: 1.25,
         pan: 0.0,
         send: 0.2,

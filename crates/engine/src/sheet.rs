@@ -8,10 +8,10 @@
 
 use compose::form::Form;
 use compose::melody::LeadNote;
-use compose::prepare::{prepare, Prepared};
+use compose::prepare::{prepare_voices, Prepared, VoiceChoice};
 use compose::timeline::Timeline;
 use serde::Serialize;
-use song::{Meter, Mode, SectionKind, Song, Voice};
+use song::{Meter, Mode, Part, SectionKind, SingerId, Song, Voice};
 
 /// Tolerance in beats when matching a chord onset to a note.
 const EPS: f64 = 1e-6;
@@ -36,6 +36,8 @@ pub struct SongSheet {
     /// Beats per minute before the final ritard.
     pub tempo: f64,
     pub voice: Voice,
+    /// Singer B's voice; `None` outside a duet.
+    pub voice_b: Option<Voice>,
     pub seed: u64,
     /// Length of the rendered audio in seconds, tail included.
     pub duration_s: f64,
@@ -84,6 +86,34 @@ pub struct SheetLine {
     pub words: Vec<SheetWord>,
     /// In time order.
     pub chords: Vec<SheetChord>,
+    /// Which singer(s) carry this line; `None` for an instrumental
+    /// section's chord line.
+    pub singer: Option<SheetPart>,
+}
+
+/// A lyric line's singer(s) (design 4.6): `part` is `"A"`, `"B"` or
+/// `"both"`; `melody` is whichever of `"A"`/`"B"` carries the tune; `label`
+/// names the voice(s), e.g. "Baritone" or "Baritone + Alto".
+#[derive(Clone, Debug, Serialize)]
+pub struct SheetPart {
+    pub part: String,
+    pub melody: String,
+    pub label: String,
+}
+
+/// `part`'s `SheetPart`, `voice_a`/`voice_b` naming each singer's voice.
+fn sheet_part(part: Part, voice_a: Voice, voice_b: Option<Voice>) -> SheetPart {
+    let voice_of = |id: SingerId| if id == SingerId::A { voice_a } else { voice_b.unwrap_or(voice_a) };
+    match part {
+        Part::Solo(id) => {
+            SheetPart { part: id.as_str().to_string(), melody: id.as_str().to_string(), label: capitalize(voice_of(id).as_str()) }
+        }
+        Part::Both { melody, .. } => SheetPart {
+            part: "both".to_string(),
+            melody: melody.as_str().to_string(),
+            label: format!("{} + {}", capitalize(voice_of(SingerId::A).as_str()), capitalize(voice_of(SingerId::B).as_str())),
+        },
+    }
 }
 
 /// One sung syllable.
@@ -130,9 +160,16 @@ pub struct SheetChord {
 }
 
 /// The sheet of `song` rendered with `seed` and `voice` (`None` keeps the
-/// song's voice). Same preparation as `render`, so the times match.
+/// song's voice). Same preparation as `render`, so the times match. A thin
+/// shim over `song_sheet_with` with `VoiceChoice { a: voice, b: None }`.
 pub fn song_sheet(song: &Song, seed: u64, voice: Option<Voice>) -> SongSheet {
-    let p = prepare(song, seed, voice);
+    song_sheet_with(song, seed, VoiceChoice { a: voice, b: None })
+}
+
+/// `song_sheet`, choosing both singers' voices (`voice.b` ignored outside
+/// a duet; see `VoiceChoice`).
+pub fn song_sheet_with(song: &Song, seed: u64, voice: VoiceChoice) -> SongSheet {
+    let p = prepare_voices(song, seed, voice);
     sheet_from(song, seed, &p)
 }
 
@@ -144,11 +181,7 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
     let bpb = form.bpb() as usize;
 
     // Lead notes by line, then by syllable index.
-    let mut notes: Vec<Vec<Option<&LeadNote>>> = form
-        .lines
-        .iter()
-        .map(|l| vec![None; l.syls.len()])
-        .collect();
+    let mut notes: Vec<Vec<Option<&LeadNote>>> = form.lines.iter().map(|l| vec![None; l.syls.len()]).collect();
     for n in &p.comp.lead {
         if let Some(slot) = notes.get_mut(n.line_idx).and_then(|v| v.get_mut(n.i)) {
             *slot = Some(n);
@@ -168,12 +201,7 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
             .filter_map(|bi| form.bars.get(bi).map(|b| (bi, b)))
             .map(|(bi, b)| SheetBar {
                 t0: tl.to_time((bi * bpb) as f64),
-                chords: b
-                    .chords
-                    .as_slice()
-                    .iter()
-                    .map(|&c| form.chord(c).symbol.clone())
-                    .collect(),
+                chords: b.chords.as_slice().iter().map(|&c| form.chord(c).symbol.clone()).collect(),
             })
             .collect();
         let lines = if sec.is_sung() {
@@ -183,16 +211,9 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
                 .map(|(li, l)| {
                     let lb0 = l.start_bar * bpb;
                     let lb1 = (l.start_bar + l.n_bars) * bpb;
-                    sung_line(
-                        form,
-                        tl,
-                        si,
-                        sec.start_bar,
-                        l.syls.as_slice(),
-                        &notes[li],
-                        lb0,
-                        lb1,
-                    )
+                    let mut line = sung_line(form, tl, si, sec.start_bar, l.syls.as_slice(), &notes[li], lb0, lb1);
+                    line.singer = Some(sheet_part(l.part, p.voice, p.voice_b));
+                    line
                 })
                 .collect()
         } else {
@@ -204,14 +225,11 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
                 syllables: Vec::new(),
                 words: Vec::new(),
                 chords: chords.into_iter().map(|(c, _)| c).collect(),
+                singer: None,
             }]
         };
         let kind_name = capitalize(sec.kind.as_str());
-        let label = if !sec.is_sung()
-            && !matches!(
-                sec.kind,
-                SectionKind::Intro | SectionKind::Interlude | SectionKind::Outro
-            ) {
+        let label = if !sec.is_sung() && !matches!(sec.kind, SectionKind::Intro | SectionKind::Interlude | SectionKind::Outro) {
             "Instrumental".to_string()
         } else if kind_total[sec.kind as usize] > 1 {
             format!("{kind_name} {}", sec.occ + 1)
@@ -242,6 +260,7 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
         meter: song.meter,
         tempo: song.tempo_bpm,
         voice: p.voice,
+        voice_b: p.voice_b,
         seed,
         duration_s: tl.end,
         sections,
@@ -251,41 +270,20 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
 /// Chord onsets in beats `b0..b1` of section `si` (bars from `sec_bar0`),
 /// with the chord sounding at `b0` restated when no onset falls there.
 /// Each chord comes with its onset beat; `at` is left 0.
-fn chords_in(
-    form: &Form,
-    tl: &Timeline,
-    si: usize,
-    sec_bar0: usize,
-    b0: usize,
-    b1: usize,
-) -> Vec<(SheetChord, f64)> {
+fn chords_in(form: &Form, tl: &Timeline, si: usize, sec_bar0: usize, b0: usize, b1: usize) -> Vec<(SheetChord, f64)> {
     let bpb = form.bpb() as usize;
     let (fb0, fb1) = (b0 as f64, b1 as f64);
     let mut out: Vec<(SheetChord, f64)> = Vec::new();
     let bar_of = |b: f64| ((b / bpb as f64).floor() as usize).saturating_sub(sec_bar0);
-    let starts_at_b0 = tl
-        .segs
-        .iter()
-        .any(|s| s.sec == si && (s.b0 - fb0).abs() < EPS);
+    let starts_at_b0 = tl.segs.iter().any(|s| s.sec == si && (s.b0 - fb0).abs() < EPS);
     if !starts_at_b0 && !tl.segs.is_empty() {
         let s = &tl.segs[tl.seg_at(fb0)];
         out.push((
-            SheetChord {
-                at: 0,
-                name: form.chord(s.chord).symbol.clone(),
-                t: tl.to_time(fb0),
-                beat: fb0,
-                bar: bar_of(fb0),
-                carried: true,
-            },
+            SheetChord { at: 0, name: form.chord(s.chord).symbol.clone(), t: tl.to_time(fb0), beat: fb0, bar: bar_of(fb0), carried: true },
             fb0,
         ));
     }
-    for s in tl
-        .segs
-        .iter()
-        .filter(|s| s.sec == si && s.b0 >= fb0 - EPS && s.b0 < fb1 - EPS)
-    {
+    for s in tl.segs.iter().filter(|s| s.sec == si && s.b0 >= fb0 - EPS && s.b0 < fb1 - EPS) {
         out.push((
             SheetChord {
                 at: 0,
@@ -340,26 +338,13 @@ fn sung_line(
         last_t = t1;
         spans.push(span);
         if new_word {
-            words.push(SheetWord {
-                text: String::new(),
-                at,
-                t0,
-                t1,
-            });
+            words.push(SheetWord { text: String::new(), at, t0, t1 });
         }
         let wi = words.len() - 1;
         let w = &mut words[wi];
         w.text.push_str(&s.text);
         w.t1 = t1;
-        syllables.push(SheetSyllable {
-            text: s.text.clone(),
-            at,
-            word: wi,
-            t0,
-            t1,
-            midi,
-            stress: s.stress,
-        });
+        syllables.push(SheetSyllable { text: s.text.clone(), at, word: wi, t0, t1, midi, stress: s.stress });
     }
 
     let mut chords = Vec::new();
@@ -370,24 +355,14 @@ fn sung_line(
 
     let t0 = syllables.first().map_or(bar_t0, |s| s.t0.min(bar_t0));
     let t1 = syllables.last().map_or(bar_t1, |s| s.t1.max(bar_t1));
-    SheetLine {
-        t0,
-        t1,
-        text,
-        syllables,
-        words,
-        chords,
-    }
+    SheetLine { t0, t1, text, syllables, words, chords, singer: None }
 }
 
 /// Char offset for a chord onset at beat `b`: the syllable whose note
 /// covers `b`; on a rest, the end of the syllable before, 0 when none is
 /// before, `len` when none is after.
 fn place(b: f64, spans: &[(f64, f64)], syls: &[SheetSyllable], len: usize) -> usize {
-    if let Some(k) = spans
-        .iter()
-        .position(|&(s0, s1)| s0 <= b + EPS && b + EPS < s1)
-    {
+    if let Some(k) = spans.iter().position(|&(s0, s1)| s0 <= b + EPS && b + EPS < s1) {
         return syls[k].at;
     }
     match spans.iter().rposition(|&(s0, _)| s0 < b) {
@@ -415,10 +390,7 @@ impl SongSheet {
         let mut out = String::new();
         out.push_str(&self.title);
         out.push('\n');
-        let mut head = format!(
-            "{} {}, {}, {:.0} bpm, {}",
-            self.key, self.mode, self.meter, self.tempo, self.voice
-        );
+        let mut head = format!("{} {}, {}, {:.0} bpm, {}", self.key, self.mode, self.meter, self.tempo, self.voice);
         if let Some(l) = self.style_label.as_ref().or(self.style.as_ref()) {
             head.push_str(", ");
             head.push_str(l);
@@ -449,6 +421,12 @@ impl SongSheet {
                     out.push_str(chords.trim_end());
                     out.push('\n');
                 }
+                let prefix = match (self.voice_b.is_some(), line.singer.as_ref().map(|s| s.part.as_str())) {
+                    (true, Some("B")) => "[B] ",
+                    (true, Some("both")) => "[A+B] ",
+                    _ => "",
+                };
+                out.push_str(prefix);
                 out.push_str(lyric.trim_end());
                 out.push('\n');
             }
@@ -496,33 +474,16 @@ mod tests {
     use super::*;
 
     fn chord(at: usize, name: &str) -> SheetChord {
-        SheetChord {
-            at,
-            name: name.into(),
-            t: 0.0,
-            beat: 0.0,
-            bar: 0,
-            carried: false,
-        }
+        SheetChord { at, name: name.into(), t: 0.0, beat: 0.0, bar: 0, carried: false }
     }
 
     fn line(text: &str, chords: Vec<SheetChord>) -> SheetLine {
-        SheetLine {
-            t0: 0.0,
-            t1: 1.0,
-            text: text.into(),
-            syllables: Vec::new(),
-            words: Vec::new(),
-            chords,
-        }
+        SheetLine { t0: 0.0, t1: 1.0, text: text.into(), syllables: Vec::new(), words: Vec::new(), chords, singer: None }
     }
 
     #[test]
     fn layout_puts_chords_over_their_columns() {
-        let (c, l) = layout(&line(
-            "the ferry leaves",
-            vec![chord(4, "G"), chord(10, "C")],
-        ));
+        let (c, l) = layout(&line("the ferry leaves", vec![chord(4, "G"), chord(10, "C")]));
         assert_eq!(c, "    G     C");
         assert_eq!(l, "the ferry leaves");
     }

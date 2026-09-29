@@ -64,6 +64,11 @@ fn demo_mix_is_finite_and_normalised() {
     let (stems, m) = render_mix(song, 1234);
     assert_valid(&m, stems.len);
     for id in TrackId::ALL {
+        if id == TrackId::LeadB {
+            // The demo song is solo: no singer B, so no lead B stem.
+            assert!(stems.get(id).is_none(), "solo demo has a {} stem", id.name());
+            continue;
+        }
         assert!(stems.get(id).is_some(), "demo has no {} stem", id.name());
     }
     assert!(stems.get(TrackId::Lead).is_some_and(|p| p.slap.is_some()));
@@ -86,6 +91,7 @@ fn has_events(song: &Song, seed: u64, id: TrackId) -> bool {
     let v = &a.vocals;
     match id {
         TrackId::Lead => !v.lead.notes.is_empty(),
+        TrackId::LeadB => v.lead_b.as_ref().is_some_and(|s| !s.notes.is_empty()),
         TrackId::Doubles => v.doubles.iter().any(|s| !s.notes.is_empty()),
         TrackId::Harmony => !v.harmony.notes.is_empty(),
         TrackId::Choir => v.choir.iter().flatten().any(|s| !s.notes.is_empty()),
