@@ -19,6 +19,10 @@ build:release -c opt
 build:release --@rules_rust//rust/settings:lto=fat
 build:release --@rules_rust//rust/settings:codegen_units=1
 
+# --- CI: optimised without LTO. The render tests run the DSP crates over a
+# whole song; unoptimised they take 6+ minutes on a runner, optimised ~20 s.
+build:ci -c opt
+
 # --- Lint: rustfmt-check and clippy aspects, self-employment's convention.
 # On for every build/test now that the tree is rustfmt-clean and the
 # clippy findings are fixed or allowed with a reason (issue #4). Turn off

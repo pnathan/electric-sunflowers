@@ -37,6 +37,8 @@ rust_test(
 
 rust_test(
     name = "mixer",
+    # Full-song renders, unoptimised under fastbuild; they exceed the default 300 s on a CI runner.
+    timeout = "long",
     srcs = ["tests/mixer.rs"],
     edition = "2021",
     deps = [":engine"] + ENGINE_LOCAL_DEPS + all_crate_deps(
@@ -47,6 +49,8 @@ rust_test(
 
 rust_test(
     name = "render_test",
+    # Full-song renders, unoptimised under fastbuild; they exceed the default 300 s on a CI runner.
+    timeout = "long",
     srcs = ["tests/render_test.rs"],
     edition = "2021",
     deps = [":engine"] + ENGINE_LOCAL_DEPS + all_crate_deps(

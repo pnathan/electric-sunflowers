@@ -78,7 +78,7 @@ pub enum Ask {
 pub fn track_label(id: TrackId) -> &'static str {
     match id {
         TrackId::Lead => "Lead",
-        TrackId::LeadB => "Lead B",
+        TrackId::LeadB => "Voice B",
         TrackId::Doubles => "Doubles",
         TrackId::Harmony => "Harmony",
         TrackId::Choir => "Choir",
