@@ -16,5 +16,10 @@ t = open('crates/wasm/page.tpl.html').read()
 w = base64.b64encode(open('target/wasm32-unknown-unknown/release/sfwasm.wasm', 'rb').read()).decode()
 s = open('crates/wasm/short-demo.json').read()
 f = open('crates/wasm/full-demo.json').read()
-open(sys.argv[1], 'w').write(t.replace('__SONG__', s).replace('__FULL__', f).replace('__WASM__', w))
+import json, re
+rs = open('crates/songwriter/src/prompt.rs').read()
+raw = re.search(r'format!\(\s*r#"(.*?)"#,', rs, re.S).group(1)
+st = open('crates/wasm/styles.json').read()
+out = t.replace('__SONG__', s).replace('__FULL__', f).replace('__STYLES__', st).replace('__PROMPT__', json.dumps(raw).replace('</', '<\\/')).replace('__WASM__', w)
+open(sys.argv[1], 'w').write(out)
 PY

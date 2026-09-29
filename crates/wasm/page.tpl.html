@@ -86,6 +86,23 @@ select { font: 500 0.95rem var(--mono); padding: 8px; background: var(--bg); col
   </section>
 
 
+
+  <section class="card" id="writeCard" aria-label="Write a song" hidden>
+    <h2>Ask Claude to write one</h2>
+    <label class="field" for="mood">Mood or subject
+      <textarea id="mood" style="height:72px;margin-top:0" placeholder="A wedding waltz for two goat farmers"></textarea></label>
+    <div class="row">
+      <label class="field" for="wstyle"><span>Style</span><select id="wstyle"></select></label>
+      <label class="field" for="wvoice"><span>Singer</span>
+        <select id="wvoice"><option value="">Songwriter's choice</option><option>bass</option><option>baritone</option><option>tenor</option><option>alto</option><option>soprano</option></select></label>
+    </div>
+    <div class="row">
+      <button id="write" type="button">Write and render</button>
+      <button id="stopw" type="button" class="quiet" hidden>Stop</button>
+    </div>
+    <div class="status" id="wstatus" role="status">Claude writes the JSON; the engine renders it. It costs your Claude usage and takes a minute or two.</div>
+  </section>
+
   <section class="card" aria-label="Arrangement">
     <h2>Arrangement</h2>
     <div class="row">
@@ -130,6 +147,8 @@ select { font: 500 0.95rem var(--mono); padding: 8px; background: var(--bg); col
 
 <script id="song-json" type="application/json">__SONG__</script>
 <script id="full-json" type="application/json">__FULL__</script>
+<script id="styles-json" type="application/json">__STYLES__</script>
+<script id="prompt-tpl" type="application/json">__PROMPT__</script>
 <script id="wasm-b64" type="text/plain">__WASM__</script>
 <script id="worker-src" type="text/plain">
 var inst = null;
@@ -221,6 +240,58 @@ onmessage = function (e) {
   $('dice').addEventListener('click', function () { $('seed').value = Math.floor(Math.random() * 100000); });
   $('json').addEventListener('input', sync);
   sync();
+
+  // ---- Claude writes the song (the songwriter prompt is the Rust crate's, filled in here) ----
+  var TABLES = JSON.parse($('styles-json').textContent), PTPL = JSON.parse($('prompt-tpl').textContent);
+  var REGISTERS = ['celebratory','celebratory','playful','playful','wry and funny','tender','flirtatious','defiant','devotional','restless, road-bound','serene','bittersweet','mournful'];
+  var wctl = null;
+  function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
+  var ws = $('wstyle'); ws.innerHTML = '<option value="">Songwriter\'s choice</option>' + TABLES.styles.map(function (s) { return '<option value="' + s.id + '">' + s.label + '</option>'; }).join('');
+  function buildPrompt(mood, voice, styleId) {
+    var s = styleId ? TABLES.styles.filter(function (x) { return x.id === styleId; })[0] : pick(TABLES.styles);
+    var meter = pick(s.meters), tp = s.tempo.filter(function (x) { return x[0] === meter; })[0] || [meter, 60, 120];
+    var form = TABLES.forms.filter(function (f) { return f.id === pick(s.forms); })[0], mode = pick(s.modes);
+    var world = Math.random() < 0.12 ? pick(TABLES.world) : null, year = new Date().getFullYear();
+    var v = { year: year, age: year - 1999, mood: mood, voice_line: voice ? 'It will be sung by a ' + voice + '.' : '',
+      label: s.label, idiom: s.idiom, world_line: world ? ' A touch of ' + world + ' may season it.' : '', mode: mode, meter: meter,
+      tempo_lo: tp[1], tempo_hi: tp[2], duet_fit: s.duet, duet_line: '', delivery: s.delivery, endings: s.endings,
+      reg: pick(REGISTERS), guitar: s.guitar, band_json: JSON.stringify(s.band), form_label: form.label, form_note: form.note, form_text: form.plan };
+    var text = PTPL.replace(/\{\{/g, '\u0001').replace(/\}\}/g, '\u0002').replace(/\{(\w+)\}/g, function (m, k) { return k in v ? String(v[k]) : m; })
+      .replace(/\u0001/g, '{').replace(/\u0002/g, '}');
+    return { text: text, style: s };
+  }
+  var COPY = { not_granted: 'Claude access was not allowed for this page.', rate_limited: 'Rate or usage limit reached. Try again later.', invalid_json: 'Claude did not return valid JSON. Try again.', upstream_error: 'The connection to Claude failed. Try again.', refused: 'Claude declined this prompt. Change it and try again.', empty_completion: 'Claude returned nothing. Try again.', prompt_too_large: 'The prompt is too large.', session_expired: 'Sign in again to use Claude.' };
+  function wstat(t, err) { var e = $('wstatus'); e.textContent = t; e.className = 'status' + (err ? ' err' : ''); }
+  claude_use();
+  function claude_use() {
+    if (!window.claude || !window.claude.use) return;
+    window.claude.use('sample').then(function (sample) {
+      if (!sample) return;
+      $('writeCard').hidden = false;
+      $('stopw').addEventListener('click', function () { if (wctl) wctl.abort(); });
+      $('write').addEventListener('click', async function () {
+        if (busy) return;
+        var mood = $('mood').value.trim() || 'a lively song about a kitchen full of neighbors';
+        var p = buildPrompt(mood, $('wvoice').value, $('wstyle').value);
+        wctl = new AbortController(); $('write').disabled = true; $('stopw').hidden = false;
+        wstat('Thinking... ' + p.style.label + '. This can take a minute or two.');
+        try {
+          var d = await sample.json(p.text, { modelTier: 'complex', cache: false, signal: wctl.signal,
+            onText: function (u) { wstat('Writing... ' + u.text.length + ' characters (' + p.style.label + ')'); } });
+          if (!d || typeof d !== 'object' || !Array.isArray(d.sections)) throw { code: 'invalid_json' };
+          // As the CLI does after a reply: the style fixes guitar pattern and band.
+          d.guitar = p.style.guitar; d.band = p.style.band;
+          if ($('wvoice').value) d.voice = $('wvoice').value;
+          $('len').value = 'short'; put(d); sync();
+          wstat('Wrote "' + (d.title || 'Untitled') + '". Rendering...');
+          $('write').disabled = false; $('stopw').hidden = true;
+          render();
+        } catch (e) {
+          wstat(e && e.code === 'cancelled' ? 'Stopped.' : (COPY[e && e.code] || 'Claude failed: ' + ((e && (e.message || e.code)) || e)), e && e.code !== 'cancelled');
+        } finally { $('write').disabled = false; $('stopw').hidden = true; wctl = null; }
+      });
+    }).catch(function () {});
+  }
 
   function render() {
     if (busy) return;
