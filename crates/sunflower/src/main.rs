@@ -608,7 +608,9 @@ fn cmd_write(
     let mut rng = songwriter::Rng::stream(seed, songwriter::WRITE_TAG);
     let req = songwriter::WriteRequest {
         mood,
-        voice: render.voice.voice(),
+        // Flag beats settings: `--voice auto` (the default) falls back to
+        // settings songwriter.voice.
+        voice: render.voice.voice().or(settings.songwriter.voice),
         style: style_id,
         year,
         model: Some(model.to_string()),
