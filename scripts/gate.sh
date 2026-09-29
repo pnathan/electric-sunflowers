@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sound gate (docs/engine-design.md section 12, docs/rewrite-plan.json
 # sound_gate). Renders the demo stems for 8 seeds (8 takes of the demo
-# song), measures them with target/release/soundgate, runs the vowel and
+# song), measures them with "$soundgate_bin", runs the vowel and
 # Helmholtz probes, times the demo render threaded and on one thread, and
 # prints PASS/FAIL.
 #
@@ -43,8 +43,12 @@
 #                       invariance still runs, rendering the duet song
 #                       instead of the demo.
 # Thread invariance (sha256 of the two demo WAVs equal) is always checked.
-# Output goes to out/gate/LABEL/ (out/gate/LABEL-duet/ for --song duet);
-# WAVs are kept for seeds 1234 and 2718 only.
+# Built with Bazel (-c opt --config=release; see MODULE.bazel, .bazelrc).
+# Small JSON/txt results go to out/gate/LABEL/ (out/gate/LABEL-duet/ for
+# --song duet); the float WAV stems and the demo renders (about 1 GB per run)
+# go to a scratch directory outside the repo,
+# ${GATE_SCRATCH:-${TMPDIR:-/tmp}/electric-sunflowers-gate}/LABEL[-duet],
+# except the WAVs of seeds 1234 and 2718, kept there for listening.
 # Exit status 1 when any line fails.
 # Perf: 3 timings per configuration (min wall, max RSS), checked against the
 # first pass row of perf.tsv (fail above +50%) and reported against the last
@@ -67,7 +71,7 @@ while [[ $# -gt 0 ]]; do
         --capture-baseline) capture=1; shift ;;
         --targets) targets=1; shift ;;
         --song) song="${2:?--song needs demo or duet}"; shift 2 ;;
-        -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,52p' "$0"; exit 0 ;;
         -*) echo "gate: unknown option $1" >&2; exit 2 ;;
         *) [[ -z "$label" ]] || { echo "gate: one LABEL only" >&2; exit 2; }; label="$1"; shift ;;
     esac
@@ -82,11 +86,13 @@ seeds=(1234 2718 1 7 42 99 314 1618)
 keep_seeds=(1234 2718)
 if [[ "$song" == duet ]]; then
     out="out/gate/$label-duet"
+    scratch="${GATE_SCRATCH:-${TMPDIR:-/tmp}/electric-sunflowers-gate}/$label-duet"
     base_dir="tests/soundgate/duet/baseline"
     mean_dir="tests/soundgate/duet/baseline-mean"
     song_flag=(--song duet)
 else
     out="out/gate/$label"
+    scratch="${GATE_SCRATCH:-${TMPDIR:-/tmp}/electric-sunflowers-gate}/$label"
     base_dir="tests/soundgate/baseline"
     mean_dir="tests/soundgate/baseline-mean"
     song_flag=()
@@ -94,7 +100,25 @@ fi
 ref_dir="${against:-$base_dir}"
 ref_mean="${against:-$mean_dir}/ltas-mean.json"
 perf="tests/soundgate/perf.tsv"
-mkdir -p "$out"
+rm -rf "$scratch"
+mkdir -p "$out" "$scratch"
+
+# Bazel: scripts/bz (per-agent output base, shared disk cache) when present,
+# else plain bazel. -c opt --config=release matches Cargo's [profile.release]
+# (see .bazelrc). BUILDBUDDY_API_KEY, when set, turns on the BuildBuddy
+# remote cache; never echo it.
+bazel_cmd="bazel"
+[[ -x scripts/bz ]] && bazel_cmd="scripts/bz"
+bazel_args=(-c opt --config=release)
+if [[ -n "${BUILDBUDDY_API_KEY:-}" ]]; then
+    bazel_args+=(--config=buildbuddy --remote_header="x-buildbuddy-api-key=${BUILDBUDDY_API_KEY}")
+fi
+gate_targets=(//crates/engine:stems //crates/voice:vow //crates/instruments:helmholtz //crates/soundgate:soundgate //crates/sunflower:sunflower)
+stems_bin="bazel-bin/crates/engine/stems"
+vow_bin="bazel-bin/crates/voice/vow"
+helm_bin="bazel-bin/crates/instruments/helmholtz"
+soundgate_bin="bazel-bin/crates/soundgate/soundgate"
+sunflower_bin="bazel-bin/crates/sunflower/sunflower"
 
 results=()
 fails=0
@@ -107,40 +131,44 @@ record() { # STATUS CHECK DETAIL
 fcmp() { awk "BEGIN{exit !($1)}"; }
 
 echo "== build"
-cargo build --release --workspace --all-targets 2>&1 | tail -n 3
+"$bazel_cmd" build "${bazel_args[@]}" "${gate_targets[@]}" 2>&1 | tail -n 20
 
 for s in "${seeds[@]}"; do
     d="$out/s$s"
-    rm -rf "$d"
-    mkdir -p "$d"
+    wd="$scratch/s$s"
+    rm -rf "$d" "$wd"
+    mkdir -p "$d" "$wd"
     echo "== stems seed $s"
-    cargo run --release -q -p engine --example stems -- --seed "$s" --out "$d" "${song_flag[@]}"
+    "$stems_bin" --seed "$s" --out "$wd" "${song_flag[@]}"
     # exit 1: NaN/inf samples in some file (listed in ltas.txt); 2: no reading
-    if ! target/release/soundgate ltas "$d" > "$d/ltas.txt"; then
-        record FAIL "ltas run s$s" "$(tail -n 1 "$d/ltas.txt")"
+    if ! "$soundgate_bin" ltas "$wd" > "$wd/ltas.txt"; then
+        record FAIL "ltas run s$s" "$(tail -n 1 "$wd/ltas.txt")"
     fi
-    target/release/soundgate pitch "$d/lead.wav" "$d/notes.json" | tee "$d/pitch.txt"
+    "$soundgate_bin" pitch "$wd/lead.wav" "$wd/notes.json" | tee "$wd/pitch.txt"
     if [[ "$song" == duet ]]; then
-        target/release/soundgate pitch "$d/lead_b.wav" "$d/notes_b.json" | tee "$d/pitch_b.txt"
+        "$soundgate_bin" pitch "$wd/lead_b.wav" "$wd/notes_b.json" | tee "$wd/pitch_b.txt"
     fi
-    if [[ " ${keep_seeds[*]} " != *" $s "* ]]; then rm -f "$d"/*.wav; fi
+    # small results (json/txt) live under out/gate/LABEL; the wavs stay in
+    # scratch, deleted below except for the kept seeds.
+    cp "$wd"/*.json "$wd"/*.txt "$d/" 2>/dev/null || true
+    if [[ " ${keep_seeds[*]} " != *" $s "* ]]; then rm -rf "$wd"; fi
 
     ref="$ref_dir/s$s"
     if [[ $strict -eq 1 && " ${keep_seeds[*]} " == *" $s "* ]]; then
         if [[ -f "$ref/ltas.json" ]]; then
             echo "-- strict ltas s$s against $ref (mid $tol_mid dB, edge $tol_edge dB)"
-            if target/release/soundgate compare "$ref/ltas.json" "$d/ltas.json" --tol-mid "$tol_mid" --tol-edge "$tol_edge" | tee "$d/compare.txt"; then
+            if "$soundgate_bin" compare "$ref/ltas.json" "$d/ltas.json" --tol-mid "$tol_mid" --tol-edge "$tol_edge" | tee "$d/compare.txt"; then
                 record PASS "strict ltas s$s" "all files within $tol_mid/$tol_edge dB, active 15 pts, mix rms/peak"
             else
                 record FAIL "strict ltas s$s" "see $d/compare.txt"
             fi
-            if pc=$(target/release/soundgate pitch-compare "$ref/lead.pitch.json" "$d/lead.pitch.json"); then
+            if pc=$("$soundgate_bin" pitch-compare "$ref/lead.pitch.json" "$d/lead.pitch.json"); then
                 record PASS "strict pitch s$s" "$pc"
             else
                 record FAIL "strict pitch s$s" "$pc"
             fi
             if [[ "$song" == duet && -f "$ref/lead_b.pitch.json" ]]; then
-                if pc=$(target/release/soundgate pitch-compare "$ref/lead_b.pitch.json" "$d/lead_b.pitch.json"); then
+                if pc=$("$soundgate_bin" pitch-compare "$ref/lead_b.pitch.json" "$d/lead_b.pitch.json"); then
                     record PASS "strict pitch B s$s" "$pc"
                 else
                     record FAIL "strict pitch B s$s" "$pc"
@@ -155,7 +183,7 @@ done
 echo "== ltas mean over ${#seeds[@]} seeds"
 dirs=()
 for s in "${seeds[@]}"; do dirs+=("$out/s$s"); done
-if ! target/release/soundgate mean "$out/ltas-mean.json" "${dirs[@]}" | tee "$out/mean.txt"; then
+if ! "$soundgate_bin" mean "$out/ltas-mean.json" "${dirs[@]}" | tee "$out/mean.txt"; then
     record FAIL "ltas mean" "NaN/inf in some seed; see $out/s*/ltas.txt"
 fi
 if [[ $capture -eq 1 && -z "$against" ]]; then
@@ -163,7 +191,7 @@ if [[ $capture -eq 1 && -z "$against" ]]; then
     record INFO "pitch pooled" "$(grep '^pitch pooled' "$out/mean.txt")"
 elif [[ -f "$ref_mean" ]]; then
     echo "-- ltas mean against $ref_mean"
-    if target/release/soundgate compare-mean "$ref_mean" "$out/ltas-mean.json" --bands > "$out/compare-mean-bands.txt"; then
+    if "$soundgate_bin" compare-mean "$ref_mean" "$out/ltas-mean.json" --bands > "$out/compare-mean-bands.txt"; then
         mean_ok=1
     else
         mean_ok=0
@@ -225,7 +253,7 @@ if [[ "$song" == duet ]]; then
 fi
 
 echo "== vowel distance"
-vow_line=$(cargo run --release -q -p voice --example vow 2>/dev/null | grep 'mean vowel distance' | tail -n 1 || true)
+vow_line=$("$vow_bin" 2>/dev/null | grep 'mean vowel distance' | tail -n 1 || true)
 echo "$vow_line"
 vow=$(grep -Eo 'dB -?[0-9.]+' <<<"$vow_line" | awk '{print $2}' || true)
 if [[ -z "$vow" ]]; then
@@ -238,15 +266,14 @@ else
 fi
 
 echo "== helmholtz"
-hpkg=instruments
-helm_line=$(cargo run --release -q -p "$hpkg" --example helmholtz | grep '^stable' | tail -n 1 || true)
+helm_line=$("$helm_bin" | grep '^stable' | tail -n 1 || true)
 echo "$helm_line"
 hn=$(awk '{split($2,a,"/"); print a[1]}' <<<"$helm_line")
 ht=$(awk '{split($2,a,"/"); print a[2]}' <<<"$helm_line")
 if [[ -n "$hn" && "$ht" == 216 && "$hn" -ge 208 ]]; then
-    record PASS "helmholtz ($hpkg)" "$hn/216"
+    record PASS "helmholtz (instruments)" "$hn/216"
 else
-    record FAIL "helmholtz ($hpkg)" "${hn:-?}/${ht:-?} (need >= 208/216)"
+    record FAIL "helmholtz (instruments)" "${hn:-?}/${ht:-?} (need >= 208/216)"
 fi
 
 if [[ "$song" == demo ]]; then
@@ -270,9 +297,11 @@ for _ in $(seq 1 36); do
 done
 echo "load average $load1 on $ncpu cores"
 tw=""; tr=0; ow=""; orss=0
+perf_scratch="$scratch/perf"
+mkdir -p "$perf_scratch"
 for i in $(seq 1 "$perf_runs"); do
-    /usr/bin/time -v -o "$out/time_threaded.$i.txt" target/release/sunflower demo --seed 1234 -o "$out/demo.wav" 2> "$out/demo.log"
-    RAYON_NUM_THREADS=1 /usr/bin/time -v -o "$out/time_one.$i.txt" target/release/sunflower demo --seed 1234 -o "$out/demo1.wav" 2> "$out/demo1.log"
+    /usr/bin/time -v -o "$out/time_threaded.$i.txt" "$sunflower_bin" demo --seed 1234 -o "$perf_scratch/demo.wav" 2> "$out/demo.log"
+    RAYON_NUM_THREADS=1 /usr/bin/time -v -o "$out/time_one.$i.txt" "$sunflower_bin" demo --seed 1234 -o "$perf_scratch/demo1.wav" 2> "$out/demo1.log"
     w=$(tv_wall "$out/time_threaded.$i.txt"); r=$(tv_rss "$out/time_threaded.$i.txt")
     w1=$(tv_wall "$out/time_one.$i.txt"); r1=$(tv_rss "$out/time_one.$i.txt")
     echo "run $i: threaded $w s $r MB; one thread $w1 s $r1 MB"
@@ -281,8 +310,8 @@ for i in $(seq 1 "$perf_runs"); do
     if (( r > tr )); then tr=$r; fi
     if (( r1 > orss )); then orss=$r1; fi
 done
-h0=$(sha256sum "$out/demo.wav" | cut -d' ' -f1)
-h1=$(sha256sum "$out/demo1.wav" | cut -d' ' -f1)
+h0=$(sha256sum "$perf_scratch/demo.wav" | cut -d' ' -f1)
+h1=$(sha256sum "$perf_scratch/demo1.wav" | cut -d' ' -f1)
 if [[ "$h0" == "$h1" ]]; then same=yes; else same=no; fi
 printf '%s\n%s\n' "$h0  demo.wav" "$h1  demo1.wav" > "$out/sha256.txt"
 echo "min of $perf_runs: threaded $tw s ${tr} MB; one thread $ow s ${orss} MB; sha equal $same"
@@ -336,12 +365,12 @@ else
     # song's own duet flag regardless of its single voice argument, so it
     # renders both singers correctly).
     echo "== thread invariance (duet)"
-    if target/release/sunflower render crates/engine/src/demo_duet.json --seed 1234 -o "$out/duet.wav" \
+    if "$sunflower_bin" render crates/engine/src/demo_duet.json --seed 1234 -o "$scratch/duet.wav" \
             > "$out/duet.log" 2>&1 \
-        && RAYON_NUM_THREADS=1 target/release/sunflower render crates/engine/src/demo_duet.json --seed 1234 -o "$out/duet1.wav" \
+        && RAYON_NUM_THREADS=1 "$sunflower_bin" render crates/engine/src/demo_duet.json --seed 1234 -o "$scratch/duet1.wav" \
             > "$out/duet1.log" 2>&1; then
-        h0=$(sha256sum "$out/duet.wav" | cut -d' ' -f1)
-        h1=$(sha256sum "$out/duet1.wav" | cut -d' ' -f1)
+        h0=$(sha256sum "$scratch/duet.wav" | cut -d' ' -f1)
+        h1=$(sha256sum "$scratch/duet1.wav" | cut -d' ' -f1)
         if [[ "$h0" == "$h1" ]]; then same=yes; else same=no; fi
         printf '%s\n%s\n' "$h0  duet.wav" "$h1  duet1.wav" > "$out/sha256.txt"
         [[ "$same" == yes ]] && record PASS "thread invariance" "sha256 equal (duet.wav)" || record FAIL "thread invariance" "duet.wav != duet1.wav"
