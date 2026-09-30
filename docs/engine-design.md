@@ -193,6 +193,7 @@ Each model: algorithm, source, parameters that set the sound. Values are the cur
 - Loudness blend: lax and tense tables mixed by `w = clamp((av - 0.42) / 0.6, 0, 1)`.
 - Per-period jitter and shimmer; two cascaded one-pole spectral tilt filters at `tilt * 1.25 * tilt_scale` Hz.
 - Parameters: per voice type Rd, tilt, jitter, shimmer (voice::params), `rd_scale`, `tilt_scale`.
+- Baritone Rd is 1.7 (was 1.15, a tense source with H1-H2 near 0 dB; real male singers measure +4 to +5 dB, vocadito). A laxer source lowers the voiced level, and each stem is normalised to a target loudness, so the noise consonants rose by the same amount. `lax_trim(rd)` scales the source by `1 + 0.82 (rd - 1.15)` above Rd 1.15 (x1.45 at 1.7) to keep the voiced-to-noise balance. The other voices are unchanged.
 
 ### 5.2 Voice tract (`voice::tract`)
 
@@ -206,6 +207,8 @@ Each model: algorithm, source, parameters that set the sound. Values are the cur
 - F1 is floored at 1.06 f0.
 - Coefficient update per hop (64 samples) with per-sample ramps (3.4). Silent frames skip synthesis and reset resonator state.
 - Rejected, recorded: a parallel high-frequency branch filled the spectral valleys (/uw/ from -55..-82 dB to -41 dB) and cut vowel distinctness from 13.6 to 10.6 dB.
+- Issue 22 switches in `voice::tuning`, all neutral unless stated: `HF_BRANCH_GAIN` (0, off) adds voiced hiss, white noise shaped by the glottal flow and high-passed at 3.8 kHz, after the cascade. A high-passed copy of the source pulse did the same and sounded buzzy, so the branch now carries noise. `VFRIC_MOD` (0.85, on) modulates the noise of voiced fricatives (/dh v z zh/) by the glottal flow. `FRIC_Q_SCALE` (1, off) narrows the frication band. `NAS_B2_HZ` and `NAS_B3_HZ` (170, 220) set the nasal F2 and F3 bandwidths. `BW_SCALE`, `VIB_RATE_VAR`, `VIB_DEPTH_VAR` and `VIB_WOBBLE2` (neutral) scale the formant bandwidths and vary vibrato per note; both measured no gain.
+- Measured against 17 male vocadito tracks (`tools/voicecmp.py`, `tools/voiceenv.py`): vowels are 10 dB low at 4 kHz and 30 to 50 dB low at 5 to 8 kHz, so every noise consonant is an isolated bar; its median rise over its surroundings is 30 dB (real 14 dB). `tools/voicescan.py` compares a lead stem with its planned segments (static outside a planned consonant, missing consonants, holes, clicks); the stems example writes `phones.json` and `plan.json` for it.
 
 ### 5.3 Articulation (`voice::articulation`, `voice::controls`)
 
