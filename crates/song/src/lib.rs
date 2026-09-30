@@ -75,6 +75,7 @@ pub mod model;
 pub mod phoneme;
 pub mod pitch;
 pub mod schema;
+pub mod tune;
 pub mod wire;
 
 pub use chord::{Chord, ChordError, ChordId, ChordTable};
@@ -82,8 +83,9 @@ pub use model::{
     Band, BarChords, Blend, BreakLead, ChoirVoicing, Delivery, DrumKit, Duet, Endings,
     GuitarPattern, KeyChange, Line, Meter, MeterGrid, Mode, Part, Phrasing, Rubato, Section,
     SectionBody, SectionKind, SectionRole, SingerId, Song, Syllable, VocalRange, Voice,
-    MELISMA_MAX_NOTES, SCHEMA_LATEST, SCHEMA_V1, SCHEMA_V2,
+    MELISMA_MAX_NOTES, SCHEMA_LATEST, SCHEMA_V1, SCHEMA_V2, SCHEMA_V3,
 };
 pub use phoneme::Phoneme;
 pub use pitch::{Pc, PcSet};
+pub use tune::{parse_tune, tune_text, TuneNote, TunePitch};
 pub use wire::{normalize, normalize_value, Repair, SongError, WireSong};

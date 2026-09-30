@@ -88,3 +88,17 @@ rust_test(
         normal_dev = True,
     ),
 )
+
+rust_test(
+    name = "schema_v3",
+    srcs = ["tests/schema_v3.rs"],
+    edition = "2021",
+    proc_macro_deps = all_crate_deps(
+        proc_macro = True,
+        proc_macro_dev = True,
+    ),
+    deps = [":song"] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

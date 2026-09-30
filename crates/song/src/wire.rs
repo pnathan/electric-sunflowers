@@ -53,13 +53,14 @@ use crate::model::{
     Band, BarChords, Blend, BreakLead, ChoirVoicing, Delivery, Duet, Endings, GuitarPattern,
     KeyChange, Line, Meter, Mode, Part, Phrasing, Rubato, Section, SectionBody, SectionKind,
     SectionRole, SingerId, Song, Syllable, Voice, MELISMA_MAX_NOTES, SCHEMA_LATEST, SCHEMA_V1,
-    SCHEMA_V2,
+    SCHEMA_V2, SCHEMA_V3,
 };
 use crate::phoneme::Phoneme;
 use crate::pitch::Pc;
+use crate::tune::parse_tune;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 pub const TITLE_MAX_CHARS: usize = 120;
@@ -109,6 +110,9 @@ pub struct WireSong {
     /// Schema 2: the song's rubato.
     #[serde(deserialize_with = "loose_str")]
     pub rubato: Option<String>,
+    /// Schema 3: named tunes, each a list of tune lines.
+    #[serde(deserialize_with = "loose_tunes")]
+    pub tunes: Option<BTreeMap<String, Vec<String>>>,
     /// `None` entries were not JSON objects.
     #[serde(deserialize_with = "loose_objs")]
     pub sections: Vec<Option<WireSection>>,
@@ -183,6 +187,9 @@ pub struct WireSection {
     /// Schema 2: this section's rubato.
     #[serde(deserialize_with = "loose_str")]
     pub rubato: Option<String>,
+    /// Schema 3: the name of a song tune this section's lines follow.
+    #[serde(deserialize_with = "loose_str")]
+    pub tune: Option<String>,
     /// `None` entries were not JSON objects.
     #[serde(deserialize_with = "loose_objs")]
     pub lines: Vec<Option<WireLine>>,
@@ -216,6 +223,50 @@ pub struct WireLine {
     /// Schema 2: this choir line's voicing.
     #[serde(deserialize_with = "loose_str")]
     pub voicing: Option<String>,
+    /// Schema 3: this line's tune (solfege tokens, `song::tune`).
+    #[serde(deserialize_with = "loose_str")]
+    pub tune: Option<String>,
+}
+
+/// Named tunes: an object of name to a list of tune lines (a lone string
+/// is one line), or a list of `{name, lines}` objects (the form of the JSON
+/// schema, which cannot describe free keys). Entries of other types are
+/// skipped.
+fn loose_tunes<'de, D: Deserializer<'de>>(
+    d: D,
+) -> Result<Option<BTreeMap<String, Vec<String>>>, D::Error> {
+    fn lines(v: Value) -> Vec<String> {
+        match v {
+            Value::String(s) => vec![s],
+            Value::Array(a) => a
+                .into_iter()
+                .filter_map(|x| match x {
+                    Value::String(s) => Some(s),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+    let mut out = BTreeMap::new();
+    match Value::deserialize(d)? {
+        Value::Object(o) => {
+            for (k, v) in o {
+                out.insert(k, lines(v));
+            }
+        }
+        Value::Array(a) => {
+            for x in a {
+                if let Value::Object(mut o) = x {
+                    if let Some(Value::String(n)) = o.remove("name") {
+                        out.insert(n, lines(o.remove("lines").unwrap_or(Value::Null)));
+                    }
+                }
+            }
+        }
+        _ => return Ok(None),
+    }
+    Ok(Some(out))
 }
 
 /// String, or a number or boolean written as text; anything else is absent.
@@ -471,9 +522,9 @@ pub enum Repair {
     /// A duet where singer B sings no line, alone, as the melody or as the
     /// other voice; the song is read as solo.
     UnusedDuet,
-    /// No `schema_version`, but the document uses a version-2 field; read
-    /// as version 2.
-    SchemaVersionInferred,
+    /// No `schema_version`, but the document uses a field of a newer
+    /// version; read as that version.
+    SchemaVersionInferred(u32),
     /// A field of a newer schema than the document declares; ignored.
     /// `section` and `line` locate it; both `None` for a top-level field.
     FieldNeedsSchema {
@@ -492,6 +543,33 @@ pub enum Repair {
     /// A choir line in a song whose band has no choir; the choir is
     /// switched on.
     ChoirEnabled,
+    /// A tune token that is not solfege; the tune of the line is dropped.
+    TuneToken {
+        section: usize,
+        line: usize,
+        token: String,
+    },
+    /// A tune whose note count differs from the line's; the tune of the line
+    /// is dropped.
+    TuneLength {
+        section: usize,
+        line: usize,
+        tune: usize,
+        notes: usize,
+    },
+    /// A section `tune` that names no entry of `tunes` (or an empty one);
+    /// ignored.
+    UnknownTune {
+        section: usize,
+        name: String,
+    },
+    /// Composition: a tune line moved by whole octaves to fit the voice.
+    /// `section` and `line` are form indices.
+    TuneMoved {
+        section: usize,
+        line: usize,
+        octaves: i32,
+    },
 }
 
 impl fmt::Display for Repair {
@@ -624,9 +702,10 @@ impl fmt::Display for Repair {
                 )
             }
             UnusedDuet => f.write_str("duet dropped: singer B sings no line"),
-            SchemaVersionInferred => {
-                f.write_str("schema_version absent, read as 2 (version-2 fields are used)")
-            }
+            SchemaVersionInferred(v) => write!(
+                f,
+                "schema_version absent, read as {v} (version-{v} fields are used)"
+            ),
             FieldNeedsSchema {
                 field,
                 needs,
@@ -653,6 +732,34 @@ impl fmt::Display for Repair {
                 "section {section} line {line}: melisma {text:?} clamped to {to} notes"
             ),
             ChoirEnabled => f.write_str("choir line without band.choir: the choir is on"),
+            TuneToken {
+                section,
+                line,
+                token,
+            } => write!(
+                f,
+                "section {section} line {line}: tune token {token:?} is not solfege, tune dropped"
+            ),
+            TuneLength {
+                section,
+                line,
+                tune,
+                notes,
+            } => write!(
+                f,
+                "section {section} line {line}: tune has {tune} notes, the line {notes}, tune dropped"
+            ),
+            UnknownTune { section, name } => {
+                write!(f, "section {section}: no tune named {name:?}, ignored")
+            }
+            TuneMoved {
+                section,
+                line,
+                octaves,
+            } => write!(
+                f,
+                "section {section} line {line}: tune moved {octaves:+} octaves to fit the voice"
+            ),
         }
     }
 }
@@ -1245,9 +1352,18 @@ fn uses_v2(w: &WireSong) -> bool {
         })
 }
 
-/// Settles the document's schema version and removes the version-2 fields
-/// of a document that declares version 1. Absent: version 1, or 2 when a
-/// version-2 field is used (`SchemaVersionInferred`). A `~` in a version-1
+/// Whether the document uses any version-3 field.
+fn uses_v3(w: &WireSong) -> bool {
+    w.tunes.is_some()
+        || w.sections
+            .iter()
+            .flatten()
+            .any(|s| s.tune.is_some() || s.lines.iter().flatten().any(|l| l.tune.is_some()))
+}
+
+/// Settles the document's schema version and removes the fields of newer
+/// versions from a document that declares an older one. Absent: version 1,
+/// or the newest version whose field is used (`SchemaVersionInferred`). A `~` in a version-1
 /// lyric stays part of the syllable's text, as before.
 fn resolve_version(w: &mut WireSong, rep: &mut Vec<Repair>) -> Result<u32, SongError> {
     let declared = match w.schema_version {
@@ -1263,12 +1379,47 @@ fn resolve_version(w: &mut WireSong, rep: &mut Vec<Repair>) -> Result<u32, SongE
     let version = match declared {
         Some(v) if v > SCHEMA_LATEST as i64 => return Err(SongError::UnsupportedSchema(v)),
         Some(v) => v as u32,
+        None if uses_v3(w) => {
+            rep.push(Repair::SchemaVersionInferred(SCHEMA_V3));
+            SCHEMA_V3
+        }
         None if uses_v2(w) => {
-            rep.push(Repair::SchemaVersionInferred);
+            rep.push(Repair::SchemaVersionInferred(SCHEMA_V2));
             SCHEMA_V2
         }
         None => SCHEMA_V1,
     };
+    if version < SCHEMA_V3 {
+        if w.tunes.take().is_some() {
+            rep.push(Repair::FieldNeedsSchema {
+                field: "tunes",
+                needs: SCHEMA_V3,
+                section: None,
+                line: None,
+            });
+        }
+        for (si, s) in w.sections.iter_mut().enumerate() {
+            let Some(s) = s else { continue };
+            if s.tune.take().is_some() {
+                rep.push(Repair::FieldNeedsSchema {
+                    field: "tune",
+                    needs: SCHEMA_V3,
+                    section: Some(si),
+                    line: None,
+                });
+            }
+            for (li, l) in s.lines.iter_mut().enumerate() {
+                if l.as_mut().is_some_and(|l| l.tune.take().is_some()) {
+                    rep.push(Repair::FieldNeedsSchema {
+                        field: "tune",
+                        needs: SCHEMA_V3,
+                        section: Some(si),
+                        line: Some(li),
+                    });
+                }
+            }
+        }
+    }
     if version >= SCHEMA_V2 {
         return Ok(version);
     }
@@ -1480,6 +1631,8 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         &mut rep,
     );
 
+    let tunes = w.tunes.take().unwrap_or_default();
+
     let mut sec_rep = Vec::new();
     let mut ch = Chords {
         table: ChordTable::new(),
@@ -1568,6 +1721,18 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         let voicing_default =
             resolve_named(ws.voicing, ChoirVoicing::Unison, "lines.voicing", ch.rep);
 
+        // The section's named tune, for lines that give no tune of their own.
+        let named_tune: Option<&Vec<String>> = ws.tune.as_ref().and_then(|n| {
+            let t = tunes.get(n.trim()).filter(|t| !t.is_empty());
+            if t.is_none() && !ws.lines.is_empty() {
+                ch.rep.push(Repair::UnknownTune {
+                    section: si,
+                    name: n.clone(),
+                });
+            }
+            t
+        });
+
         let mut lines = Vec::new();
         for (li, wl) in ws.lines.into_iter().enumerate() {
             let Some(wl) = wl else {
@@ -1593,6 +1758,32 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                 continue;
             }
             assign_phones(&mut syls, wl.ph.as_deref(), si, li, ch.rep);
+            let notes: usize = syls.iter().map(|s| s.notes as usize).sum();
+            let tune_text = wl
+                .tune
+                .as_deref()
+                .filter(|t| !t.trim().is_empty())
+                .or_else(|| named_tune.map(|t| t[lines.len() % t.len()].as_str()));
+            let tune = tune_text.and_then(|t| match parse_tune(t) {
+                Err(token) => {
+                    ch.rep.push(Repair::TuneToken {
+                        section: si,
+                        line: li,
+                        token,
+                    });
+                    None
+                }
+                Ok(n) if n.len() != notes => {
+                    ch.rep.push(Repair::TuneLength {
+                        section: si,
+                        line: li,
+                        tune: n.len(),
+                        notes,
+                    });
+                    None
+                }
+                Ok(n) => Some(n),
+            });
             let bars = ch.bars(
                 wl.chords.as_deref().unwrap_or(&[]),
                 LINE_MAX_BARS,
@@ -1652,6 +1843,7 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                 syllables: syls,
                 bars,
                 part,
+                tune,
             });
         }
 
@@ -1818,6 +2010,12 @@ pub fn to_wire(song: &Song) -> Value {
                             let mut lo = serde_json::json!({
                                 "syl": syl, "ph": ph, "chords": bars_text(song, &l.bars)
                             });
+                            if let Some(t) = &l.tune {
+                                lo.as_object_mut().expect("object literal").insert(
+                                    "tune".into(),
+                                    Value::String(crate::tune::tune_text(t)),
+                                );
+                            }
                             if l.part != Part::default() {
                                 let o = lo.as_object_mut().expect("object literal");
                                 match l.part {

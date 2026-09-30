@@ -58,7 +58,7 @@ fn absent_version_is_one_and_silent() {
 
 #[test]
 fn versions_one_and_two_are_read() {
-    for v in [1, 2] {
+    for v in [1, 2, 3] {
         let (s, r) = read(&base(json!({"schema_version": v})));
         assert_eq!(s.schema_version, v as u32);
         assert!(r.is_empty(), "{r:?}");
@@ -67,8 +67,8 @@ fn versions_one_and_two_are_read() {
 
 #[test]
 fn a_newer_version_is_refused() {
-    let e = normalize_value(&base(json!({"schema_version": 3}))).unwrap_err();
-    assert_eq!(e, SongError::UnsupportedSchema(3));
+    let e = normalize_value(&base(json!({"schema_version": 4}))).unwrap_err();
+    assert_eq!(e, SongError::UnsupportedSchema(4));
     assert!(e.to_string().contains("newer"));
 }
 
@@ -95,7 +95,7 @@ fn v2_fields_without_a_version_infer_two() {
     let (s, r) = read(&base(json!({"rubato": "light"})));
     assert_eq!(s.schema_version, 2);
     assert_eq!(s.rubato, Rubato::Light);
-    assert_eq!(r, vec![Repair::SchemaVersionInferred]);
+    assert_eq!(r, vec![Repair::SchemaVersionInferred(2)]);
 }
 
 #[test]
@@ -413,11 +413,12 @@ fn a_version_1_song_round_trips_without_a_version() {
 #[test]
 fn schemas_per_version() {
     use song::schema::{json_schema, json_schema_for, json_schema_v1, json_schema_v2};
-    assert_eq!(json_schema(), json_schema_v2());
+    assert_eq!(json_schema(), song::schema::json_schema_v3());
     assert_eq!(json_schema_for(1), Some(json_schema_v1()));
     assert_eq!(json_schema_for(2), Some(json_schema_v2()));
     assert_eq!(json_schema_for(0), None);
-    assert_eq!(json_schema_for(3), None);
+    assert_eq!(json_schema_for(3), Some(song::schema::json_schema_v3()));
+    assert_eq!(json_schema_for(4), None);
 
     let v1 = json_schema_v1();
     let v2 = json_schema_v2();
