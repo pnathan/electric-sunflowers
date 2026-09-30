@@ -6,8 +6,8 @@ use std::ops::Range;
 
 use song::chord::transpose_symbol;
 use song::{
-    BarChords, Chord, ChordId, Meter, MeterGrid, Part, SectionBody, SectionKind, SectionRole, Song,
-    Syllable,
+    BarChords, Chord, ChordId, Meter, MeterGrid, Mode, Part, Pc, Rubato, SectionBody, SectionKind,
+    SectionRole, Song, Syllable,
 };
 
 /// A metric bar: its chord(s) plus the section and line it belongs to.
@@ -79,6 +79,11 @@ pub struct Sec {
     pub lines: Vec<usize>,
     pub lift: Option<Lift>,
     pub intensity: Intensity,
+    /// The section's rubato (its own, else the song's).
+    pub rubato: Rubato,
+    /// The key in force in this section, transposed by the form's
+    /// `transpose`: the song's key until a section changes it.
+    pub key: (Pc, Mode),
 }
 
 impl Sec {
@@ -219,7 +224,7 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
         1
     };
 
-    for s in &song.sections {
+    for (si, s) in song.sections.iter().enumerate() {
         let o = occ_of[s.kind as usize];
         occ_of[s.kind as usize] = o + 1;
         let sec_idx = sections.len();
@@ -275,6 +280,11 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
             lines: sec_lines,
             lift: None,
             intensity: Intensity::Quiet,
+            rubato: song.rubato_at(si),
+            key: {
+                let (tonic, mode) = song.key_at(si);
+                (tonic.transpose(transpose), mode)
+            },
         });
     }
 

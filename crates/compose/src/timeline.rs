@@ -1,8 +1,9 @@
-//! Timeline: maps beats to seconds (with a final ritard) and beats to chords.
+//! Timeline: maps beats to seconds (with rubato and a final ritard) and
+//! beats to chords.
 
 use crate::form::Form;
 use sfcore::TAIL;
-use song::{Chord, ChordId};
+use song::{Chord, ChordId, Rubato};
 
 /// Bars at the end of the song over which the ritard acts.
 pub const RIT_BARS: usize = 2;
@@ -12,6 +13,40 @@ pub const RIT_DEPTH: f64 = 0.38;
 /// Ritard curve exponent: beat length is `1 + RIT_DEPTH x^RIT_CURVE` with x
 /// rising from 0 to 1 over the ritard, so the slowing starts gently.
 pub const RIT_CURVE: f64 = 1.4;
+
+/// Rubato depth A per `Rubato` level: over a sung line the beat length
+/// factor is `1 + A (x^3 - mean)` with x rising from 0 to 1, so the last
+/// beat is the longest and the line keeps its length at tempo.
+pub const fn rubato_depth(r: Rubato) -> f64 {
+    match r {
+        Rubato::Steady => 0.0,
+        Rubato::Light => 0.10,
+        Rubato::Free => 0.24,
+    }
+}
+
+/// Per-beat length factors from rubato: 1.0 outside sung lines of a
+/// non-steady section and on lines of fewer than 2 beats.
+fn rubato_factors(form: &Form, nb: usize) -> Vec<f64> {
+    let bpb = form.bpb() as usize;
+    let mut rf = vec![1.0f64; nb];
+    for l in &form.lines {
+        let a = rubato_depth(form.sections[l.sec].rubato);
+        let b0 = l.start_bar * bpb;
+        let n = l.n_bars * bpb;
+        if a == 0.0 || n < 2 || b0 + n > nb {
+            continue;
+        }
+        let g: Vec<f64> = (0..n)
+            .map(|k| (k as f64 / (n - 1) as f64).powi(3))
+            .collect();
+        let mean = g.iter().sum::<f64>() / n as f64;
+        for (k, gk) in g.iter().enumerate() {
+            rf[b0 + k] = 1.0 + a * (gk - mean);
+        }
+    }
+    rf
+}
 
 /// One chord segment on the beat timeline: consecutive beats of one chord
 /// within one section.
@@ -41,9 +76,9 @@ pub struct Timeline {
 }
 
 impl Timeline {
-    /// Beat times at `tempo` beats per minute, slowed over the last
-    /// `RIT_BARS` bars (beat length times `1 + RIT_DEPTH x^RIT_CURVE`), and
-    /// the chord segments.
+    /// Beat times at `tempo` beats per minute, with each sung line's rubato
+    /// (`rubato_depth`) and slowed over the last `RIT_BARS` bars (beat
+    /// length times `1 + RIT_DEPTH x^RIT_CURVE`), and the chord segments.
     pub fn new(form: &Form, tempo: f64) -> Timeline {
         let bpb = form.bpb() as usize;
         let split = form.split() as usize;
@@ -52,6 +87,7 @@ impl Timeline {
         let rit_len = RIT_BARS * bpb;
         // First beat of the ritard; negative when the song is shorter.
         let rit = nb as i64 - rit_len as i64;
+        let rf = rubato_factors(form, nb);
         let mut t = vec![0.0f64; nb + 1];
         t[0] = sfcore::LEAD_IN;
         for b in 0..nb {
@@ -61,7 +97,7 @@ impl Timeline {
             } else {
                 1.0
             };
-            t[b + 1] = t[b] + base * f;
+            t[b + 1] = t[b] + base * f * rf[b];
         }
 
         let mut segs: Vec<Seg> = Vec::new();
@@ -209,6 +245,69 @@ mod tests {
         assert!((tl.beat_dur((nb - 1) as f64) - 0.5 * (1.0 + RIT_DEPTH)).abs() < 1e-12);
         for b in 8..nb {
             assert!(tl.beat_dur(b as f64) > tl.beat_dur(b as f64 - 1.0) - 1e-12);
+        }
+    }
+
+    fn rubato_song(mode: &str) -> (song::Song, Form) {
+        form_of(json!({
+            "schema_version": 2, "key":"C","meter":"4/4","tempo":120, "rubato": mode,
+            "sections":[
+                {"type":"intro","chords":["C","G"]},
+                {"type":"verse","lines":[
+                    {"syl":"*a b *c d","chords":["C","F"]},
+                    {"syl":"*e f *g h","chords":["G","C"]}]},
+                {"type":"outro","chords":["C","C","C","C"]}
+            ]
+        }))
+    }
+
+    #[test]
+    fn steady_rubato_leaves_beats_at_tempo() {
+        let (song, form) = rubato_song("steady");
+        let tl = Timeline::new(&form, song.tempo_bpm);
+        // Intro (2 bars) and the first verse line are at tempo.
+        for b in 0..16 {
+            assert!((tl.beat_dur(b as f64) - 0.5).abs() < 1e-9, "beat {b}");
+        }
+    }
+
+    #[test]
+    fn rubato_stretches_the_line_end_and_keeps_the_line_length() {
+        for (mode, a) in [("light", 0.10), ("free", 0.24)] {
+            let (song, form) = rubato_song(mode);
+            assert_eq!(rubato_depth(form.sections[1].rubato), a);
+            let tl = Timeline::new(&form, song.tempo_bpm);
+            let l = &form.lines[0];
+            let (b0, n) = (l.start_bar * 4, l.n_bars * 4);
+            let len = tl.to_time((b0 + n) as f64) - tl.to_time(b0 as f64);
+            assert!((len - n as f64 * 0.5).abs() < 1e-9, "{mode}: {len}");
+            let first = tl.beat_dur(b0 as f64);
+            let last = tl.beat_dur((b0 + n - 1) as f64);
+            assert!(first < 0.5 && last > 0.5, "{mode}: {first} {last}");
+            // Beat lengths never shrink through the line.
+            for k in 1..n {
+                assert!(tl.beat_dur((b0 + k) as f64) >= tl.beat_dur((b0 + k - 1) as f64) - 1e-12);
+            }
+            // The intro (no sung line) is steady.
+            assert!((tl.beat_dur(0.0) - 0.5).abs() < 1e-9);
+            assert!((tl.beat_dur(7.0) - 0.5).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn a_section_rubato_overrides_the_song_and_stays_inverse() {
+        let (song, mut form) = rubato_song("free");
+        form.sections[1].rubato = Rubato::Steady;
+        let tl = Timeline::new(&form, song.tempo_bpm);
+        for b in 8..24 {
+            assert!((tl.beat_dur(b as f64) - 0.5).abs() < 1e-9, "beat {b}");
+        }
+        let (song, form) = rubato_song("free");
+        let tl = Timeline::new(&form, song.tempo_bpm);
+        let mut b = -2.0;
+        while b < tl.nb as f64 + 2.0 {
+            assert!((tl.to_beat(tl.to_time(b)) - b).abs() < 1e-9, "beat {b}");
+            b += 0.25;
         }
     }
 
