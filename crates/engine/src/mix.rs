@@ -23,7 +23,10 @@
 //! this against a verbatim copy of the pre-mixer-settings function.
 //!
 //! Vocal ducking: every stem but the lead tracks is turned down by up to
-//! `MixSettings::duck_db` while the leads sing. The key is the summed
+//! `MixSettings::duck_db` while the leads sing. A choir that sings word
+//! lines (`ProcessedStem::key`, schema 2) keys the ducker too, over those
+//! lines only and against its own full-scale point, and is not ducked
+//! itself; with no choir line the curve is the lead-only one. The key is the summed
 //! post-fader power of the audible lead tracks, smoothed by a one-pole with
 //! `DUCK_ATTACK` rising and `DUCK_RELEASE` falling; the duck depth is
 //! proportional to the key's RMS up to the full-scale point, where it
@@ -113,6 +116,32 @@ fn fader_gain(settings: &MixSettings, id: TrackId) -> f32 {
     db_to_gain(settings.tracks[id.index()].gain_db as f64) as f32
 }
 
+/// The choir as a ducker key: left channel, post-fader gain, the spans it
+/// keys in, and its full-scale point.
+struct ChoirKey<'a> {
+    src: &'a SparseBuf,
+    k: f64,
+    key: &'a [(usize, usize)],
+    k_full: f64,
+}
+
+/// The choir's key, when it sings word lines and plays.
+fn choir_key<'a>(stems: &'a Stems, band: &Band, settings: &MixSettings) -> Option<ChoirKey<'a>> {
+    let id = TrackId::Choir;
+    if !(id.plays(band) && settings.audible(id)) {
+        return None;
+    }
+    let p = stems.get(id).filter(|p| !p.key.is_empty())?;
+    let src = p.audio.channels().first()?;
+    let gain = id.strip().gain as f64 * p.level as f64;
+    Some(ChoirKey {
+        src,
+        k: gain * fader_gain(settings, id) as f64,
+        key: p.key.as_slice(),
+        k_full: 0.5 * crate::track::TARGET_RMS * gain,
+    })
+}
+
 /// Per-frame gain the ducker applies to the accompaniment: 1 where the lead
 /// tracks are silent, down to `1 - db_to_gain(-duck_db)` where they sing
 /// (see the module doc). `None` when `duck_db` is 0 or no lead track plays.
@@ -132,7 +161,9 @@ pub fn duck_gains(stems: &Stems, band: &Band, settings: &MixSettings) -> Option<
             Some((ch, k))
         })
         .collect();
-    if leads.is_empty() {
+    // The choir keys the ducker while it sings word lines (`ProcessedStem::key`).
+    let choir = choir_key(stems, band, settings);
+    if leads.is_empty() && choir.is_none() {
         return None;
     }
     // The full-scale point stays half the lead target level times the lead
@@ -140,7 +171,8 @@ pub fn duck_gains(stems: &Stems, band: &Band, settings: &MixSettings) -> Option<
     // hard the lead ducks the band without moving the reference point. With
     // several leads (wave 2), combine their full-scale points the same way
     // their post-fader power is combined above (root-sum-square), so the
-    // two stay in the same units.
+    // two stay in the same units. The choir keys its own smoother against
+    // its own full-scale point; the deeper of the two ducks.
     let full: f64 = LEAD_TRACKS
         .into_iter()
         .filter(|&id| id.plays(band) && settings.audible(id))
@@ -156,6 +188,7 @@ pub fn duck_gains(stems: &Stems, band: &Band, settings: &MixSettings) -> Option<
         sfcore::math::one_pole_coeff_tau(DUCK_RELEASE, SR_F),
     );
     let mut ms = 0.0f64;
+    let mut ms_choir = 0.0f64;
     let mut out = vec![1.0f32; stems.len];
     let mut spans: Vec<Option<&[f32]>> = Vec::with_capacity(leads.len());
     for s in (0..stems.len).step_by(MIX_BLOCK) {
@@ -164,6 +197,7 @@ pub fn duck_gains(stems: &Stems, band: &Band, settings: &MixSettings) -> Option<
         for &(ch, _) in &leads {
             spans.push(ch.span(s, n));
         }
+        let choir_span = choir.as_ref().and_then(|c| c.src.span(s, n));
         for i in 0..n {
             let mut e = 0.0f64;
             for (&(_, k), sp) in leads.iter().zip(&spans) {
@@ -174,7 +208,24 @@ pub fn duck_gains(stems: &Stems, band: &Band, settings: &MixSettings) -> Option<
             }
             let a = if e > ms { up } else { down };
             ms += a * (e - ms);
-            let amount = (ms.sqrt() / full).min(1.0);
+            let mut amount = if leads.is_empty() {
+                0.0
+            } else {
+                (ms.sqrt() / full).min(1.0)
+            };
+            if let Some(ChoirKey { k, key, k_full, .. }) = &choir {
+                let at = s + i;
+                let mut ec = 0.0f64;
+                if let Some(x) = choir_span {
+                    if key.iter().any(|&(a, b)| at >= a && at < b) {
+                        let v = x[i] as f64 * *k;
+                        ec = v * v;
+                    }
+                }
+                let a = if ec > ms_choir { up } else { down };
+                ms_choir += a * (ec - ms_choir);
+                amount = amount.max((ms_choir.sqrt() / *k_full).min(1.0));
+            }
             out[s + i] = (1.0 - depth * amount) as f32;
         }
     }
@@ -195,7 +246,7 @@ pub(crate) fn routes<'a>(stems: &'a Stems, band: &Band, settings: &MixSettings) 
         let k = strip.gain * fader * p.level;
         let send = strip.send;
         let pan = t.pan as f64;
-        let ducked = !LEAD_TRACKS.contains(&id);
+        let ducked = !LEAD_TRACKS.contains(&id) && p.key.is_empty();
         let mut push = |src, gl: f32, gr: f32| {
             let (gl, gr) = (gl * k, gr * k);
             out.push(Route {
@@ -456,6 +507,7 @@ mod tests {
                     audio: Stem::Mono(SparseBuf::from_dense(&[0.1f32; STEM_BLOCK])),
                     level: 1.0,
                     slap: None,
+                    key: Vec::new(),
                 })
             } else {
                 None

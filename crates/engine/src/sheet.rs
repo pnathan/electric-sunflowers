@@ -565,6 +565,7 @@ impl SongSheet {
                 ) {
                     (true, Some("B")) => "[B] ",
                     (true, Some("both")) => "[A+B] ",
+                    (_, Some("choir")) => "[Choir] ",
                     _ => "",
                 };
                 out.push_str(prefix);

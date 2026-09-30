@@ -61,10 +61,6 @@ fn y_step(clef: Clef, step: i32) -> f64 {
     layout::y_of(step + clef_offset(clef))
 }
 
-fn lyric_staff(part: PartId) -> bool {
-    matches!(part, PartId::Lead | PartId::LeadB)
-}
-
 /// Width contributed by a clef glyph (Bravura for treble, drawn for the
 /// rest): not measured, an eyeballed footprint wide enough for the shape
 /// `drawn` actually draws.
@@ -130,7 +126,7 @@ fn bar_columns(bar: &BarCol, staves: &[StaffDef], bar_u: i64) -> BarNat {
                 if !c.tie_in && c.heads.iter().any(|h| h.accidental.is_some()) {
                     accidental = true;
                 }
-                if lyric_staff(staves[si].part) {
+                if staves[si].lyrics {
                     if let Some(l) = &c.lyric {
                         lyric = Some((l.as_str(), c.hyphen));
                     }
@@ -162,7 +158,7 @@ fn staff_rows(staves: &[StaffDef]) -> (Vec<Row>, f64) {
         };
         rows.push(Row { top: y });
         y += 4.0 * SP + ROW_PAD;
-        if lyric_staff(st.part) {
+        if st.lyrics {
             y += LYRIC_ROOM;
         }
     }

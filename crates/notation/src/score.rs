@@ -168,6 +168,9 @@ pub(crate) struct Measure {
     /// The melody singer of this bar's lyric line; `None` for a bar with no
     /// lyric line (an instrumental system, engraved on singer A's staff).
     pub singer: Option<SingerId>,
+    /// Whether the choir sings this bar's line (`Part::Choir`): the system
+    /// is labelled "Choir".
+    pub choir: bool,
     /// Melody-staff clef (treble 8vb for bass, baritone, tenor): singer A's
     /// clef outside a duet, or an instrumental bar's.
     pub clef8: bool,
@@ -666,6 +669,7 @@ impl Score {
                 empty,
                 section_end: false,
                 singer,
+                choir: line.is_some_and(|l| l.part.is_choir()),
                 clef8: m_clef8,
                 shared,
                 second,

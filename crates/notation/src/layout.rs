@@ -521,7 +521,17 @@ pub(crate) fn layout(score: &Score) -> Page {
         // singer of this system's line, first full then short, or "A+B"
         // on a shared line. Never drawn outside a duet, so a solo song's
         // SVG is unchanged.
-        if score.duet {
+        if ms[first].choir {
+            text(
+                &mut s,
+                MARGIN,
+                y_label,
+                LABEL_PX,
+                "start",
+                r#" font-weight="bold""#,
+                "Choir",
+            );
+        } else if score.duet {
             let m0 = &ms[first];
             let lbl = if m0.shared {
                 Some("A+B".to_string())

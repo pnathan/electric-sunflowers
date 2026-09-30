@@ -111,10 +111,15 @@ fn harmony_voice(exclude: &[Voice], median: i32) -> Voice {
 /// never overlap, so a stable sort by `t0` keeps every singer's notes in
 /// order (and is a no-op in a solo song, whose one singer's notes are
 /// already in order).
-fn singer_notes(id: SingerId, lead: &[LeadNote], second: &[LeadNote]) -> Vec<LeadNote> {
+fn singer_notes(
+    id: SingerId,
+    lead: &[LeadNote],
+    second: &[LeadNote],
+    form: &compose::form::Form,
+) -> Vec<LeadNote> {
     let mut v: Vec<LeadNote> = lead
         .iter()
-        .filter(|n| n.singer == id)
+        .filter(|n| n.singer == id && !form.lines[n.line_idx].part.is_choir())
         .cloned()
         .chain(second.iter().filter(|n| n.singer == id).cloned())
         .collect();
@@ -157,7 +162,7 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
     let sec_of = |n: &LeadNote| &form.sections[form.lines[n.line_idx].sec];
 
     let phrasing = song.phrasing_of(SingerId::A);
-    let notes_a = singer_notes(SingerId::A, lead_notes, second);
+    let notes_a = singer_notes(SingerId::A, lead_notes, second, form);
     let lead_style = SingStyle {
         phrasing,
         ..SingStyle::LEAD
@@ -172,7 +177,7 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
 
     let lead_b = p.voice_b.map(|vb| {
         let phrasing_b = song.phrasing_of(SingerId::B);
-        let notes_b = singer_notes(SingerId::B, lead_notes, second);
+        let notes_b = singer_notes(SingerId::B, lead_notes, second, form);
         Singer {
             voice: vb,
             style: SingStyle {
@@ -247,7 +252,12 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
     // voice) in repeated lifted sections; A's two takes first, then B's.
     let repeated_a: Vec<LeadNote> = lead_notes
         .iter()
-        .filter(|n| n.singer == SingerId::A && n.lift && sec_of(n).is_repeat_lift())
+        .filter(|n| {
+            n.singer == SingerId::A
+                && n.lift
+                && sec_of(n).is_repeat_lift()
+                && !form.lines[n.line_idx].part.is_choir()
+        })
         .cloned()
         .collect();
     let mut doubles: Vec<Singer> = double_takes(p.voice, phrasing, &notes(&repeated_a, 0.8)).into();
@@ -255,7 +265,12 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
         let phrasing_b = song.phrasing_of(SingerId::B);
         let repeated_b: Vec<LeadNote> = lead_notes
             .iter()
-            .filter(|n| n.singer == SingerId::B && n.lift && sec_of(n).is_repeat_lift())
+            .filter(|n| {
+                n.singer == SingerId::B
+                    && n.lift
+                    && sec_of(n).is_repeat_lift()
+                    && !form.lines[n.line_idx].part.is_choir()
+            })
             .cloned()
             .collect();
         doubles.extend(double_takes(vb, phrasing_b, &notes(&repeated_b, 0.8)));
@@ -274,9 +289,10 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
 pub fn choir_singers(p: &Prepared, seed: u64) -> [Vec<Singer>; 4] {
     let form = &p.form;
     let tl = &p.timeline;
-    let vs = choir::voicings(form, tl, choir::sings_here);
+    let vs = choir::voicings_clear(form, tl, choir::sings_here);
+    let words = choir::line_notes(p);
     let mut parts: [Vec<Singer>; 4] = Default::default();
-    if vs.is_empty() {
+    if vs.is_empty() && words.is_empty() {
         return parts;
     }
     for (part, singers) in parts.iter_mut().enumerate() {
@@ -335,6 +351,36 @@ pub fn choir_singers(p: &Prepared, seed: u64) -> [Vec<Singer>; 4] {
                     grace: None,
                     legato: false,
                 });
+            }
+            if !words.is_empty() {
+                // The choir lines' words, after the pad's draws (so a song
+                // without choir lines draws exactly as before). Onsets
+                // jitter +-8 ms; level 0.9 x 0.88-1.08.
+                let tune: Vec<LeadNote> = words
+                    .iter()
+                    .map(|w| LeadNote {
+                        midi: w.midi[part],
+                        grace: None,
+                        ..w.note.clone()
+                    })
+                    .collect();
+                let mut tagged: Vec<(VocalNote, bool)> =
+                    notes.drain(..).map(|n| (n, false)).collect();
+                for (n, w) in vocal_notes(&tune, 0.9).iter().zip(&words) {
+                    let mut vn = event(n, 0.0);
+                    let j = 0.008 * r.bipolar();
+                    vn.t0 = (vn.t0 + j).min(vn.t1 - 0.05).max(w.note.t0 - 0.008);
+                    vn.amp *= r.range(0.88, 1.08) as f32;
+                    tagged.push((vn, w.note.phrase_start));
+                }
+                tagged.sort_by(|a, b| a.0.t0.partial_cmp(&b.0.t0).expect("finite t0"));
+                let mut prev_t1 = f64::NEG_INFINITY;
+                for (mut vn, line_start) in tagged {
+                    vn.phrase_start =
+                        line_start || vn.t0 + style.lateness as f64 - prev_t1 > CHOIR_PHRASE_GAP;
+                    prev_t1 = vn.t1;
+                    notes.push(vn);
+                }
             }
             let n = notes.len();
             for k in 0..n {

@@ -77,12 +77,18 @@ struct Store {
 impl Store {
     /// Runs `id`'s strip over `audio` and keeps the result.
     fn put(&self, id: TrackId, audio: Stem) {
+        self.put_keyed(id, audio, Vec::new());
+    }
+
+    /// `put`, with the sample spans where the stem keys the ducker.
+    fn put_keyed(&self, id: TrackId, audio: Stem, key: Vec<(usize, usize)>) {
         if audio.is_silent() {
             return;
         }
-        let Some(stem) = run_strip(id.strip(), audio) else {
+        let Some(mut stem) = run_strip(id.strip(), audio) else {
             return;
         };
+        stem.key = key;
         lock(&self.tracks)[id.index()] = Some(stem);
     }
 }
@@ -146,6 +152,27 @@ impl VecJoint {
     }
 }
 
+/// Sample spans of the choir's word lines, one per line: from the line's
+/// first note to its last. Empty when the song has no choir line, so the
+/// ducker keys on the leads alone.
+fn choir_line_spans(p: &Prepared) -> Vec<(usize, usize)> {
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for (li, l) in p.form.lines.iter().enumerate() {
+        if !l.part.is_choir() {
+            continue;
+        }
+        let mut it = p.comp.lead.iter().filter(|n| n.line_idx == li);
+        let Some(first) = it.next() else { continue };
+        let (mut t0, mut t1) = (first.t0, first.t1);
+        for n in it {
+            t0 = t0.min(n.t0);
+            t1 = t1.max(n.t1);
+        }
+        spans.push((len_samples(t0), len_samples(t1)));
+    }
+    spans
+}
+
 /// Renders `song` with `seed`. `voice` `None` uses the song's voice. A thin
 /// shim over `render_with` with `VoiceChoice { a: voice, b: None }`.
 pub fn render(
@@ -171,6 +198,7 @@ pub fn render_with(
     let len = len_samples(prepared.timeline.end);
     let arr = arrange::arrange(song, &prepared, seed);
     let v = &arr.vocals;
+    let choir_key = choir_line_spans(&prepared);
 
     // 6 band tasks, lead, harmony, lead B (a duet only), each doubles take,
     // each choir part: 14 in a solo song, as `TASKS` documents.
@@ -186,6 +214,7 @@ pub fn render_with(
         AtomicUsize::new(0),
     );
     let (store, doubles, choir, done, arr) = (&results, &doubles, &choir, &done, &arr);
+    let choir_key = &choir_key;
     let finish = move || progress.advance(done.fetch_add(1, Ordering::Relaxed) + 1, tasks);
 
     rayon::scope(|s| {
@@ -245,7 +274,7 @@ pub fn render_with(
                     vocals::panned_into(singer, singer_seed(seed, choir_index(p, i)), &mut stem);
                 }
                 if let Some(sum) = choir.deposit(p, stem) {
-                    store.put(TrackId::Choir, Stem::Stereo(sum));
+                    store.put_keyed(TrackId::Choir, Stem::Stereo(sum), choir_key.clone());
                 }
                 finish();
             });

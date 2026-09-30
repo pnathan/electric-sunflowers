@@ -82,3 +82,15 @@ rust_test(
         normal_dev = True,
     ),
 )
+
+rust_test(
+    name = "choir",
+    srcs = ["tests/choir.rs"],
+    edition = "2021",
+    deps = [
+        ":notation",
+    ] + NOTATION_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

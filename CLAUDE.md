@@ -59,7 +59,7 @@ Read this before changing anything. It records what the system is, how to work i
 - Plucked strings: extended Karplus-Strong in the velocity domain (differentiating displacement spiked every period), two polarisations, loss by material; guitar adds pick noise, a tension glide and sympathetic open strings.
 - Bodies: stochastic modal IRs from 1/12-octave curves measured on University of Iowa MIS recordings; fixed modes below 300 Hz and no onset step, so the band spread between seeds is 1.2-1.5 dB. The harp curve is derived from the guitar's.
 - Violin: digital waveguide bowed string with a friction table; bow position tracks the note. 212/216 single notes and 119/120 phrase notes hold Helmholtz motion.
-- Choir: 3 singers per part on /aa/ only; rounded back vowels scored as "Organ".
+- Choir: 3 singers per part; /aa/ pad on lifted sections, and (schema 2) the words of `sing: "choir"` lines, unison or block. In a song with choir lines the choir stem is not ducked (pad included).
 - Mix: each track is brought to a target loudness after its EQ, so EQ cuts do not change a track's level; use gain. The accompaniment is ducked up to 5 dB under the singing lead (30/350 ms key) and the lead strip is +2 dB. `cargo run --release -p engine --example balance -- SONG.json [--style KEY]` reports each track against the lead where it sings.
 
 ## Measurement (the "ear")
@@ -79,7 +79,7 @@ Nobody on the machine side can listen. Judge every sound change by the gate, the
 - Next batch, designed in `docs/features-2.md` with a wave plan in `docs/features-2-plan.json`: (1) record the model and token usage of every generation; (2) a settings file for the model, transport, effort and library; (3) per-track stems and a studio mixer; (4) duets written by Claude into the song JSON; (5) singer phrasing (legato to parlando) in the song JSON; (6) a full multipart score beside the lead sheet.
 - Studio: clicks, Space and slider drags are untested (no xdotool here); the sheet cursor during rests and pickup placement disagree slightly with the lyrics view; bass voices use treble-8 clef; no multi-bar rests.
 - Voice: alto and soprano intelligibility trails the baritone (next: vowel modification at high pitch); the first word of a phrase is the least reliable.
-- The choir sings vowels only; call-and-response lyrics are not supported.
+- Schema 2 features (choir words, melismas, key changes, rubato; `docs/schema-2.md`) are covered by tests and by the gate for songs without them; none has been heard. Send a v2 render for listening. Choir-line levels and timbre are unmeasured. The full-score lead staff shows a plain rest over a choir line. Duet staves draw no melisma extension or slur.
 - Memory is above its aim (the sparse stem cache holds about 370 MB for the demo).
 - `ClaudeApi` has never made a live call; the CLI path has two live songs.
-- No key changes, no rubato beyond the final ritard, no melismas; the harp has no reference validation.
+- The harp has no reference validation: its body curve is derived from the guitar's and no harp reference recording is available on this machine (issue #14 keeps this item).

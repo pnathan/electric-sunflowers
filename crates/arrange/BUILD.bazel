@@ -66,3 +66,18 @@ rust_test(
         normal_dev = True,
     ),
 )
+
+rust_test(
+    name = "choir",
+    srcs = ["tests/choir.rs"],
+    edition = "2021",
+    deps = [
+        ":arrange",
+        "//crates/core:sfcore",
+        "//crates/song",
+        "//crates/compose",
+    ] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

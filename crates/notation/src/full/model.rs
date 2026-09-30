@@ -108,6 +108,9 @@ pub struct StaffDef {
     pub abbrev: String,
     pub clef: Clef,
     pub group: Group,
+    /// The staff carries a lyric row: the leads, and a choir staff when the
+    /// choir sings words (choir lines).
+    pub lyrics: bool,
 }
 
 /// A notehead shape.
@@ -133,10 +136,10 @@ pub struct NoteChord {
     pub heads: Vec<Head>,
     pub tie_in: bool,
     pub tie_out: bool,
-    /// The Lead staff only.
+    /// The lead staves and the choir staves' word lines only.
     pub lyric: Option<String>,
     pub hyphen: bool,
-    /// The Lead staff only: an extension line runs under this chord in the
+    /// A lyric staff only: an extension line runs under this chord in the
     /// lyric row (a melisma's continuation, or a later part of a melisma
     /// note), and a slur runs from it to the next note.
     pub ext: bool,
@@ -388,6 +391,8 @@ fn raw_notes_of(
             .comp
             .lead
             .iter()
+            // A choir line is the choir's: the lead rests.
+            .filter(|n| !prep.form.lines[n.line_idx].part.is_choir())
             .map(|n| {
                 let cont = n.syl.is_continuation();
                 let melisma = cont || n.syl.notes > 1;
@@ -464,13 +469,28 @@ fn raw_notes_of(
             };
             let form = &prep.form;
             let tl = &prep.timeline;
-            arrange::choir::voicings(form, tl, arrange::choir::sings_here)
-                .iter()
-                .map(|v| {
-                    let sg = &tl.segs[v.seg];
-                    RawNote::pitched(tl.to_time(sg.b0), tl.to_time(sg.b1), v.notes[idx] as f64)
-                })
-                .collect()
+            let mut raw: Vec<RawNote> =
+                arrange::choir::voicings_clear(form, tl, arrange::choir::sings_here)
+                    .iter()
+                    .map(|v| {
+                        let sg = &tl.segs[v.seg];
+                        RawNote::pitched(tl.to_time(sg.b0), tl.to_time(sg.b1), v.notes[idx] as f64)
+                    })
+                    .collect();
+            // The choir lines' words, as composed (no jitter, no lateness).
+            raw.extend(arrange::choir::line_notes(prep).iter().map(|w| {
+                let n = &w.note;
+                let cont = n.syl.is_continuation();
+                let melisma = cont || n.syl.notes > 1;
+                RawNote {
+                    lyric: (!cont).then(|| n.syl.text.clone()),
+                    hyphen: !melisma && !n.syl.word_end,
+                    melisma,
+                    cont,
+                    ..RawNote::pitched(n.t0, n.t1, w.midi[idx] as f64)
+                }
+            }));
+            raw
         }
         PartId::Violin => {
             if !song.band.violin {
@@ -920,12 +940,14 @@ impl FullScore {
                 !pitched,
             );
             all_cells.push(cells);
+            let lyrics = raw.iter().any(|r| r.lyric.is_some());
             staves.push(StaffDef {
                 part,
                 name,
                 abbrev: abbrev.to_string(),
                 clef,
                 group: group_of(part),
+                lyrics: matches!(part, PartId::Lead | PartId::LeadB) || lyrics,
             });
         }
 

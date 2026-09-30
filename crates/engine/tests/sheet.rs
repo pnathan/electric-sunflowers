@@ -259,3 +259,26 @@ fn a_song_without_key_change_prints_no_key_line() {
         .all(|s| s.key == sheet.key && s.mode == sheet.mode));
     assert!(!sheet.to_text().contains("Key: "));
 }
+
+/// A choir line is prefixed `[Choir]` in the chord sheet, in a solo song
+/// too; the sheet tags its part as "choir".
+#[test]
+fn choir_lines_are_prefixed_in_the_text() {
+    let v = serde_json::json!({
+        "schema_version": 2,
+        "title": "Shanty", "note": "", "key": "G", "mode": "major", "meter": "4/4", "tempo": 92,
+        "guitar": "strum", "voice": "baritone",
+        "band": {"drums": "none", "bass": true, "harmonyGuitar": false, "harp": false,
+                 "violin": false, "choir": true, "harmonies": false, "doubles": false},
+        "sections": [{"type": "chorus", "lines": [
+            {"syl": "*heave *ho", "ph": "hh iy v|hh ow", "chords": ["G"]},
+            {"syl": "*roll *ye *bold", "ph": "r ow l|y iy|b ow l d", "chords": ["C", "D"],
+             "sing": "choir"}]}]
+    });
+    let (s, _) = song::normalize_value(&v).expect("song reads");
+    let sheet = song_sheet(&s, 1, None);
+    let text = sheet.to_text();
+    assert!(text.contains("[Choir] roll ye bold"), "{text}");
+    assert!(text.contains("\nheave ho"), "{text}");
+    assert!(!text.contains("[Choir] heave"), "{text}");
+}
