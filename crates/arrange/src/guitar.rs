@@ -29,7 +29,7 @@
 //! b << 8 | j)`: onset jitter +-6 ms, velocity x (0.92..1.08), per-string
 //! strum spread.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use compose::form::Form;
 use compose::timeline::Timeline;
@@ -267,6 +267,10 @@ enum Stroke {
     UpLite,
     /// The bass note: the lowest sounding string.
     Bass,
+    /// Down strum over the sounding strings 0-2 (the low three).
+    DownBass,
+    /// Up strum over the sounding strings 0-2, top first, at most four.
+    UpBass,
     /// Alternate bass: the next sounding string above the bass, at most string 3.
     AltBass,
     /// Pick string 3 (G), 4 (B) or 5 (high E), or the nearest sounding one below.
@@ -413,6 +417,131 @@ const SPREAD_DOWN: f64 = 0.009;
 const SPREAD_UP: f64 = 0.007;
 const SPREAD_LAST: f64 = 0.028;
 
+/// Direction of a stroke.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dir {
+    Down,
+    Up,
+}
+
+/// Which strings of the voicing a stroke sounds. `All`, `Bass` (strings 0-2
+/// of the voicing, the low three) and `Treble` (strings 3-5, the high three)
+/// are strums in the stroke's direction; `Low` (the lowest sounding string),
+/// `Alt` (the next above it, at most string 3), `G`, `B` and `E` (string 3,
+/// 4 or 5, or the nearest sounding one below) are single picked notes and
+/// ignore the direction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Strings {
+    All,
+    Bass,
+    Treble,
+    Low,
+    Alt,
+    G,
+    B,
+    E,
+}
+
+impl Strings {
+    pub const ALL: [Strings; 8] = [
+        Strings::All,
+        Strings::Bass,
+        Strings::Treble,
+        Strings::Low,
+        Strings::Alt,
+        Strings::G,
+        Strings::B,
+        Strings::E,
+    ];
+
+    /// The name the arranger edits use.
+    pub fn name(self) -> &'static str {
+        match self {
+            Strings::All => "all",
+            Strings::Bass => "bass",
+            Strings::Treble => "treble",
+            Strings::Low => "low",
+            Strings::Alt => "alt",
+            Strings::G => "g",
+            Strings::B => "b",
+            Strings::E => "e",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Strings> {
+        let s = s.trim().to_ascii_lowercase();
+        Strings::ALL.into_iter().find(|x| x.name() == s)
+    }
+}
+
+impl Dir {
+    pub fn name(self) -> &'static str {
+        match self {
+            Dir::Down => "down",
+            Dir::Up => "up",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Dir> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "down" => Some(Dir::Down),
+            "up" => Some(Dir::Up),
+            _ => None,
+        }
+    }
+}
+
+/// One stroke of a bar: the form the planner and the arranger pass share.
+/// `beat` counts from the start of the bar; `vel` is the stroke's velocity
+/// before the random spread of 0.92-1.08; `damp` makes the struck strings a
+/// muted chop that stops `CHOP_TIME` after each onset.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GuitarStroke {
+    pub beat: f64,
+    pub dir: Dir,
+    pub strings: Strings,
+    pub damp: bool,
+    pub vel: f64,
+}
+
+impl Stroke {
+    fn of(dir: Dir, strings: Strings) -> Stroke {
+        match (strings, dir) {
+            (Strings::All, Dir::Down) => Stroke::Down,
+            (Strings::All, Dir::Up) => Stroke::Up,
+            (Strings::Treble, Dir::Down) => Stroke::DownLite,
+            (Strings::Treble, Dir::Up) => Stroke::UpLite,
+            (Strings::Bass, Dir::Down) => Stroke::DownBass,
+            (Strings::Bass, Dir::Up) => Stroke::UpBass,
+            (Strings::Low, _) => Stroke::Bass,
+            (Strings::Alt, _) => Stroke::AltBass,
+            (Strings::G, _) => Stroke::G,
+            (Strings::B, _) => Stroke::B,
+            (Strings::E, _) => Stroke::E,
+        }
+    }
+
+    /// The (direction, strings) pair that names this stroke.
+    fn spec(self) -> (Dir, Strings) {
+        match self {
+            Stroke::Down => (Dir::Down, Strings::All),
+            Stroke::Up => (Dir::Up, Strings::All),
+            Stroke::DownLite => (Dir::Down, Strings::Treble),
+            Stroke::UpLite => (Dir::Up, Strings::Treble),
+            Stroke::DownBass => (Dir::Down, Strings::Bass),
+            Stroke::UpBass => (Dir::Up, Strings::Bass),
+            Stroke::Bass => (Dir::Down, Strings::Low),
+            Stroke::AltBass => (Dir::Down, Strings::Alt),
+            Stroke::G => (Dir::Down, Strings::G),
+            Stroke::B => (Dir::Down, Strings::B),
+            Stroke::E => (Dir::Down, Strings::E),
+        }
+    }
+}
+
+/// A muted chop stops this long after each string's onset, seconds.
+pub const CHOP_TIME: f64 = 0.06;
+
 /// A note or a damping event on one string, before note ends are resolved.
 #[derive(Clone, Copy)]
 struct Ev {
@@ -420,106 +549,82 @@ struct Ev {
     midi: Option<u8>,
     vel: f32,
     stop: bool,
+    /// A muted chop: the note stops `CHOP_TIME` after its onset.
+    chop: bool,
+}
+
+/// The pattern the rule-based planner plays in bar `bi`, as strokes with
+/// beats counted from the start of the bar and velocities after the
+/// section's level (`0.72 + 0.1 x intensity`).
+pub fn bar_strokes(song: &Song, form: &Form, bi: usize) -> Vec<GuitarStroke> {
+    let sub = form.sub() as f64;
+    let mi = meter_index(form.meter);
+    let bar = &form.bars[bi];
+    let sec = &form.sections[bar.sec];
+    let intensity = sec.intensity.level();
+    let mut pat = Pat::of(song.guitar);
+    if pat == Pat::Strum && intensity <= 1 {
+        pat = Pat::StrumLite;
+    }
+    if sec.kind == SectionKind::Bridge && pat == Pat::Strum {
+        pat = Pat::Fingerpick;
+    }
+    let strokes = if bi + 1 == form.bars.len() {
+        LAST_BAR
+    } else {
+        PATTERNS[pat as usize][mi]
+    };
+    let vel_sec = 0.72 + 0.1 * intensity as f64;
+    strokes
+        .iter()
+        .map(|&(slot, kind, vel)| {
+            let (dir, strings) = kind.spec();
+            GuitarStroke {
+                beat: slot as f64 / sub,
+                dir,
+                strings,
+                damp: false,
+                vel: vel as f64 * vel_sec,
+            }
+        })
+        .collect()
 }
 
 /// The accompaniment guitar: one note list per string, sorted by onset.
 pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> [Vec<StringNote>; 6] {
+    plan_with(song, form, tl, seed, &BTreeMap::new())
+}
+
+/// `plan`, with the pattern of some bars replaced: `overrides` maps a bar
+/// to its strokes (beats from the start of the bar). With no override this
+/// is exactly `plan`. The voicing of each stroke is the search result for
+/// the chord sounding at its beat.
+pub fn plan_with(
+    song: &Song,
+    form: &Form,
+    tl: &Timeline,
+    seed: u64,
+    overrides: &BTreeMap<usize, Vec<GuitarStroke>>,
+) -> [Vec<StringNote>; 6] {
     let bpb = form.bpb() as f64;
-    let sub = form.sub() as f64;
-    let mi = meter_index(form.meter);
     let nbars = form.bars.len();
     let mut memo: HashMap<VoicingKey, Voicing> = HashMap::new();
     let mut voicing_at = |ch: &Chord| *memo.entry(VoicingKey::of(ch)).or_insert_with_key(search);
     let mut ev: [Vec<Ev>; 6] = Default::default();
 
-    for (bi, bar) in form.bars.iter().enumerate() {
-        let sec = &form.sections[bar.sec];
-        let intensity = sec.intensity.level();
-        let mut pat = Pat::of(song.guitar);
-        if pat == Pat::Strum && intensity <= 1 {
-            pat = Pat::StrumLite;
-        }
-        if sec.kind == SectionKind::Bridge && pat == Pat::Strum {
-            pat = Pat::Fingerpick;
-        }
-        let last = bi + 1 == nbars;
-        let strokes = if last {
-            LAST_BAR
-        } else {
-            PATTERNS[pat as usize][mi]
+    for bi in 0..nbars {
+        let (strokes, last) = match overrides.get(&bi) {
+            // An edited last bar strums like any other bar.
+            Some(s) => (s.clone(), false),
+            None => (bar_strokes(song, form, bi), bi + 1 == nbars),
         };
-        let vel_sec = 0.72 + 0.1 * intensity as f64;
-
-        for (j, &(slot, kind, vel)) in strokes.iter().enumerate() {
+        for (j, st) in strokes.iter().enumerate() {
             let mut r = Rng::event(seed, GUITAR_STROKE, ((bi as u64) << 8) | j as u64);
-            let beat = bi as f64 * bpb + slot as f64 / sub;
+            let beat = bi as f64 * bpb + st.beat;
             let v = voicing_at(tl.chord_at(form, beat + 0.01));
             let t = tl.to_time(beat) + 0.006 * r.bipolar();
-            let vv = vel as f64 * vel_sec * (0.92 + 0.16 * r.uniform());
-            let Some(bass) = v.bass_string() else {
-                continue;
-            };
-            // The next sounding string above the bass, at most string 3.
-            let alt = (bass + 1..=3.min(bass + 2))
-                .find(|&s| v.notes[s].is_some())
-                .unwrap_or(bass);
-            // A picked string, or the nearest sounding one below it.
-            let mut pick = |s: usize| {
-                if let Some(ss) = (0..=s).rev().find(|&ss| v.notes[ss].is_some()) {
-                    ev[ss].push(Ev {
-                        t,
-                        midi: v.notes[ss],
-                        vel: vv as f32,
-                        stop: false,
-                    });
-                }
-            };
-            match kind {
-                Stroke::Bass => pick(bass),
-                Stroke::AltBass => pick(alt),
-                Stroke::G => pick(3),
-                Stroke::B => pick(4),
-                Stroke::E => pick(5),
-                Stroke::Down | Stroke::Up | Stroke::DownLite | Stroke::UpLite => {
-                    let down = matches!(kind, Stroke::Down | Stroke::DownLite);
-                    let lowest = match kind {
-                        Stroke::Down => 0,
-                        Stroke::Up => 2,
-                        _ => 3,
-                    };
-                    let mut strs = [0usize; 6];
-                    let mut n = 0;
-                    for s in lowest..6 {
-                        if v.notes[s].is_some() {
-                            strs[n] = s;
-                            n += 1;
-                        }
-                    }
-                    let strs = &mut strs[..n];
-                    if !down {
-                        strs.reverse();
-                    }
-                    let strs = if down { &strs[..] } else { &strs[..n.min(4)] };
-                    let spread = if last {
-                        SPREAD_LAST
-                    } else if down {
-                        SPREAD_DOWN
-                    } else {
-                        SPREAD_UP
-                    };
-                    for (k, &s) in strs.iter().enumerate() {
-                        let tt = t + k as f64 * spread * (0.8 + 0.4 * r.uniform());
-                        let accent = if k == 0 && down { 1.05 } else { 1.0 };
-                        let vs = vv * if down { 1.0 } else { 0.75 } * accent;
-                        ev[s].push(Ev {
-                            t: tt,
-                            midi: v.notes[s],
-                            vel: vs as f32,
-                            stop: false,
-                        });
-                    }
-                }
-            }
+            let vv = st.vel * (0.92 + 0.16 * r.uniform());
+            stroke_events(&mut ev, &v, st, t, vv, last, &mut r);
         }
     }
 
@@ -533,6 +638,7 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> [Vec<StringNo
                 midi: v.notes[s],
                 vel: 0.0,
                 stop: true,
+                chop: false,
             });
         }
     }
@@ -545,6 +651,9 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> [Vec<StringNo
                 continue;
             };
             let mut stop = x.t + MAX_RING;
+            if x.chop {
+                stop = stop.min(x.t + CHOP_TIME);
+            }
             for y in &e[k + 1..] {
                 if !y.stop {
                     break;
@@ -564,4 +673,371 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> [Vec<StringNo
         }
     }
     out
+}
+
+/// The events of one stroke on `v`, the chord's voicing: a picked note or a
+/// strum whose strings start 9 ms (down) or 7 ms (up) apart, 28 ms in the
+/// last bar, each spread drawn from `r` (0.8-1.2 of the nominal). `t` is
+/// the stroke's onset and `vv` its velocity after the random spread.
+fn stroke_events(
+    ev: &mut [Vec<Ev>; 6],
+    v: &Voicing,
+    st: &GuitarStroke,
+    t: f64,
+    vv: f64,
+    last: bool,
+    r: &mut Rng,
+) {
+    let kind = Stroke::of(st.dir, st.strings);
+    let chop = st.damp;
+    let Some(bass) = v.bass_string() else {
+        return;
+    };
+    // The next sounding string above the bass, at most string 3.
+    let alt = (bass + 1..=3.min(bass + 2))
+        .find(|&s| v.notes[s].is_some())
+        .unwrap_or(bass);
+    // A picked string, or the nearest sounding one below it.
+    let mut pick = |s: usize| {
+        if let Some(ss) = (0..=s).rev().find(|&ss| v.notes[ss].is_some()) {
+            ev[ss].push(Ev {
+                t,
+                midi: v.notes[ss],
+                vel: vv as f32,
+                stop: false,
+                chop,
+            });
+        }
+    };
+    match kind {
+        Stroke::Bass => pick(bass),
+        Stroke::AltBass => pick(alt),
+        Stroke::G => pick(3),
+        Stroke::B => pick(4),
+        Stroke::E => pick(5),
+        Stroke::Down
+        | Stroke::Up
+        | Stroke::DownLite
+        | Stroke::UpLite
+        | Stroke::DownBass
+        | Stroke::UpBass => {
+            let down = matches!(kind, Stroke::Down | Stroke::DownLite | Stroke::DownBass);
+            let (lowest, top) = match kind {
+                Stroke::Down => (0, 6),
+                Stroke::Up => (2, 6),
+                Stroke::DownBass | Stroke::UpBass => (0, 3),
+                _ => (3, 6),
+            };
+            let mut strs = [0usize; 6];
+            let mut n = 0;
+            for s in lowest..top {
+                if v.notes[s].is_some() {
+                    strs[n] = s;
+                    n += 1;
+                }
+            }
+            let strs = &mut strs[..n];
+            if !down {
+                strs.reverse();
+            }
+            let strs = if down { &strs[..] } else { &strs[..n.min(4)] };
+            let spread = if last {
+                SPREAD_LAST
+            } else if down {
+                SPREAD_DOWN
+            } else {
+                SPREAD_UP
+            };
+            for (k, &s) in strs.iter().enumerate() {
+                let tt = t + k as f64 * spread * (0.8 + 0.4 * r.uniform());
+                let accent = if k == 0 && down { 1.05 } else { 1.0 };
+                let vs = vv * if down { 1.0 } else { 0.75 } * accent;
+                ev[s].push(Ev {
+                    t: tt,
+                    midi: v.notes[s],
+                    vel: vs as f32,
+                    stop: false,
+                    chop,
+                });
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use compose::prepare::prepare;
+    use serde_json::json;
+
+    // The rule-based planner before the stroke refactor.
+    #[allow(clippy::all)]
+    mod legacy {
+        use super::super::*;
+
+        #[derive(Clone, Copy)]
+        struct OldEv {
+            t: f64,
+            midi: Option<u8>,
+            vel: f32,
+            stop: bool,
+        }
+
+        /// The planner as it was before `plan_with` (verbatim, for the identity test).
+        pub fn old_plan(
+            song: &Song,
+            form: &Form,
+            tl: &Timeline,
+            seed: u64,
+        ) -> [Vec<StringNote>; 6] {
+            let bpb = form.bpb() as f64;
+            let sub = form.sub() as f64;
+            let mi = meter_index(form.meter);
+            let nbars = form.bars.len();
+            let mut memo: HashMap<VoicingKey, Voicing> = HashMap::new();
+            let mut voicing_at =
+                |ch: &Chord| *memo.entry(VoicingKey::of(ch)).or_insert_with_key(search);
+            let mut ev: [Vec<OldEv>; 6] = Default::default();
+
+            for (bi, bar) in form.bars.iter().enumerate() {
+                let sec = &form.sections[bar.sec];
+                let intensity = sec.intensity.level();
+                let mut pat = Pat::of(song.guitar);
+                if pat == Pat::Strum && intensity <= 1 {
+                    pat = Pat::StrumLite;
+                }
+                if sec.kind == SectionKind::Bridge && pat == Pat::Strum {
+                    pat = Pat::Fingerpick;
+                }
+                let last = bi + 1 == nbars;
+                let strokes = if last {
+                    LAST_BAR
+                } else {
+                    PATTERNS[pat as usize][mi]
+                };
+                let vel_sec = 0.72 + 0.1 * intensity as f64;
+
+                for (j, &(slot, kind, vel)) in strokes.iter().enumerate() {
+                    let mut r = Rng::event(seed, GUITAR_STROKE, ((bi as u64) << 8) | j as u64);
+                    let beat = bi as f64 * bpb + slot as f64 / sub;
+                    let v = voicing_at(tl.chord_at(form, beat + 0.01));
+                    let t = tl.to_time(beat) + 0.006 * r.bipolar();
+                    let vv = vel as f64 * vel_sec * (0.92 + 0.16 * r.uniform());
+                    let Some(bass) = v.bass_string() else {
+                        continue;
+                    };
+                    // The next sounding string above the bass, at most string 3.
+                    let alt = (bass + 1..=3.min(bass + 2))
+                        .find(|&s| v.notes[s].is_some())
+                        .unwrap_or(bass);
+                    // A picked string, or the nearest sounding one below it.
+                    let mut pick = |s: usize| {
+                        if let Some(ss) = (0..=s).rev().find(|&ss| v.notes[ss].is_some()) {
+                            ev[ss].push(OldEv {
+                                t,
+                                midi: v.notes[ss],
+                                vel: vv as f32,
+                                stop: false,
+                            });
+                        }
+                    };
+                    match kind {
+                        Stroke::Bass => pick(bass),
+                        Stroke::AltBass => pick(alt),
+                        Stroke::G => pick(3),
+                        Stroke::B => pick(4),
+                        Stroke::E => pick(5),
+                        Stroke::Down
+                        | Stroke::Up
+                        | Stroke::DownLite
+                        | Stroke::UpLite
+                        | Stroke::DownBass
+                        | Stroke::UpBass => {
+                            let down = matches!(kind, Stroke::Down | Stroke::DownLite);
+                            let lowest = match kind {
+                                Stroke::Down => 0,
+                                Stroke::Up => 2,
+                                _ => 3,
+                            };
+                            let mut strs = [0usize; 6];
+                            let mut n = 0;
+                            for s in lowest..6 {
+                                if v.notes[s].is_some() {
+                                    strs[n] = s;
+                                    n += 1;
+                                }
+                            }
+                            let strs = &mut strs[..n];
+                            if !down {
+                                strs.reverse();
+                            }
+                            let strs = if down { &strs[..] } else { &strs[..n.min(4)] };
+                            let spread = if last {
+                                SPREAD_LAST
+                            } else if down {
+                                SPREAD_DOWN
+                            } else {
+                                SPREAD_UP
+                            };
+                            for (k, &s) in strs.iter().enumerate() {
+                                let tt = t + k as f64 * spread * (0.8 + 0.4 * r.uniform());
+                                let accent = if k == 0 && down { 1.05 } else { 1.0 };
+                                let vs = vv * if down { 1.0 } else { 0.75 } * accent;
+                                ev[s].push(OldEv {
+                                    t: tt,
+                                    midi: v.notes[s],
+                                    vel: vs as f32,
+                                    stop: false,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Chord-change damping.
+            for sg in &tl.segs {
+                let v = voicing_at(form.chord(sg.chord));
+                let t = tl.to_time(sg.b0) - CHANGE_LEAD;
+                for (s, e) in ev.iter_mut().enumerate() {
+                    e.push(OldEv {
+                        t,
+                        midi: v.notes[s],
+                        vel: 0.0,
+                        stop: true,
+                    });
+                }
+            }
+
+            let mut out: [Vec<StringNote>; 6] = Default::default();
+            for (s, e) in ev.iter_mut().enumerate() {
+                e.sort_by(|a, b| a.t.total_cmp(&b.t));
+                for (k, x) in e.iter().enumerate() {
+                    let (false, Some(midi)) = (x.stop, x.midi) else {
+                        continue;
+                    };
+                    let mut stop = x.t + MAX_RING;
+                    for y in &e[k + 1..] {
+                        if !y.stop {
+                            break;
+                        }
+                        if y.midi != x.midi {
+                            stop = stop.min(y.t + DAMP_TIME);
+                            break;
+                        }
+                    }
+                    out[s].push(StringNote {
+                        t: x.t,
+                        stop,
+                        string: s as u8,
+                        midi,
+                        vel: x.vel,
+                    });
+                }
+            }
+            out
+        }
+    }
+
+    fn song_of(meter: &str, guitar: &str) -> Song {
+        let v = json!({
+            "key": "D", "mode": "major", "meter": meter, "tempo": 108, "guitar": guitar,
+            "voice": "alto",
+            "sections": [
+                {"type": "intro", "chords": ["D", "G/B", "A", "D"]},
+                {"type": "verse", "energy": "quiet", "lines": [
+                    {"syl": "*walk the *line a-*long the *ridge", "chords": ["D", "Bm7"]},
+                    {"syl": "*coun-ting *stones be-*neath the *bridge", "chords": ["G", "A7sus4"]}]},
+                {"type": "chorus", "energy": "high", "lines": [
+                    {"syl": "*hold *on, *hold *on to the *light", "chords": ["G", "D/F#", "Em7", "A"]}]},
+                {"type": "bridge", "lines": [
+                    {"syl": "*ev-ery *road *bends *home", "chords": ["Bm", "G", "Em", "A"]}]},
+                {"type": "outro", "chords": ["G", "A", "D"]}
+            ]
+        });
+        song::normalize_value(&v).unwrap().0
+    }
+
+    #[test]
+    fn the_stroke_planner_equals_the_old_planner_bit_for_bit() {
+        for meter in ["4/4", "3/4", "6/8"] {
+            for guitar in ["strum", "fingerpick", "travis", "arpeggio"] {
+                let s = song_of(meter, guitar);
+                for seed in [1u64, 1234] {
+                    let p = prepare(&s, seed, None);
+                    let new = plan(&s, &p.form, &p.timeline, seed);
+                    let old = legacy::old_plan(&s, &p.form, &p.timeline, seed);
+                    assert!(new.iter().any(|l| !l.is_empty()));
+                    assert_eq!(new, old, "{meter} {guitar} seed {seed}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_stroke_list_names_every_rule_based_pattern_stroke() {
+        let s = song_of("4/4", "strum");
+        let p = prepare(&s, 3, None);
+        // Re-planning each bar (but the last) with its own strokes as an
+        // override changes nothing.
+        let ov: BTreeMap<usize, Vec<GuitarStroke>> = (0..p.form.bars.len() - 1)
+            .map(|b| (b, bar_strokes(&s, &p.form, b)))
+            .collect();
+        assert_eq!(
+            plan_with(&s, &p.form, &p.timeline, 3, &ov),
+            plan(&s, &p.form, &p.timeline, 3)
+        );
+    }
+
+    #[test]
+    fn boom_chuck_and_chops() {
+        let s = song_of("4/4", "strum");
+        let p = prepare(&s, 3, None);
+        let mut ov = BTreeMap::new();
+        let st = |beat: f64, dir, strings, damp| GuitarStroke {
+            beat,
+            dir,
+            strings,
+            damp,
+            vel: 0.8,
+        };
+        // Bar 4 (the verse's first bar): boom on 0 and 2, chuck on 1 and 3.
+        ov.insert(
+            4,
+            vec![
+                st(0.0, Dir::Down, Strings::Bass, false),
+                st(1.0, Dir::Down, Strings::Treble, false),
+                st(2.0, Dir::Down, Strings::Bass, false),
+                st(3.0, Dir::Down, Strings::Treble, true),
+            ],
+        );
+        let g = plan_with(&s, &p.form, &p.timeline, 3, &ov);
+        let t = |b: f64| p.timeline.to_time(16.0 + b);
+        let near = |n: &StringNote, b: f64| (n.t - t(b)).abs() < 0.06;
+        let in_bar: Vec<&StringNote> = g
+            .iter()
+            .flatten()
+            .filter(|n| n.t >= t(0.0) - 0.05 && n.t < t(4.0) - 0.05)
+            .collect();
+        // Boom: only strings 0-2 sound on beats 0 and 2; chuck: only 3-5 on 1 and 3.
+        for n in &in_bar {
+            let b = (0..4).find(|&b| near(n, b as f64)).expect("on a beat");
+            if b % 2 == 0 {
+                assert!(n.string <= 2, "beat {b} string {}", n.string);
+            } else {
+                assert!(n.string >= 3, "beat {b} string {}", n.string);
+            }
+            if b == 3 {
+                assert!(n.stop - n.t <= CHOP_TIME + 1e-9, "a chop stops at once");
+            }
+        }
+        assert!(in_bar.iter().any(|n| near(n, 3.0)));
+        let ringing = in_bar.iter().find(|n| near(n, 0.0)).unwrap();
+        assert!(ringing.stop - ringing.t > CHOP_TIME);
+        // Bars before the edit are as the rules made them.
+        let base = plan(&s, &p.form, &p.timeline, 3);
+        let before =
+            |v: &[Vec<StringNote>; 6]| v.iter().flatten().filter(|n| n.t < t(0.0) - 0.05).count();
+        assert_eq!(before(&g), before(&base));
+    }
 }
