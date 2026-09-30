@@ -44,6 +44,10 @@ pub const VIB_RATE_VAR: f64 = 0.0;
 pub const VIB_DEPTH_VAR: f64 = 0.0;
 pub const VIB_WOBBLE2: f64 = 0.0;
 
+/// Depth (0..1) of the glottal-flow modulation of the noise in voiced
+/// fricatives (dh v z zh); 0 is unmodulated noise (issue 22).
+pub const VFRIC_MOD: f64 = 0.0;
+
 /// High shelf after the cascade: +16 dB at 5.2 kHz, Q 0.7 (CLAUDE.md, "Voice"). It
 /// replaced a parallel high-frequency branch, which filled the vowels'
 /// spectral valleys.

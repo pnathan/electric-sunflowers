@@ -49,7 +49,7 @@ use crate::params::{voice_params, VoiceParams};
 use crate::phrasing::PhrasingParams;
 use crate::tract::{Formants, Tract, MAX_HIGH};
 use crate::tuning::{
-    ASPIRATION_GAIN, BREATH_LP_HZ, BW_SCALE, HF_BRANCH_GAIN, HF_BRANCH_HZ, TILT_SCALE,
+    ASPIRATION_GAIN, BREATH_LP_HZ, BW_SCALE, HF_BRANCH_GAIN, HF_BRANCH_HZ, TILT_SCALE, VFRIC_MOD,
 };
 
 const SOURCE: Tag = tag("voice.source");
@@ -348,7 +348,9 @@ impl VoiceSynth {
                         + n1 * breath * a * (0.18 + 0.9 * flow))
                         * 0.55;
                 if FRIC {
-                    fin[j] = fric[j] as f64 * (af + daf * t);
+                    // Voiced fricatives (dh v z): the noise follows the glottal flow.
+                    let m = 1.0 - VFRIC_MOD * (a * (1.0 / 0.6)).min(1.0) * (1.0 - flow);
+                    fin[j] = fric[j] as f64 * (af + daf * t) * m;
                 }
             },
         );
