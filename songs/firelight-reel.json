@@ -1,0 +1,241 @@
+{
+ "title": "Firelight Reel",
+ "note": "A tavern reel on Irish session lineage: fiddle, stamping feet, and a chorus for the whole room.",
+ "key": "D",
+ "mode": "mixolydian",
+ "meter": "4/4",
+ "tempo": 144,
+ "guitar": "strum",
+ "voice": "baritone",
+ "sections": [
+  {
+   "type": "intro",
+   "chords": [
+    "D",
+    "C",
+    "D",
+    "D"
+   ]
+  },
+  {
+   "type": "verse",
+   "lines": [
+    {
+     "syl": "*light the *lamps and *bar the *door",
+     "ph": "l ay t|dh ax|l ae m p s|ae n d|b aa r|dh ax|d ao r",
+     "chords": [
+      "D",
+      "C"
+     ]
+    },
+    {
+     "syl": "the *fid-dle's *wak-ing *on the *floor",
+     "ph": "dh ax|f ih|d ax l z|w ey|k ih ng|aa n|dh ax|f l ao r",
+     "chords": [
+      "D",
+      "A"
+     ]
+    },
+    {
+     "syl": "*stamp your *boots and *raise your *cup",
+     "ph": "s t ae m p|y ao r|b uw t s|ae n d|r ey z|y ao r|k ah p",
+     "chords": [
+      "G",
+      "D"
+     ]
+    },
+    {
+     "syl": "*no one *sits till the *sun comes *up",
+     "ph": "n ow|w ah n|s ih t s|t ih l|dh ax|s ah n|k ah m z|ah p",
+     "chords": [
+      "C",
+      "D"
+     ]
+    }
+   ]
+  },
+  {
+   "type": "chorus",
+   "lines": [
+    {
+     "syl": "so *hey for the *reel and *ho for the *jig",
+     "ph": "s ow|hh ey|f ao r|dh ax|r iy l|ae n d|hh ow|f ao r|dh ax|jh ih g",
+     "chords": [
+      "D",
+      "C"
+     ]
+    },
+    {
+     "syl": "the *night is *young and the *room is *big",
+     "ph": "dh ax|n ay t|ih z|y ah ng|ae n d|dh ax|r uw m|ih z|b ih g",
+     "chords": [
+      "D",
+      "A"
+     ]
+    },
+    {
+     "syl": "*turn your *part-ner, *spin a-*round",
+     "ph": "t er n|y ao r|p aa r t|n er|s p ih n|ax|r aw n d",
+     "chords": [
+      "G",
+      "D"
+     ]
+    },
+    {
+     "syl": "we'll *drink the *moon right *un-der-*ground",
+     "ph": "w iy l|d r ih ng k|dh ax|m uw n|r ay t|ah n|d er|g r aw n d",
+     "chords": [
+      "C",
+      "D"
+     ]
+    }
+   ]
+  },
+  {
+   "type": "interlude",
+   "chords": [
+    "D",
+    "C",
+    "D",
+    "A",
+    "D",
+    "C",
+    "A",
+    "D"
+   ]
+  },
+  {
+   "type": "verse",
+   "lines": [
+    {
+     "syl": "the *cop-per *pots are *ring-ing *bright",
+     "ph": "dh ax|k aa|p er|p aa t s|aa r|r ih ng|ih ng|b r ay t",
+     "chords": [
+      "D",
+      "C"
+     ]
+    },
+    {
+     "syl": "there's *saw-dust *fly-ing *in the *light",
+     "ph": "dh eh r z|s ao|d ah s t|f l ay|ih ng|ih n|dh ax|l ay t",
+     "chords": [
+      "D",
+      "A"
+     ]
+    },
+    {
+     "syl": "the *old man *whis-tles, the *young ones *shout",
+     "ph": "dh ax|ow l d|m ae n|w ih|s ax l z|dh ax|y ah ng|w ah n z|sh aw t",
+     "chords": [
+      "G",
+      "D"
+     ]
+    },
+    {
+     "syl": "and *no-bo-dy *wants the *can-dles *out",
+     "ph": "ae n d|n ow|b aa|d iy|w aa n t s|dh ax|k ae n|d ax l z|aw t",
+     "chords": [
+      "C",
+      "D"
+     ]
+    }
+   ]
+  },
+  {
+   "type": "chorus",
+   "lines": [
+    {
+     "syl": "so *hey for the *reel and *ho for the *jig",
+     "ph": "s ow|hh ey|f ao r|dh ax|r iy l|ae n d|hh ow|f ao r|dh ax|jh ih g",
+     "chords": [
+      "D",
+      "C"
+     ]
+    },
+    {
+     "syl": "the *night is *young and the *room is *big",
+     "ph": "dh ax|n ay t|ih z|y ah ng|ae n d|dh ax|r uw m|ih z|b ih g",
+     "chords": [
+      "D",
+      "A"
+     ]
+    },
+    {
+     "syl": "*turn your *part-ner, *spin a-*round",
+     "ph": "t er n|y ao r|p aa r t|n er|s p ih n|ax|r aw n d",
+     "chords": [
+      "G",
+      "D"
+     ]
+    },
+    {
+     "syl": "we'll *drink the *moon right *un-der-*ground",
+     "ph": "w iy l|d r ih ng k|dh ax|m uw n|r ay t|ah n|d er|g r aw n d",
+     "chords": [
+      "C",
+      "D"
+     ]
+    }
+   ]
+  },
+  {
+   "type": "interlude",
+   "chords": [
+    "D",
+    "C",
+    "A",
+    "D"
+   ]
+  },
+  {
+   "type": "chorus",
+   "lines": [
+    {
+     "syl": "so *hey for the *reel and *ho for the *jig",
+     "ph": "s ow|hh ey|f ao r|dh ax|r iy l|ae n d|hh ow|f ao r|dh ax|jh ih g",
+     "chords": [
+      "D",
+      "C"
+     ]
+    },
+    {
+     "syl": "the *night is *young and the *room is *big",
+     "ph": "dh ax|n ay t|ih z|y ah ng|ae n d|dh ax|r uw m|ih z|b ih g",
+     "chords": [
+      "D",
+      "A"
+     ]
+    },
+    {
+     "syl": "*turn your *part-ner, *spin a-*round",
+     "ph": "t er n|y ao r|p aa r t|n er|s p ih n|ax|r aw n d",
+     "chords": [
+      "G",
+      "D"
+     ]
+    },
+    {
+     "syl": "we'll *drink the *moon right *un-der-*ground",
+     "ph": "w iy l|d r ih ng k|dh ax|m uw n|r ay t|ah n|d er|g r aw n d",
+     "chords": [
+      "C",
+      "D"
+     ]
+    }
+   ]
+  },
+  {
+   "type": "tag",
+   "lines": [
+    {
+     "syl": "and *ho for the *fire-*light *jig",
+     "ph": "ae n d|hh ow|f ao r|dh ax|f ay r|l ay t|jh ih g",
+     "chords": [
+      "D",
+      "D"
+     ]
+    }
+   ]
+  }
+ ]
+}

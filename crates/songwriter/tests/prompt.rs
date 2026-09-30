@@ -226,7 +226,7 @@ fn every_style_has_a_duet_fit_and_a_phrasing() {
     let parlando = [Blues, Broadside, Texas, Cowboy];
     let detached = [Oldtime, Bluegrass, Cajun, Zydeco, Shanty, IrishPub];
     let held = [Gospel, Revival, Nashville, IrishAir];
-    let clipped = [Oldtime, Bluegrass, Shanty, Zydeco];
+    let clipped = [Oldtime, Bluegrass, Shanty, Zydeco, IrishPub];
     for s in &STYLES {
         let want_delivery = if legato.contains(&s.id) {
             song::Delivery::Legato
