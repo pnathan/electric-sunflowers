@@ -48,6 +48,15 @@ pub const VIB_WOBBLE2: f64 = 0.0;
 /// fricatives (dh v z zh); 0 is unmodulated noise (issue 22).
 pub const VFRIC_MOD: f64 = 0.0;
 
+/// Multiplier on the Q of the frication and burst band-pass (1 is today).
+/// A narrower band puts less noise in the upper skirt, so a velar burst
+/// (centre 2.3 kHz) stops sounding like an alveolar one (issue 22).
+pub const FRIC_Q_SCALE: f64 = 1.0;
+
+/// Extra bandwidth (Hz) of F2 and F3 in a nasal (1 nasal = 170 and 220 today).
+pub const NAS_B2_HZ: f64 = 170.0;
+pub const NAS_B3_HZ: f64 = 220.0;
+
 /// High shelf after the cascade: +16 dB at 5.2 kHz, Q 0.7 (CLAUDE.md, "Voice"). It
 /// replaced a parallel high-frequency branch, which filled the vowels'
 /// spectral valleys.

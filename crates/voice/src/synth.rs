@@ -49,7 +49,8 @@ use crate::params::{voice_params, VoiceParams};
 use crate::phrasing::PhrasingParams;
 use crate::tract::{Formants, Tract, MAX_HIGH};
 use crate::tuning::{
-    ASPIRATION_GAIN, BREATH_LP_HZ, BW_SCALE, HF_BRANCH_GAIN, HF_BRANCH_HZ, TILT_SCALE, VFRIC_MOD,
+    ASPIRATION_GAIN, BREATH_LP_HZ, BW_SCALE, HF_BRANCH_GAIN, HF_BRANCH_HZ, NAS_B2_HZ, NAS_B3_HZ,
+    TILT_SCALE, VFRIC_MOD,
 };
 
 const SOURCE: Tag = tag("voice.source");
@@ -229,8 +230,8 @@ impl VoiceSynth {
             ],
             bw: [
                 (60.0 + self.breath * 80.0 + nas * 50.0 + ctl.b1x[m] as f64 * B1X_GAIN) * BW_SCALE,
-                (90.0 + nas * 170.0) * BW_SCALE,
-                (130.0 + nas * 220.0) * BW_SCALE,
+                (90.0 + nas * NAS_B2_HZ) * BW_SCALE,
+                (130.0 + nas * NAS_B3_HZ) * BW_SCALE,
             ],
         }
     }
