@@ -267,7 +267,7 @@ Each model: algorithm, source, parameters that set the sound. Values are the cur
 
 ### 5.9 Bass
 
-- Root-fifth line with approach notes (arrange). Rendered as a dark pluck (brightness 0.12, damping 0.5) plus a sine sub layer (6 ms attack, 0.7 s decay, 2600-sample release ramp). The sine is a recursive oscillator; the decay is a one-multiply recursion.
+- Root-fifth line with approach notes (arrange). Rendered as a dark pluck (brightness 0.12, damping 0.5) plus a sine sub layer (6 ms attack, 0.7 s decay, 2600-sample release ramp). The sine is a recursive oscillator; the decay is a one-multiply recursion. Each onset adds a thump, the string bass's kick: a sine that falls from 1.5 f0 to f0 in 15 ms and decays with a 70 ms time constant (level 0.7 v), plus a finger click of white noise low-passed at 1.4 kHz with a 6 ms decay (level 0.35 v), 300 ms long at most; the click draws from `Rng::event(seed, bass.thump, k)`.
 
 ### 5.10 FFT and convolution (`dsp::fft`, `dsp::conv`)
 
