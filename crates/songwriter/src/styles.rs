@@ -765,7 +765,7 @@ pub static STYLES: [Style; 22] = [
             doubles: true,
             ..kit(Full)
         },
-        forms: &[FormId::VcBreaks, FormId::ChorusFirst, FormId::Vc],
+        forms: &[FormId::Vc, FormId::ChorusFirst, FormId::VcBreaks],
         lead: BreakLead::Violin,
         duet: DuetFit::Occasional,
         phrasing: Phrasing { delivery: Delivery::Detached, endings: Endings::Clipped },
