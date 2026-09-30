@@ -16,44 +16,47 @@
     "C",
     "D",
     "D"
-   ]
+   ],
+   "tune": "l16 s16 m8 s8 d'8 m'8 d'8 s8 m8 | f8 r8 te8 r8 f8 te8 r'8 te8 | d'8 s8 m8 s8 d'8 r'8 m'8 d'8 | d'4 s8 m8 d2",
+   "energy": "high"
   },
   {
    "type": "verse",
    "lines": [
     {
-     "syl": "*light the *lamps and *bar the *door",
-     "ph": "l ay t|dh ax|l ae m p s|ae n d|b aa r|dh ax|d ao r",
+     "syl": "*light the lamps and *bar the door and *roll the bar-rel *in",
+     "ph": "l ay t|dh ax|l ae m p s|ae n d|b aa r|dh ax|d ao r|ae n d|r ow l|dh ax|b ae|r ax l|ih n",
      "chords": [
       "D",
       "C"
      ]
     },
     {
-     "syl": "the *fid-dle's *wak-ing *on the *floor",
-     "ph": "dh ax|f ih|d ax l z|w ey|k ih ng|aa n|dh ax|f l ao r",
+     "syl": "the *fid-dle's in the *cor-ner and the *boots are on the *floor",
+     "ph": "dh ax|f ih|d ax l z|ih n|dh ax|k ao r|n er|ae n d|dh ax|b uw t s|aa r|aa n|dh ax|f l ao r",
      "chords": [
       "D",
       "A"
      ]
     },
     {
-     "syl": "*stamp your *boots and *raise your *cup",
-     "ph": "s t ae m p|y ao r|b uw t s|ae n d|r ey z|y ao r|k ah p",
+     "syl": "so *stamp it on the *one and *clap it on the *two",
+     "ph": "s ow|s t ae m p|ih t|aa n|dh ax|w ah n|ae n d|k l ae p|ih t|aa n|dh ax|t uw",
      "chords": [
       "G",
       "D"
      ]
     },
     {
-     "syl": "*no one *sits till the *sun comes *up",
-     "ph": "n ow|w ah n|s ih t s|t ih l|dh ax|s ah n|k ah m z|ah p",
+     "syl": "and *no-bod-y goes *home un-til the *night is *through",
+     "ph": "ae n d|n ow|b aa|d iy|g ow z|hh ow m|ah n|t ih l|dh ax|n ay t|ih z|th r uw",
      "chords": [
       "C",
       "D"
      ]
     }
-   ]
+   ],
+   "energy": "mid"
   },
   {
    "type": "chorus",
@@ -91,7 +94,8 @@
      ]
     }
    ],
-   "tune": "C"
+   "tune": "C",
+   "energy": "high"
   },
   {
    "type": "interlude",
@@ -104,44 +108,47 @@
     "C",
     "A",
     "D"
-   ]
+   ],
+   "tune": "R",
+   "energy": "high"
   },
   {
    "type": "verse",
    "lines": [
     {
-     "syl": "the *cop-per *pots are *ring-ing *bright",
-     "ph": "dh ax|k aa|p er|p aa t s|aa r|r ih ng|ih ng|b r ay t",
+     "syl": "the *cop-per pots are *ring-ing and the *can-dles burn-ing *bright",
+     "ph": "dh ax|k aa|p er|p aa t s|aa r|r ih ng|ih ng|ae n d|dh ax|k ae n|d ax l z|b er|n ih ng|b r ay t",
      "chords": [
       "D",
       "C"
      ]
     },
     {
-     "syl": "there's *saw-dust *fly-ing *in the *light",
-     "ph": "dh eh r z|s ao|d ah s t|f l ay|ih ng|ih n|dh ax|l ay t",
+     "syl": "there's *saw-dust fly-ing *up a-round the *raf-ters in the *light",
+     "ph": "dh eh r z|s ao|d ah s t|f l ay|ih ng|ah p|ax|r aw n d|dh ax|r ae f|t er z|ih n|dh ax|l ay t",
      "chords": [
       "D",
       "A"
      ]
     },
     {
-     "syl": "the *old man *whis-tles, the *young ones *shout",
-     "ph": "dh ax|ow l d|m ae n|w ih|s ax l z|dh ax|y ah ng|w ah n z|sh aw t",
+     "syl": "the *old ones whis-tle *high and the *young ones shout it *out",
+     "ph": "dh ax|ow l d|w ah n z|w ih|s ax l|hh ay|ae n d|dh ax|y ah ng|w ah n z|sh aw t|ih t|aw t",
      "chords": [
       "G",
       "D"
      ]
     },
     {
-     "syl": "and *no-bo-dy *wants the *can-dles *out",
-     "ph": "ae n d|n ow|b aa|d iy|w aa n t s|dh ax|k ae n|d ax l z|aw t",
+     "syl": "and *not a sin-gle *so-ber soul is *what it's all a-*bout",
+     "ph": "ae n d|n aa t|ax|s ih ng|g ax l|s ow|b er|s ow l|ih z|w ah t|ih t s|ao l|ax|b aw t",
      "chords": [
       "C",
       "D"
      ]
     }
-   ]
+   ],
+   "energy": "high"
   },
   {
    "type": "chorus",
@@ -179,7 +186,8 @@
      ]
     }
    ],
-   "tune": "C"
+   "tune": "C",
+   "energy": "high"
   },
   {
    "type": "interlude",
@@ -188,7 +196,9 @@
     "C",
     "A",
     "D"
-   ]
+   ],
+   "tune": "m'8 d'8 s8 d'8 m'8 s'8 m'8 d'8 | f'8 r'8 te8 r'8 f'8 r'8 d'8 te8 | s8 l8 t8 d'8 r'8 d'8 t8 l8 | d'4 s8 m8 d2",
+   "energy": "high"
   },
   {
    "type": "chorus",
@@ -226,7 +236,8 @@
      ]
     }
    ],
-   "tune": "C"
+   "tune": "C",
+   "energy": "high"
   },
   {
    "type": "tag",
@@ -240,7 +251,8 @@
      ],
      "tune": "s, te, te, r m r d"
     }
-   ]
+   ],
+   "energy": "high"
   }
  ],
  "tunes": {
@@ -249,6 +261,9 @@
    "s, d m s f m r r m",
    "l l f l s f m",
    "s, te, te, r f r te, d"
+  ],
+  "R": [
+   "l16 s16 m8 s8 d'8 m'8 d'8 s8 m8 | f8 r8 te8 r8 f8 te8 r'8 te8 | d'8 s8 m8 s8 d'8 r'8 m'8 d'8 | r'8 t8 s8 t8 r'8 s'8 r'8 t8 | m'8 d'8 s8 d'8 m'8 s'8 m'8 d'8 | f'8 r'8 te8 r'8 f'8 r'8 d'8 te8 | s8 l8 t8 d'8 r'8 d'8 t8 l8 | d'4 s8 m8 d2"
   ]
  }
 }
