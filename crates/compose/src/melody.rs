@@ -220,6 +220,10 @@ pub struct InstNote {
     pub dur: f64,
     pub midi: i32,
     pub lift: bool,
+    /// The note comes from a written break tune (`written`): its pitch is
+    /// kept, and the violin plays it as written. Until `prepare` places the
+    /// tune, `midi` is `60 +` semitones above the tonic (`written::place`).
+    pub written: bool,
 }
 
 /// The composed melody.
@@ -603,11 +607,7 @@ pub fn compose_melody(
         }
     }
 
-    let inst = if crate::dance::is_dance(song) {
-        crate::dance::compose(form, tl, seed)
-    } else {
-        compose_instrumental(form, tl, seed, t)
-    };
+    let inst = compose_instrumental(form, tl, seed, t);
     Comp {
         lead,
         inst,
@@ -620,7 +620,8 @@ pub fn compose_melody(
 
 /// Instrumental lead lines for sections without lyrics: one line per two
 /// written bars, 4-6 notes (times 1.5 when stretched), echoing the chorus
-/// lines; the last chunk closes open, or on the tonic in an outro.
+/// lines; the last chunk closes open, or on the tonic in an outro. A section
+/// with a written tune (`Sec::break_tune`) plays it instead (`written`).
 fn compose_instrumental(form: &Form, tl: &Timeline, seed: u64, t: i32) -> Vec<InstNote> {
     let bpb = form.bpb();
     let chorus = form
@@ -631,7 +632,14 @@ fn compose_instrumental(form: &Form, tl: &Timeline, seed: u64, t: i32) -> Vec<In
     let cb = 2 * form.stretch.max(1) as usize;
     let mut inst = Vec::new();
     for (si, s) in form.sections.iter().enumerate() {
-        if s.is_sung() || s.n_bars < cb {
+        if s.is_sung() {
+            continue;
+        }
+        if let Some(bt) = &s.break_tune {
+            inst.extend(crate::written::compose(form, si, bt));
+            continue;
+        }
+        if s.n_bars < cb {
             continue;
         }
         let h = Harmony {
@@ -690,6 +698,7 @@ fn compose_instrumental(form: &Form, tl: &Timeline, seed: u64, t: i32) -> Vec<In
                     dur: m.rh.durs[i],
                     midi: m.pitches[i],
                     lift: s.is_lift(),
+                    written: false,
                 });
             }
         }

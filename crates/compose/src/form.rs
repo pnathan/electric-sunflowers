@@ -87,6 +87,8 @@ pub struct Sec {
     /// The key in force in this section, transposed by the form's
     /// `transpose`: the song's key until a section changes it.
     pub key: (Pc, Mode),
+    /// The writer's tune for an instrumental section (schema 3).
+    pub break_tune: Option<Vec<song::BreakNote>>,
 }
 
 impl Sec {
@@ -405,6 +407,7 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
                 let (tonic, mode) = song.key_at(si);
                 (tonic.transpose(transpose), mode)
             },
+            break_tune: s.break_tune.clone(),
         });
     }
 

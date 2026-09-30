@@ -40,6 +40,8 @@ const SYL_V1: &str =
     "Lyric text: words separated by spaces, syllables by hyphens, * before a stressed syllable.";
 const SYL_V2: &str = "Lyric text: words separated by spaces, syllables by hyphens, * before a stressed syllable. A syllable followed by ~ or ~N (2 to 4) is sung over that many notes (a melisma), e.g. *glo~3-ry.";
 
+const SECTION_TUNE: &str = "Sung section: the name of an entry of the song's tunes; line i of the section sings tune line i (wrapping), and a line's own tune wins. Instrumental section (intro, interlude, outro, break): the tune the lead instrument plays, or the name of an entry of the song's tunes (its lines are joined). Solfege tokens as for a line, each followed by a length: 8 eighth, 16 sixteenth, 4 quarter, 2 half, 1 whole, a trailing . dots it (d4.); z8 is an eighth rest; | is an optional bar line, and every bar must fill the meter. A quarter is one beat in 4/4 and 3/4, and 2/3 of a dotted-quarter beat in 6/8. A tune shorter than the section repeats from its start to fill it; a longer one is cut.";
+
 const TUNE_LINE: &str = "The line's melody in movable-do solfege, one token per sung note (melisma notes count), separated by spaces. Tokens: d r m f s l t, raised di ri fi si li, lowered ra me se le te; s, is an octave down, d' an octave up; . leaves the note free; - holds the note before it one more beat. do is the tonic of the section's key.";
 
 fn phrasing_schema() -> Value {
@@ -111,7 +113,7 @@ fn section_schema(version: u32) -> Value {
         p["rubato"] = json!({"type": "string", "enum": Rubato::NAMES});
     }
     if version >= SCHEMA_V3 {
-        v["properties"]["tune"] = json!({"type": "string", "description": "The name of an entry of the song's tunes: line i of the section sings tune line i (wrapping). A line's own tune wins."});
+        v["properties"]["tune"] = json!({"type": "string", "description": SECTION_TUNE});
     }
     v
 }
@@ -158,7 +160,7 @@ pub fn json_schema_v3() -> Value {
     v["properties"]["rubato"] = json!({"type": "string", "enum": Rubato::NAMES});
     v["properties"]["tunes"] = json!({
         "type": "array",
-        "description": "Named tunes for verses that share a melody: each has tune lines, in the notation of a line's tune. A section names one with its tune field.",
+        "description": "Named tunes: for verses that share a melody, each has tune lines in the notation of a line's tune; for instrumental sections, a break tune (solfege with lengths; the lines are joined). A section names one with its tune field.",
         "items": {
             "type": "object",
             "properties": {

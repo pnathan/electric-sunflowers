@@ -587,6 +587,10 @@ pub struct Section {
     pub key_change: Option<KeyChange>,
     /// This section's rubato; `None` takes the song's.
     pub rubato: Option<Rubato>,
+    /// Schema 3: the written lead line of an instrumental section
+    /// (`song::tune`, break tunes); `None` leaves the line to the engine.
+    /// Always `None` in a sung section.
+    pub break_tune: Option<Vec<crate::tune::BreakNote>>,
 }
 
 impl Section {

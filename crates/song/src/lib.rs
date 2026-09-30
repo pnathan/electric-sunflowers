@@ -94,5 +94,8 @@ pub use model::{
 };
 pub use phoneme::Phoneme;
 pub use pitch::{Pc, PcSet};
-pub use tune::{parse_tune, tune_text, TuneNote, TunePitch};
+pub use tune::{
+    bar_ticks, beat_ticks, break_tune_text, parse_break_tune, parse_tune, tune_text, BreakNote,
+    TuneNote, TunePitch, WHOLE_TICKS,
+};
 pub use wire::{normalize, normalize_value, Repair, SongError, WireSong};

@@ -324,3 +324,37 @@ fn melisma_notes_are_legato_vowels() {
         8
     );
 }
+
+/// A written break: the violin plays it as written, at 0.7 on the beat and
+/// 0.6 off it, with vibrato on notes of a beat or more.
+#[test]
+fn written_break_notes_keep_pitch_level_and_vibrato() {
+    let v = serde_json::json!({
+        "schema_version": 3, "key": "G", "mode": "major", "meter": "4/4", "tempo": 100,
+        "guitar": "strum", "voice": "tenor", "title": "t",
+        "band": {"drums": "none", "bass": true, "harmonyGuitar": false, "harp": false,
+                 "violin": true, "choir": false, "harmonies": false, "doubles": false},
+        "sections": [
+            {"type": "intro", "chords": ["G", "D"], "tune": "d8 r8 m8 f8 s4 m4 | s4 l4 s2"},
+            {"type": "verse", "lines": [{"syl": "*one *two three *four", "chords": ["G D"]}]}
+        ]
+    });
+    let s = song::normalize_value(&v).unwrap().0;
+    let (p, a) = plan(&s, 11);
+    let tl = &p.timeline;
+    let written: Vec<_> = p.comp.inst.iter().filter(|n| n.written).collect();
+    assert_eq!(written.len(), 9);
+    for n in &written {
+        let t0 = tl.to_time(n.beat);
+        let b = a
+            .violin
+            .iter()
+            .find(|b| b.t0 == t0 && b.midi == n.midi as f32)
+            .unwrap_or_else(|| panic!("no bow note for {n:?}"));
+        let on_beat = n.beat.fract() == 0.0;
+        assert_eq!(b.vel, if on_beat { 0.7 } else { 0.6 }, "{n:?}");
+        assert_eq!(b.vibrato, n.dur >= 1.0, "{n:?}");
+    }
+    // Every written note is inside the lead range, so none was folded.
+    assert!(written.iter().all(|n| (64..=86).contains(&n.midi)));
+}

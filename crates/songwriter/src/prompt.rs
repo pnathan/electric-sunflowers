@@ -147,6 +147,12 @@ TUNES (optional; schema 3)
 - You may sketch the tune of a line in movable-do solfege, with do the tonic of the section's key: "tune":"d d s, s" on a line, one token per sung note (a melisma counts all its notes; if the count is wrong the tune is dropped). Tokens: d r m f s l t; raised di ri fi si li; lowered ra me se le te; a trailing "," drops an octave (s,), a trailing "'" lifts one (d'); "." leaves that note to the engine; "-" after a token holds it one more beat (a hint only). Plain d is the tonic nearest the singer's middle range; the mode does not change the letters, so write me for a minor third. Example: "the *riv-er *keeps its *name," has six notes, so "s, d m m r d" is one token each.
 - Give a tune for at least every chorus line; verses may go without. When verses share a melody (old tune, new words), put the lines once in top-level "tunes":[{{"name":"V","lines":["<tune line>","<tune line>"]}}] and set "tune":"V" on each verse section: line i of the section uses tune line i, wrapping. A line's own "tune" wins.
 
+BREAK TUNES (schema 3)
+- Write the tune of every instrumental section (intro, interlude, outro, break) yourself, in this style's manner: {break_tune}. Set "tune" on the section, in the song's meter ({meter}). The engine plays it exactly as written and composes nothing for that section; without a tune it plays a slow, sparse line of its own.
+- Notation: the solfege tokens above, each followed by a length: 8 eighth, 16 sixteenth, 4 quarter, 2 half, 1 whole; a trailing "." dots it (d4.). A rest is z with a length (z8). "|" is an optional bar line; if you write bar lines, each bar must add up to the meter. A quarter is one beat in 4/4 and 3/4. In 6/8 a bar is six eighths (two dotted-quarter beats), so d4. is one beat and d8 a third of one.
+- The tune repeats from its start to fill the section, so write a phrase or two (a dance tune's A and B parts) and let the engine repeat it; a tune longer than the section is cut. Fit the tune's harmonic rhythm to the section's chords: a chord entry is one bar, and the notes of each bar should belong with that bar's chord.
+- The engine moves the whole tune by octaves to fit the fiddle (E4 to D6), so write it within about two octaves. Example, two bars of 4/4 over "G", "D": "d8 d8 r8 m8 s4 m4 | r8 m8 r8 d8 t,4 s,4". Example, one bar of 6/8 over "G": "d8 m8 s8 l8 s8 m8". Several sections may share a tune: put it once in top-level "tunes" and give the section its name.
+
 EMOTIONAL REGISTER
 - Match the feeling the prompt asks for exactly. A happy prompt gets a happy song, a funny prompt a funny one; do not darken it, do not add a twist of loss.
 - If the prompt leaves the feeling open, write it as: {reg}.
@@ -187,11 +193,11 @@ Reply with ONLY one JSON object, no prose, no code fence, in exactly this form (
 "band":{{"drums":"<none|brushes|soft|full>","bass":<bool>,"harmonyGuitar":<bool>,"harp":<bool>,"violin":<bool>,"choir":<bool>,"harmonies":<bool>,"doubles":<bool>}},
 "tunes":[{{"name":"<name>","lines":["<solfege>","<solfege>"]}}],
 "sections":[
-{{"type":"intro","chords":["<chord>","<chord>","<chord>","<chord>"]}},
+{{"type":"intro","tune":"<break tune: solfege with lengths>","chords":["<chord>","<chord>","<chord>","<chord>"]}},
 {{"type":"verse","tune":"<tune name, if shared>","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord>","<chord>"]}}]}},
 {{"type":"chorus","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord> <chord>","<chord>"],"tune":"<solfege, one token per note>"}}]}},
 {{"type":"chorus","same":true}},
-{{"type":"outro","chords":["<chord>","<chord>","<chord>"]}}]}}
+{{"type":"outro","tune":"<break tune>","chords":["<chord>","<chord>","<chord>"]}}]}}
 Angle-bracketed items are placeholders; replace every one with a real value (numbers and booleans unquoted)."#,
         year = year,
         age = age,
@@ -199,6 +205,7 @@ Angle-bracketed items are placeholders; replace every one with a real value (num
         voice_line = voice_line,
         label = dir.label,
         idiom = dir.idiom,
+        break_tune = dir.break_tune,
         world_line = world_line,
         mode = dir.mode,
         meter = dir.meter,

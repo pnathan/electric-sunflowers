@@ -19,6 +19,8 @@
 
 use serde::Serialize;
 
+use crate::model::Meter;
+
 /// Token roots and their semitones above the tonic.
 const ROOTS: [(&str, u8); 17] = [
     ("d", 0),
@@ -104,6 +106,28 @@ pub fn tune_text(tune: &[TuneNote]) -> String {
         .join(" ")
 }
 
+/// Reads one pitch token: a root and octave marks (`s,`, `d'`).
+fn parse_pitch(tok: &str) -> Option<TunePitch> {
+    let root_len = tok.find([',', '\'']).unwrap_or(tok.len());
+    let (root, marks) = tok.split_at(root_len);
+    let &(_, semis) = ROOTS.iter().find(|(n, _)| *n == root)?;
+    let mut octave: i32 = 0;
+    for c in marks.chars() {
+        match c {
+            ',' => octave -= 1,
+            '\'' => octave += 1,
+            _ => return None,
+        }
+    }
+    if marks.len() as i32 > MAX_MARKS {
+        return None;
+    }
+    Some(TunePitch {
+        semis,
+        octave: octave as i8,
+    })
+}
+
 /// Reads one tune line. `Err` holds the first token that is not valid.
 pub fn parse_tune(text: &str) -> Result<Vec<TuneNote>, String> {
     let mut out: Vec<TuneNote> = Vec::new();
@@ -122,31 +146,157 @@ pub fn parse_tune(text: &str) -> Result<Vec<TuneNote>, String> {
             });
             continue;
         }
-        let root_len = tok.find([',', '\'']).unwrap_or(tok.len());
-        let (root, marks) = tok.split_at(root_len);
-        let Some(&(_, semis)) = ROOTS.iter().find(|(n, _)| *n == root) else {
+        let Some(pitch) = parse_pitch(tok) else {
             return Err(tok.to_string());
         };
-        let mut octave: i32 = 0;
-        for c in marks.chars() {
-            match c {
-                ',' => octave -= 1,
-                '\'' => octave += 1,
-                _ => return Err(tok.to_string()),
-            }
-        }
-        if marks.len() as i32 > MAX_MARKS {
-            return Err(tok.to_string());
-        }
         out.push(TuneNote {
-            pitch: Some(TunePitch {
-                semis,
-                octave: octave as i8,
-            }),
+            pitch: Some(pitch),
             hold: 0,
         });
     }
     Ok(out)
+}
+
+// ---------------------------------------------------------------- break tunes
+
+/// Ticks in a whole note. Every length a break tune may write is a whole
+/// number of ticks: a sixteenth is 6, a dotted sixteenth 9.
+pub const WHOLE_TICKS: u16 = 96;
+
+/// Ticks in one beat of `meter` (`Meter::grid`): a quarter note, 24, in 4/4
+/// and 3/4; a dotted quarter, 36, in 6/8.
+pub const fn beat_ticks(meter: Meter) -> u32 {
+    match meter {
+        Meter::Six8 => 36,
+        Meter::Four4 | Meter::Three4 => 24,
+    }
+}
+
+/// Ticks in one bar of `meter`: 96 in 4/4, 72 in 3/4 and 6/8.
+pub const fn bar_ticks(meter: Meter) -> u32 {
+    meter.grid().beats as u32 * beat_ticks(meter)
+}
+
+/// One note, or rest, of a break tune (an instrumental section's written
+/// lead line).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+pub struct BreakNote {
+    /// `None`: a rest.
+    pub pitch: Option<TunePitch>,
+    /// Length in ticks (`WHOLE_TICKS` per whole note).
+    pub ticks: u16,
+}
+
+impl BreakNote {
+    /// The note as text, the form `parse_break_tune` reads back.
+    pub fn token(&self) -> String {
+        let len = match self.ticks {
+            96 => "1",
+            144 => "1.",
+            48 => "2",
+            72 => "2.",
+            24 => "4",
+            36 => "4.",
+            12 => "8",
+            18 => "8.",
+            6 => "16",
+            _ => "16.",
+        };
+        let head = match self.pitch {
+            None => "z".to_string(),
+            Some(p) => TuneNote {
+                pitch: Some(p),
+                hold: 0,
+            }
+            .token(),
+        };
+        format!("{head}{len}")
+    }
+}
+
+/// Text of a whole break tune, tokens joined by single spaces (bar lines
+/// are not kept).
+pub fn break_tune_text(tune: &[BreakNote]) -> String {
+    tune.iter()
+        .map(BreakNote::token)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Total length of a break tune in ticks.
+pub fn break_ticks(tune: &[BreakNote]) -> u32 {
+    tune.iter().map(|n| n.ticks as u32).sum()
+}
+
+/// A parsed break tune: the notes, and each bar whose length differs from
+/// the meter's, as (bar number from 1, ticks). Bars are checked only when
+/// the text has bar lines.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParsedBreak {
+    pub notes: Vec<BreakNote>,
+    pub bad_bars: Vec<(usize, u32)>,
+}
+
+fn parse_break_token(tok: &str) -> Option<BreakNote> {
+    let at = tok.find(|c: char| c.is_ascii_digit())?;
+    let (head, tail) = tok.split_at(at);
+    let end = tail
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(tail.len());
+    let (digits, dots) = tail.split_at(end);
+    let base: u16 = match digits {
+        "1" => 96,
+        "2" => 48,
+        "4" => 24,
+        "8" => 12,
+        "16" => 6,
+        _ => return None,
+    };
+    let ticks = match dots {
+        "" => base,
+        "." => base * 3 / 2,
+        _ => return None,
+    };
+    let pitch = if head == "z" {
+        None
+    } else {
+        Some(parse_pitch(head)?)
+    };
+    Some(BreakNote { pitch, ticks })
+}
+
+/// Reads a break tune: solfege tokens (as for `parse_tune`) each followed by
+/// a length (`8` eighth, `16` sixteenth, `4` quarter, `2` half, `1` whole;
+/// a trailing `.` dots it), `z` with a length for a rest, and optional `|`
+/// bar lines checked against `bar_ticks`. `Err` holds the first bad token.
+pub fn parse_break_tune(text: &str, bar_ticks: u32) -> Result<ParsedBreak, String> {
+    let spaced = text.replace('|', " | ");
+    let mut notes = Vec::new();
+    let mut bad_bars = Vec::new();
+    let (mut bars, mut in_bar, mut barred) = (0usize, 0u32, false);
+    for tok in spaced.split_whitespace() {
+        if tok == "|" {
+            barred = true;
+            if in_bar > 0 {
+                bars += 1;
+                if in_bar != bar_ticks {
+                    bad_bars.push((bars, in_bar));
+                }
+                in_bar = 0;
+            }
+            continue;
+        }
+        let n = parse_break_token(tok).ok_or_else(|| tok.to_string())?;
+        in_bar += n.ticks as u32;
+        notes.push(n);
+    }
+    if barred && in_bar > 0 {
+        bars += 1;
+        if in_bar != bar_ticks {
+            bad_bars.push((bars, in_bar));
+        }
+    }
+    Ok(ParsedBreak { notes, bad_bars })
 }
 
 #[cfg(test)]
@@ -210,5 +360,65 @@ mod tests {
     fn text_round_trip() {
         let t = parse_tune("d, - . ri' s").unwrap();
         assert_eq!(parse_tune(&tune_text(&t)).unwrap(), t);
+    }
+
+    fn ticks(t: &[BreakNote]) -> Vec<u16> {
+        t.iter().map(|n| n.ticks).collect()
+    }
+
+    #[test]
+    fn break_lengths_dots_and_rests() {
+        let p = parse_break_tune("d8 r16 m4 s2 l1 d4. m8. z8 z4.", 96).unwrap();
+        assert_eq!(ticks(&p.notes), [12, 6, 24, 48, 96, 36, 18, 12, 36]);
+        assert_eq!(p.notes[7].pitch, None);
+        assert!(p.bad_bars.is_empty());
+        let m = parse_break_tune("d'8 s,,8", 96).unwrap();
+        assert_eq!(m.notes[0].pitch, p_(0, 1));
+        assert_eq!(m.notes[1].pitch, p_(7, -2));
+    }
+
+    fn p_(semis: u8, octave: i8) -> Option<TunePitch> {
+        Some(TunePitch { semis, octave })
+    }
+
+    #[test]
+    fn break_bar_lines_are_checked() {
+        let ok = parse_break_tune("d8 d8 d4 d2 | s2 s2 |", 96).unwrap();
+        assert!(ok.bad_bars.is_empty());
+        let bad = parse_break_tune("d4 d4 d4 | d4 d4 d4 d4|d2", 96).unwrap();
+        assert_eq!(bad.bad_bars, [(1, 72), (3, 48)]);
+        // No bar lines: no check.
+        assert!(parse_break_tune("d4 d4 d4", 96)
+            .unwrap()
+            .bad_bars
+            .is_empty());
+        // 6/8 bar is 72 ticks.
+        assert!(parse_break_tune("d8 d8 d8 s8 s8 s8|", 72)
+            .unwrap()
+            .bad_bars
+            .is_empty());
+    }
+
+    #[test]
+    fn break_bad_tokens() {
+        for bad in ["d", "d3", "x8", "d8..", "z", "8", "d32", "d,,,,,8", "dd8"] {
+            assert!(parse_break_tune(bad, 96).is_err(), "{bad}");
+        }
+        assert_eq!(parse_break_tune("d8 q8", 96), Err("q8".into()));
+        assert!(parse_break_tune("", 96).unwrap().notes.is_empty());
+    }
+
+    #[test]
+    fn break_text_round_trip() {
+        let p = parse_break_tune("d8 r16. m4 z2 s,4. d'1 l16", 96).unwrap();
+        let back = parse_break_tune(&break_tune_text(&p.notes), 96).unwrap();
+        assert_eq!(back.notes, p.notes);
+    }
+
+    #[test]
+    fn bar_lengths_by_meter() {
+        assert_eq!(bar_ticks(Meter::Four4), 96);
+        assert_eq!(bar_ticks(Meter::Three4), 72);
+        assert_eq!(bar_ticks(Meter::Six8), 72);
     }
 }
