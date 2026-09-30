@@ -123,6 +123,7 @@ mod tests {
             word_start: false,
             word_end: false,
             phones: vec![],
+            notes: 1,
         };
         let melody: Vec<LeadNote> = (0..20)
             .map(|i| LeadNote {
@@ -170,6 +171,7 @@ mod tests {
             word_start: false,
             word_end: false,
             phones: vec![],
+            notes: 1,
         };
         let melody: Vec<LeadNote> = (0..20)
             .map(|i| LeadNote {

@@ -116,6 +116,11 @@ fn sheet_part(part: Part, voice_a: Voice, voice_b: Option<Voice>) -> SheetPart {
             melody: id.as_str().to_string(),
             label: capitalize(voice_of(id).as_str()),
         },
+        Part::Choir(_) => SheetPart {
+            part: "choir".to_string(),
+            melody: SingerId::A.as_str().to_string(),
+            label: "Choir".to_string(),
+        },
         Part::Both { melody, .. } => SheetPart {
             part: "both".to_string(),
             melody: melody.as_str().to_string(),

@@ -1,19 +1,41 @@
-//! JSON Schema of the model's song reply, for `--json-schema` on the CLI and
-//! `output_config.format.schema` on the API. Every object is closed
-//! (`additionalProperties: false`) and lists `required`. Enum lists come
-//! from the model enums (`NAMES`), so schema and parser cannot disagree.
+//! JSON Schemas of the model's song reply, one per schema version, for
+//! `--json-schema` on the CLI and `output_config.format.schema` on the API.
+//! Every object is closed (`additionalProperties: false`) and lists
+//! `required`. Enum lists come from the model enums (`NAMES`), so schema and
+//! parser cannot disagree.
+//!
+//! - Version 1 (`json_schema_v1`): the original format. `schema_version` is
+//!   optional and, when present, is 1.
+//! - Version 2 (`json_schema_v2`): adds a required `schema_version: 2`,
+//!   `rubato` (song and section), a section `key`, choir lines (`sing:
+//!   "choir"`, `voicing`) and melismas (`~N` in `syl`, described in the
+//!   `syl` description). Every version-1 song is a valid version-2 song
+//!   once `schema_version` is set to 2.
+//! - `json_schema()` is the latest, what `songwriter` asks Claude for.
+//!
+//! `wire::normalize` reads every version listed here; a newer
+//! `schema_version` is `SongError::UnsupportedSchema`.
 
 use crate::model::{
-    Blend, Delivery, DrumKit, Endings, GuitarPattern, Meter, Mode, SectionKind, SingerId, Voice,
+    Blend, ChoirVoicing, Delivery, DrumKit, Endings, GuitarPattern, Meter, Mode, Rubato,
+    SectionKind, SingerId, Voice, SCHEMA_LATEST, SCHEMA_V1, SCHEMA_V2,
 };
 use serde_json::{json, Value};
 
-/// `SingerId::NAMES` ("A", "B") plus "both", the enum list of `sing`.
-fn sing_names() -> Vec<&'static str> {
+/// `SingerId::NAMES` ("A", "B") plus "both", the enum list of `sing` in
+/// version 1; version 2 adds "choir".
+fn sing_names(version: u32) -> Vec<&'static str> {
     let mut v = SingerId::NAMES.to_vec();
     v.push("both");
+    if version >= SCHEMA_V2 {
+        v.push("choir");
+    }
     v
 }
+
+const SYL_V1: &str =
+    "Lyric text: words separated by spaces, syllables by hyphens, * before a stressed syllable.";
+const SYL_V2: &str = "Lyric text: words separated by spaces, syllables by hyphens, * before a stressed syllable. A syllable followed by ~ or ~N (2 to 4) is sung over that many notes (a melisma), e.g. *glo~3-ry.";
 
 fn phrasing_schema() -> Value {
     json!({
@@ -39,37 +61,48 @@ fn duet_schema() -> Value {
     })
 }
 
-fn line_schema() -> Value {
-    json!({
+fn line_schema(version: u32) -> Value {
+    let mut v = json!({
         "type": "object",
         "properties": {
-            "syl": {"type": "string"},
+            "syl": {"type": "string", "description": if version >= SCHEMA_V2 { SYL_V2 } else { SYL_V1 }},
             "ph": {"type": "string"},
             "chords": {"type": "array", "items": {"type": "string"}},
-            "sing": {"type": "string", "enum": sing_names()},
+            "sing": {"type": "string", "enum": sing_names(version)},
             "lead": {"type": "string", "enum": SingerId::NAMES},
             "blend": {"type": "string", "enum": Blend::NAMES}
         },
         "required": ["syl", "ph", "chords"],
         "additionalProperties": false
-    })
+    });
+    if version >= SCHEMA_V2 {
+        v["properties"]["voicing"] = json!({"type": "string", "enum": ChoirVoicing::NAMES});
+    }
+    v
 }
 
-fn section_schema() -> Value {
-    json!({
+fn section_schema(version: u32) -> Value {
+    let mut v = json!({
         "type": "object",
         "properties": {
             "type": {"type": "string", "enum": SectionKind::NAMES},
             "same": {"type": "boolean"},
             "chords": {"type": "array", "items": {"type": "string"}},
-            "lines": {"type": "array", "items": line_schema()},
-            "sing": {"type": "string", "enum": sing_names()},
+            "lines": {"type": "array", "items": line_schema(version)},
+            "sing": {"type": "string", "enum": sing_names(version)},
             "lead": {"type": "string", "enum": SingerId::NAMES},
             "blend": {"type": "string", "enum": Blend::NAMES}
         },
         "required": ["type"],
         "additionalProperties": false
-    })
+    });
+    if version >= SCHEMA_V2 {
+        let p = &mut v["properties"];
+        p["voicing"] = json!({"type": "string", "enum": ChoirVoicing::NAMES});
+        p["key"] = json!({"type": "string", "description": "The key from this section on, e.g. \"E\" or \"A minor\"; the chords of the section are written in it. With same: true the copied chords move to it."});
+        p["rubato"] = json!({"type": "string", "enum": Rubato::NAMES});
+    }
+    v
 }
 
 fn band_schema() -> Value {
@@ -90,8 +123,40 @@ fn band_schema() -> Value {
     })
 }
 
-/// The song reply schema.
+/// The schema of one version, `None` for a version this build does not know.
+pub fn json_schema_for(version: u32) -> Option<Value> {
+    match version {
+        SCHEMA_V1 => Some(json_schema_v1()),
+        SCHEMA_V2 => Some(json_schema_v2()),
+        _ => None,
+    }
+}
+
+/// The newest song reply schema (`SCHEMA_LATEST`).
 pub fn json_schema() -> Value {
+    json_schema_v2()
+}
+
+/// Version 2: version 1 plus `schema_version` (required), `rubato`, and
+/// the section and line additions.
+pub fn json_schema_v2() -> Value {
+    let mut v = build(SCHEMA_V2);
+    v["properties"]["schema_version"] = json!({"type": "integer", "enum": [SCHEMA_V2]});
+    v["properties"]["rubato"] = json!({"type": "string", "enum": Rubato::NAMES});
+    let req = v["required"].as_array_mut().expect("required is an array");
+    req.insert(0, json!("schema_version"));
+    debug_assert_eq!(SCHEMA_LATEST, SCHEMA_V2);
+    v
+}
+
+/// Version 1: the original format; `schema_version` optional, 1 when given.
+pub fn json_schema_v1() -> Value {
+    let mut v = build(SCHEMA_V1);
+    v["properties"]["schema_version"] = json!({"type": "integer", "enum": [SCHEMA_V1]});
+    v
+}
+
+fn build(version: u32) -> Value {
     json!({
         "type": "object",
         "properties": {
@@ -106,7 +171,7 @@ pub fn json_schema() -> Value {
             "band": band_schema(),
             "phrasing": phrasing_schema(),
             "duet": duet_schema(),
-            "sections": {"type": "array", "items": section_schema()}
+            "sections": {"type": "array", "items": section_schema(version)}
         },
         "required": ["title", "note", "key", "mode", "meter", "tempo", "guitar", "voice", "band", "sections"],
         "additionalProperties": false
@@ -157,14 +222,14 @@ mod tests {
         );
 
         let line = &p["sections"]["items"]["properties"]["lines"]["items"]["properties"];
-        assert_eq!(names(&line["sing"]), sing_names());
+        assert_eq!(names(&line["sing"]), sing_names(SCHEMA_V2));
         assert_eq!(names(&line["lead"]), SingerId::NAMES);
         assert_eq!(names(&line["blend"]), Blend::NAMES);
         let sec = &p["sections"]["items"]["properties"];
-        assert_eq!(names(&sec["sing"]), sing_names());
+        assert_eq!(names(&sec["sing"]), sing_names(SCHEMA_V2));
         assert_eq!(names(&sec["lead"]), SingerId::NAMES);
         assert_eq!(names(&sec["blend"]), Blend::NAMES);
-        assert!(sing_names().contains(&"both"));
+        assert!(sing_names(SCHEMA_V2).contains(&"both"));
         for n in SingerId::NAMES {
             assert!(n.parse::<SingerId>().is_ok());
         }

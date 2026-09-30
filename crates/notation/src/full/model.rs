@@ -683,6 +683,15 @@ fn quantize_voice(
     per_bar
 }
 
+/// How a staff's pitches are spelled: key signature, key alterations and
+/// the written-octave offset.
+#[derive(Clone, Copy)]
+struct Spelling<'a> {
+    fifths: i32,
+    key_alt: &'a [i32; 7],
+    written: i32,
+}
+
 /// Builds one staff's `Cell`s (one per bar) from its raw notes. `written`
 /// is added to each pitch before spelling: 12 semitones for a clef whose
 /// staff is written an octave from where it sounds (`Treble8vb`,
@@ -692,9 +701,7 @@ fn build_cells(
     tl: &Timeline,
     grid: &Grid,
     n_bars: usize,
-    fifths: i32,
-    key_alt: &[i32; 7],
-    written: i32,
+    spelling: Spelling,
     drums: bool,
 ) -> Vec<Cell> {
     // The drum staff always carries two voices (hands up, feet down), even
@@ -708,7 +715,15 @@ fn build_cells(
     let per_voice: Vec<Vec<Vec<Ev>>> = (0..=max_voice)
         .map(|v| {
             let notes: Vec<&RawNote> = raw.iter().filter(|r| r.voice == v).collect();
-            quantize_voice(&notes, tl, grid, n_bars, fifths, key_alt, written)
+            quantize_voice(
+                &notes,
+                tl,
+                grid,
+                n_bars,
+                spelling.fifths,
+                spelling.key_alt,
+                spelling.written,
+            )
         })
         .collect();
     (0..n_bars)
@@ -844,9 +859,11 @@ impl FullScore {
                 tl,
                 &grid,
                 n_bars,
-                if pitched { fifths } else { 0 },
-                &key_alt,
-                written,
+                Spelling {
+                    fifths: if pitched { fifths } else { 0 },
+                    key_alt: &key_alt,
+                    written,
+                },
                 !pitched,
             );
             all_cells.push(cells);
