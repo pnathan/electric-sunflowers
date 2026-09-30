@@ -303,6 +303,7 @@ name = "arrange"
 version = "0.1.0"
 dependencies = [
  "compose",
+ "serde",
  "serde_json",
  "sfcore",
  "song",

@@ -34,7 +34,7 @@ const ARP_ORDER: [usize; 4] = [0, 1, 2, 1];
 const ARP_JITTER: f64 = 0.004;
 
 /// The harmony guitar's two note lists.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HarmonyGuitar {
     /// Lead and fill notes.
     pub lead: Vec<PluckNote>,

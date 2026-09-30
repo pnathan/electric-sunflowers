@@ -28,10 +28,14 @@ pub mod strip;
 pub mod track;
 pub mod vocals;
 
+pub use compose::prepare::VoiceChoice;
 pub use mix::{mix, mix_with, premix, Stereo};
 pub use mixset::{MixSettings, TrackMix};
 pub use print::{mix_gain, print_reverb, print_stem};
-pub use render::{render, render_with, NoProgress, Progress, Stems};
+pub use render::{
+    arrange_song, play, render, render_with, NoProgress, Performance, Progress, Stems,
+    PERFORMANCE_VERSION,
+};
 pub use sheet::{
     sheet_from, song_sheet, song_sheet_with, SheetBar, SheetChord, SheetLine, SheetPart,
     SheetSection, SheetSyllable, SheetWord, SongSheet,

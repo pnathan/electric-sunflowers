@@ -139,6 +139,31 @@ enum Cmd {
         #[command(flatten)]
         mix: MixArgs,
     },
+    /// Arrange a song JSON file: write the note events of every part (the
+    /// performance, JSON) and stop. `play` renders them.
+    Arrange {
+        song: PathBuf,
+        #[arg(long)]
+        style: Option<String>,
+        /// Output file; defaults to <song-stem>.arrangement.json.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        render: RenderArgs,
+    },
+    /// Render and mix a performance file written by `arrange`. Output
+    /// defaults to song.ogg. Writes no sidecars.
+    Play {
+        arrangement: PathBuf,
+        /// Switch off a band part (see `render --no`). May be given more
+        /// than once.
+        #[arg(long = "no", value_name = "PART", value_parser = parse_band_part)]
+        no: Vec<BandPart>,
+        #[command(flatten)]
+        export: ExportArgs,
+        #[command(flatten)]
+        mix: MixArgs,
+    },
     /// List style keys and labels.
     Styles,
     /// Print a song's chord sheet (chords above the lyrics, by section) as
@@ -302,6 +327,38 @@ fn run() -> Result<()> {
                 print!("{}", sheet.to_text());
             }
             Ok(())
+        }
+        Cmd::Arrange {
+            song: path,
+            style,
+            out,
+            render,
+        } => {
+            let song = load_song(&path, style.as_deref())?;
+            let seed = resolve_seed(render.seed);
+            let out = out.unwrap_or_else(|| path.with_extension("arrangement.json"));
+            let voice = engine::VoiceChoice {
+                a: render.voice.voice(),
+                b: None,
+            };
+            let (_, perf) = engine::arrange_song(&song, seed, voice);
+            let text = serde_json::to_string(&perf)?;
+            std::fs::write(&out, text)
+                .with_context(|| format!("writing the arrangement to {}", out.display()))?;
+            eprintln!("sunflower: wrote {} (seed {seed})", out.display());
+            Ok(())
+        }
+        Cmd::Play {
+            arrangement,
+            no,
+            export,
+            mix,
+        } => {
+            let out = export
+                .out
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("song.ogg"));
+            cmd_play(&arrangement, no, &out, &export, &mix, settings)
         }
         Cmd::Write {
             mood,
@@ -665,6 +722,76 @@ fn pipeline(
     let mut sheet = engine::sheet_from(song, seed, &prepared);
     sheet.style_label = Some(style_label(song)).filter(|l| !l.is_empty());
     write_sidecars(out, &sheet, &src, mix_path.as_deref(), stems_dir.as_deref())
+}
+
+/// Plays the performance file at `path` and writes `out`: render, mix,
+/// export. No sidecars: the file holds no song, so no sheet.
+fn cmd_play(
+    path: &Path,
+    no: Vec<BandPart>,
+    out: &Path,
+    export: &ExportArgs,
+    mix_args: &MixArgs,
+    settings: &settings::Settings,
+) -> Result<()> {
+    let quality = export.quality.unwrap_or(settings.export.ogg_quality);
+    let fmt = Format::from_path(out, quality, export.flac16, export.float)?;
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading the arrangement from {}", path.display()))?;
+    let perf: engine::Performance = serde_json::from_str(&text)
+        .with_context(|| format!("parsing the arrangement in {}", path.display()))?;
+    if perf.version != engine::PERFORMANCE_VERSION {
+        bail!(
+            "{} is performance version {}; this build plays version {}",
+            path.display(),
+            perf.version,
+            engine::PERFORMANCE_VERSION
+        );
+    }
+    let mut band = perf.band;
+    for part in no {
+        part.switch_off(&mut band);
+    }
+    eprintln!(
+        "sunflower: playing on {} threads",
+        rayon::current_num_threads()
+    );
+    let stems = engine::play(&perf, &Report);
+    eprintln!("sunflower: mixing");
+    let defaults = MixSettings::default_for(&stems);
+    let (mix_settings, _) = resolve_mix(mix_args, out, &defaults)?;
+    let stems_dir = if mix_args.stems {
+        Some(write_stems(&stems, &band, perf.seed, &mix_settings, out)?)
+    } else {
+        None
+    };
+    let m = engine::mix_with(&stems, &band, perf.seed, &mix_settings);
+    drop(stems);
+    let title = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.trim_end_matches(".json").trim_end_matches(".arrangement"))
+        .unwrap_or("song")
+        .to_string();
+    let meta = Meta {
+        title,
+        artist: String::new(),
+        comment: String::new(),
+        date: current_year().to_string(),
+        style: String::new(),
+    };
+    export::write(out, &m.l, &m.r, sfcore::SR as u32, &meta, fmt)
+        .with_context(|| format!("writing audio to {}", out.display()))?;
+    eprintln!(
+        "sunflower: wrote {} ({:.1} s, 2 channels x {} samples)",
+        out.display(),
+        m.l.len() as f64 / sfcore::SR_F,
+        m.l.len()
+    );
+    if let Some(d) = stems_dir {
+        eprintln!("sunflower: stems in {}", d.display());
+    }
+    Ok(())
 }
 
 /// `p` canonicalised to an absolute path, or its own text when that fails

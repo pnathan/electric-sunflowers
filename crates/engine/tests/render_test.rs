@@ -176,3 +176,50 @@ fn band_toggles_remix_the_cached_stems() {
     };
     assert_valid(&mix(&stems, &bare, 11), stems.len);
 }
+
+fn stem_bits(s: &Stems) -> Vec<(usize, Vec<u32>)> {
+    s.tracks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| t.as_ref().map(|t| (i, t)))
+        .map(|(i, t)| {
+            let bits = t
+                .audio
+                .channels()
+                .iter()
+                .flat_map(|c| c.to_dense())
+                .map(|v| v.to_bits())
+                .collect();
+            (i, bits)
+        })
+        .collect()
+}
+
+#[test]
+fn performance_json_round_trip_is_exact() {
+    use engine::{arrange_song, Performance};
+    let (_, perf) = arrange_song(demo_song(), 1234, compose::prepare::VoiceChoice::default());
+    let text = serde_json::to_string(&perf).expect("serialises");
+    let back: Performance = serde_json::from_str(&text).expect("parses");
+    assert!(perf == back, "demo performance changed in the round trip");
+    assert_eq!(perf.version, engine::PERFORMANCE_VERSION);
+}
+
+#[test]
+fn playing_a_parsed_performance_equals_rendering() {
+    use engine::{arrange_song, play, Performance};
+    let song = blues("full");
+    let (_, stems) = render(&song, 11, None, &NoProgress);
+    let (_, perf) = arrange_song(&song, 11, compose::prepare::VoiceChoice::default());
+    let text = serde_json::to_string(&perf).expect("serialises");
+    let back: Performance = serde_json::from_str(&text).expect("parses");
+    assert!(perf == back, "performance changed in the round trip");
+    let played = play(&back, &NoProgress);
+    assert_eq!(stems.len, played.len);
+    assert!(
+        stem_bits(&stems) == stem_bits(&played),
+        "stems differ after the file"
+    );
+    let (a, b) = (mix(&stems, &song.band, 11), mix(&played, &song.band, 11));
+    assert!(bits(&a) == bits(&b), "mixes differ after the file");
+}

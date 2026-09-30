@@ -144,6 +144,14 @@ impl Serialize for Phoneme {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Phoneme {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = <String as serde::Deserialize>::deserialize(d)?;
+        Phoneme::from_symbol(&s)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown phoneme {s:?}")))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
