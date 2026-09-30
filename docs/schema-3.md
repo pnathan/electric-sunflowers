@@ -72,6 +72,8 @@ A section may carry `"energy": "quiet" | "low" | "mid" | "high"`. It sets the se
 
 The prompt tells the writer that the curve is its decision: a stomp-along dance song runs mid or high from the first bar and does not build like a ballad. Each style's `drive` phrase (`songwriter::styles::Style::drive`) is quoted there, with the matching lyric density (about one syllable per eighth note in a dance); it changes no random draw.
 
+Density. In a version-3 song the writer sets the lyric density. The engine stretches a song (`Form::stretch` 2, each bar played as two) only when its lines average more than one syllable per grid slot; versions 1 and 2 keep the old threshold (fewer than 1.75 slots per syllable), so they render as before.
+
 ## 8. Example
 
 ```json

@@ -318,7 +318,10 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
     let per_bar = if nl != 0 { ns / nl as f64 } else { 4.0 };
     let slots = grid.slots() as f64;
     let bar_dur = grid.beats as f64 * 60.0 / song.tempo_bpm;
-    let stretch = if slots / per_bar < 1.75 && bar_dur * 4.0 <= 8.4 {
+    // From schema 3 the writer sets the density: stretch only lines that
+    // cannot fit, more than one syllable per grid slot.
+    let min_ratio = if song.schema_version >= 3 { 1.0 } else { 1.75 };
+    let stretch = if slots / per_bar < min_ratio && bar_dur * 4.0 <= 8.4 {
         2
     } else {
         1
