@@ -562,7 +562,11 @@ pub fn compose_melody(
         }
     }
 
-    let inst = compose_instrumental(form, tl, seed, t);
+    let inst = if crate::dance::is_dance(song) {
+        crate::dance::compose(form, tl, seed)
+    } else {
+        compose_instrumental(form, tl, seed, t)
+    };
     Comp {
         lead,
         inst,
