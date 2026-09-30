@@ -330,7 +330,11 @@ fn thump_into(out: &mut [f32], f0: f64, vel: f64, rng: &mut Rng) {
     let (mut env, mut cenv, mut g, mut ph) = (THUMP_LEVEL * vel, CLICK_LEVEL * vel, 0.5, 0.0f64);
     let fade = 64.min(n);
     for (i, o) in out[..n].iter_mut().enumerate() {
-        let tail = if i + fade >= n { (n - i) as f64 / fade as f64 } else { 1.0 };
+        let tail = if i + fade >= n {
+            (n - i) as f64 / fade as f64
+        } else {
+            1.0
+        };
         let atk = (i as f64 / 16.0).min(1.0);
         ph += TAU * f0 * (1.0 + g) / SR_F;
         let x = env * ph.sin() + cenv * lp.tick(rng.bipolar());

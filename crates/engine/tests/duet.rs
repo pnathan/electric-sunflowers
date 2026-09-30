@@ -133,7 +133,8 @@ fn sheet_marks_singers_only_in_a_duet() {
 /// (`arrange::vocals::plan`, `engine::render`/`render_with`,
 /// `mixset::default_for`) landed, with a throwaway example running the
 /// same render-then-mix call over `demo_song()` at seed 1234 (built, run,
-/// then removed with the worktree).
+/// then removed with the worktree). Re-captured as `0x5653e453bad5edaf`
+/// after the string bass thump (`9dc62349`), an intended sound change.
 #[test]
 fn solo_demo_mix_is_bit_identical() {
     let song = demo_song();
@@ -141,7 +142,7 @@ fn solo_demo_mix_is_bit_identical() {
     let m = mix(&stems, &song.band, 1234);
     let h = fnv1a(&mix_bytes(&m.l, &m.r));
     assert_eq!(
-        h, 0x1c28a9a15f79a15b,
+        h, 0x5653e453bad5edaf,
         "solo demo mix checksum changed: {h:#x}"
     );
 }
