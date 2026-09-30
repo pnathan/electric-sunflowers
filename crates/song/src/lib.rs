@@ -87,12 +87,15 @@ pub mod wire;
 
 pub use chord::{Chord, ChordError, ChordId, ChordTable};
 pub use model::{
-    Band, BarChords, Blend, BreakLead, ChoirVoicing, Delivery, DrumKit, Duet, Endings,
+    Band, BarChords, Blend, BreakLead, ChoirVoicing, Delivery, DrumKit, Duet, Endings, Energy,
     GuitarPattern, KeyChange, Line, Meter, MeterGrid, Mode, Part, Phrasing, Rubato, Section,
     SectionBody, SectionKind, SectionRole, SingerId, Song, Syllable, VocalRange, Voice,
     MELISMA_MAX_NOTES, SCHEMA_LATEST, SCHEMA_V1, SCHEMA_V2, SCHEMA_V3,
 };
 pub use phoneme::Phoneme;
 pub use pitch::{Pc, PcSet};
-pub use tune::{parse_tune, tune_text, TuneNote, TunePitch};
+pub use tune::{
+    bar_ticks, beat_ticks, break_tune_text, parse_break_tune, parse_tune, tune_text, BreakNote,
+    TuneNote, TunePitch, WHOLE_TICKS,
+};
 pub use wire::{normalize, normalize_value, Repair, SongError, WireSong};

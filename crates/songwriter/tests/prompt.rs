@@ -410,6 +410,14 @@ fn prompt_asks_for_schema_3_and_describes_its_fields() {
         "\"tune\":\"d d s, s\"",
         "\"tunes\":[{\"name\"",
         "at least every chorus line",
+        "BREAK TUNES",
+        "ENERGY (schema 3)",
+        "\"energy\":\"quiet|low|mid|high\"",
+        "\"energy\":\"<quiet|low|mid|high>\"",
+        "8 eighth, 16 sixteenth, 4 quarter, 2 half, 1 whole",
+        "z8",
+        "\"tune\":\"<break tune: solfege with lengths>\"",
+        "\"d8 d8 r8 m8 s4 m4 | r8 m8 r8 d8 t,4 s,4\"",
     ] {
         assert!(p.contains(f), "{f}");
     }
@@ -423,4 +431,44 @@ fn prompt_asks_for_schema_3_and_describes_its_fields() {
         .unwrap()
         .iter()
         .any(|v| v == "schema_version"));
+}
+
+#[test]
+fn every_style_quotes_its_break_tune_phrase() {
+    for id in StyleId::ALL {
+        let s = id.style();
+        assert!(!s.break_tune.is_empty(), "{id}");
+        assert!(s.break_tune.is_ascii(), "{id}");
+        let dir = style_direction(Some(*id), &mut rng(5));
+        assert_eq!(dir.break_tune, s.break_tune);
+        let p = song_prompt("a tune", None, &dir, "playful", 2026);
+        assert!(
+            p.contains(&format!("in this style's manner: {}.", s.break_tune)),
+            "{id}"
+        );
+    }
+    let pub_ = StyleId::IrishPub.style().break_tune;
+    assert!(pub_.contains("reel") && pub_.contains("jig in 6/8") && pub_.contains("AABB"));
+}
+
+#[test]
+fn every_style_quotes_its_drive_phrase() {
+    for id in StyleId::ALL {
+        let s = id.style();
+        assert!(!s.drive.is_empty() && s.drive.is_ascii(), "{id}");
+        let dir = style_direction(Some(*id), &mut rng(6));
+        assert_eq!(dir.drive, s.drive);
+        let p = song_prompt("a tune", None, &dir, "playful", 2026);
+        assert!(p.contains(&format!("- This style: {}.", s.drive)), "{id}");
+    }
+    for id in [
+        StyleId::IrishPub,
+        StyleId::Oldtime,
+        StyleId::Bluegrass,
+        StyleId::Zydeco,
+        StyleId::Shanty,
+    ] {
+        assert!(id.style().drive.contains("energy mid or high from bar one"));
+    }
+    assert!(StyleId::IrishAir.style().drive.contains("build from quiet"));
 }

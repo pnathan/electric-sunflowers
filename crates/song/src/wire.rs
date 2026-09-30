@@ -50,14 +50,14 @@ use crate::chord::transpose_symbol;
 use crate::chord::{parse_detail, Chord, ChordId, ChordTable};
 use crate::g2p::g2p;
 use crate::model::{
-    Band, BarChords, Blend, BreakLead, ChoirVoicing, Delivery, Duet, Endings, GuitarPattern,
-    KeyChange, Line, Meter, Mode, Part, Phrasing, Rubato, Section, SectionBody, SectionKind,
-    SectionRole, SingerId, Song, Syllable, Voice, MELISMA_MAX_NOTES, SCHEMA_LATEST, SCHEMA_V1,
-    SCHEMA_V2, SCHEMA_V3,
+    Band, BarChords, Blend, BreakLead, ChoirVoicing, Delivery, Duet, Endings, Energy,
+    GuitarPattern, KeyChange, Line, Meter, Mode, Part, Phrasing, Rubato, Section, SectionBody,
+    SectionKind, SectionRole, SingerId, Song, Syllable, Voice, MELISMA_MAX_NOTES, SCHEMA_LATEST,
+    SCHEMA_V1, SCHEMA_V2, SCHEMA_V3,
 };
 use crate::phoneme::Phoneme;
 use crate::pitch::Pc;
-use crate::tune::parse_tune;
+use crate::tune::{bar_ticks, break_ticks, parse_break_tune, parse_tune, BreakNote};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -187,6 +187,10 @@ pub struct WireSection {
     /// Schema 2: this section's rubato.
     #[serde(deserialize_with = "loose_str")]
     pub rubato: Option<String>,
+    /// Schema 3: how hard the band plays this section (`quiet`, `low`,
+    /// `mid`, `high`).
+    #[serde(deserialize_with = "loose_str")]
+    pub energy: Option<String>,
     /// Schema 3: the name of a song tune this section's lines follow.
     #[serde(deserialize_with = "loose_str")]
     pub tune: Option<String>,
@@ -563,6 +567,35 @@ pub enum Repair {
         section: usize,
         name: String,
     },
+    /// A break tune token that is not a note with a length, or a rest; the
+    /// tune is dropped.
+    BreakTuneToken {
+        section: usize,
+        token: String,
+    },
+    /// A bar of a break tune whose length differs from the meter's; the
+    /// tune is kept. `bar` counts from 1; lengths are in ticks (96 to the
+    /// whole note).
+    BreakTuneBar {
+        section: usize,
+        bar: usize,
+        ticks: u32,
+        expected: u32,
+    },
+    /// A break tune longer than its section; cut at the section's end.
+    /// Lengths are in ticks.
+    BreakTuneCut {
+        section: usize,
+        tune: u32,
+        room: u32,
+    },
+    /// Composition: written break notes outside the violin's range (MIDI
+    /// 64-86) after placing the tune; the violin folds each by octaves.
+    /// `section` is a form index.
+    BreakTuneRange {
+        section: usize,
+        notes: usize,
+    },
     /// Composition: a tune line moved by whole octaves to fit the voice.
     /// `section` and `line` are form indices.
     TuneMoved {
@@ -752,6 +785,35 @@ impl fmt::Display for Repair {
             UnknownTune { section, name } => {
                 write!(f, "section {section}: no tune named {name:?}, ignored")
             }
+            BreakTuneToken { section, token } => write!(
+                f,
+                "section {section}: break tune token {token:?} is not a note with a length, tune dropped"
+            ),
+            BreakTuneBar {
+                section,
+                bar,
+                ticks,
+                expected,
+            } => write!(
+                f,
+                "section {section}: break tune bar {bar} is {} eighths long, the bar {}",
+                *ticks as f64 / 12.0,
+                *expected as f64 / 12.0
+            ),
+            BreakTuneCut {
+                section,
+                tune,
+                room,
+            } => write!(
+                f,
+                "section {section}: break tune is {} eighths long, the section {}; cut",
+                *tune as f64 / 12.0,
+                *room as f64 / 12.0
+            ),
+            BreakTuneRange { section, notes } => write!(
+                f,
+                "section {section}: {notes} break notes fall outside the violin range and are folded"
+            ),
             TuneMoved {
                 section,
                 line,
@@ -1355,10 +1417,11 @@ fn uses_v2(w: &WireSong) -> bool {
 /// Whether the document uses any version-3 field.
 fn uses_v3(w: &WireSong) -> bool {
     w.tunes.is_some()
-        || w.sections
-            .iter()
-            .flatten()
-            .any(|s| s.tune.is_some() || s.lines.iter().flatten().any(|l| l.tune.is_some()))
+        || w.sections.iter().flatten().any(|s| {
+            s.tune.is_some()
+                || s.energy.is_some()
+                || s.lines.iter().flatten().any(|l| l.tune.is_some())
+        })
 }
 
 /// Settles the document's schema version and removes the fields of newer
@@ -1403,6 +1466,14 @@ fn resolve_version(w: &mut WireSong, rep: &mut Vec<Repair>) -> Result<u32, SongE
             if s.tune.take().is_some() {
                 rep.push(Repair::FieldNeedsSchema {
                     field: "tune",
+                    needs: SCHEMA_V3,
+                    section: Some(si),
+                    line: None,
+                });
+            }
+            if s.energy.take().is_some() {
+                rep.push(Repair::FieldNeedsSchema {
+                    field: "energy",
                     needs: SCHEMA_V3,
                     section: Some(si),
                     line: None,
@@ -1645,6 +1716,9 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
     };
     let mut sections: Vec<Section> = Vec::new();
     let mut last_sung: HashMap<SectionKind, usize> = HashMap::new();
+    // Schema 3: the last instrumental section of each kind, a source for
+    // `same` (its break tune is copied).
+    let mut last_inst: HashMap<SectionKind, usize> = HashMap::new();
     // The key in force after each pushed section, and the running key.
     let mut eff_keys: Vec<(Pc, Mode)> = Vec::new();
     let mut run_key = (key, mode);
@@ -1680,10 +1754,24 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             }
         });
 
+        let sec_energy = ws.energy.and_then(|t| match t.trim().parse::<Energy>() {
+            Ok(e) => Some(e),
+            Err(_) => {
+                ch.rep.push(Repair::DefaultedField {
+                    field: "sections.energy",
+                });
+                None
+            }
+        });
+
         if ws.same == Some(true) {
-            match last_sung
-                .get(&kind)
-                .and_then(|&i| Some((i, u16::try_from(i).ok()?)))
+            let inst_src = (version >= SCHEMA_V3 && ws.lines.is_empty() && ws.chords.is_none())
+                .then(|| last_inst.get(&kind).copied())
+                .flatten()
+                .filter(|&i| last_sung.get(&kind).is_none_or(|&j| i > j));
+            match inst_src
+                .or_else(|| last_sung.get(&kind).copied())
+                .and_then(|i| Some((i, u16::try_from(i).ok()?)))
             {
                 Some((i, src)) => {
                     // A repeat sounds in the running key: its chords move by
@@ -1696,6 +1784,8 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                         transposed_body(&sections[i].body.clone(), semis, flats, &mut ch)
                     };
                     let inherited = sections[i].rubato;
+                    let break_tune = sections[i].break_tune.clone();
+                    let inherited_energy = sections[i].energy;
                     sections.push(Section {
                         kind,
                         role: SectionRole::Plain,
@@ -1703,6 +1793,8 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                         repeat_of: Some(src),
                         key_change,
                         rubato: sec_rubato.or(inherited),
+                        break_tune,
+                        energy: sec_energy.or(inherited_energy),
                     });
                     eff_keys.push(target_key);
                     run_key = target_key;
@@ -1856,6 +1948,8 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                 repeat_of: None,
                 key_change,
                 rubato: sec_rubato,
+                break_tune: None,
+                energy: sec_energy,
             });
             eff_keys.push(target_key);
             run_key = target_key;
@@ -1875,6 +1969,11 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             });
         }
         let bars = ch.bars(&entries, INSTRUMENTAL_MAX_BARS, si, None);
+        let break_tune = ws
+            .tune
+            .as_deref()
+            .and_then(|t| break_tune_of(t, &tunes, meter, bars.len(), si, ch.rep));
+        last_inst.insert(kind, sections.len());
         sections.push(Section {
             kind,
             role: SectionRole::Plain,
@@ -1882,6 +1981,8 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             repeat_of: None,
             key_change,
             rubato: sec_rubato,
+            break_tune,
+            energy: sec_energy,
         });
         eff_keys.push(target_key);
         run_key = target_key;
@@ -1933,6 +2034,88 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
     Ok((song, rep))
 }
 
+/// Reads the `tune` of an instrumental section: the name of an entry of
+/// `tunes` (its lines joined), else the tune itself. Bar lines are checked
+/// (`BreakTuneBar`); a tune longer than the `n_bars` written bars is cut
+/// (`BreakTuneCut`); a bad token drops it (`BreakTuneToken`, or
+/// `UnknownTune` for a lone word without a length that names nothing).
+fn break_tune_of(
+    text: &str,
+    tunes: &BTreeMap<String, Vec<String>>,
+    meter: Meter,
+    n_bars: usize,
+    si: usize,
+    rep: &mut Vec<Repair>,
+) -> Option<Vec<BreakNote>> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let joined;
+    let body = match tunes.get(text) {
+        Some(lines) if !lines.is_empty() => {
+            joined = lines.join(" ");
+            joined.as_str()
+        }
+        Some(_) => {
+            rep.push(Repair::UnknownTune {
+                section: si,
+                name: text.to_string(),
+            });
+            return None;
+        }
+        None => text,
+    };
+    let bar = bar_ticks(meter);
+    let parsed = match parse_break_tune(body, bar) {
+        Ok(p) => p,
+        Err(token) => {
+            let name_like =
+                !text.contains(char::is_whitespace) && !text.contains(|c: char| c.is_ascii_digit());
+            rep.push(if name_like {
+                Repair::UnknownTune {
+                    section: si,
+                    name: text.to_string(),
+                }
+            } else {
+                Repair::BreakTuneToken { section: si, token }
+            });
+            return None;
+        }
+    };
+    let mut notes = parsed.notes;
+    if notes.is_empty() {
+        return None;
+    }
+    for (b, ticks) in parsed.bad_bars {
+        rep.push(Repair::BreakTuneBar {
+            section: si,
+            bar: b,
+            ticks,
+            expected: bar,
+        });
+    }
+    let room = n_bars as u32 * bar;
+    let total = break_ticks(&notes);
+    if total > room {
+        rep.push(Repair::BreakTuneCut {
+            section: si,
+            tune: total,
+            room,
+        });
+        let mut left = room;
+        notes.retain_mut(|n| {
+            if left == 0 {
+                return false;
+            }
+            n.ticks = n.ticks.min(left as u16);
+            left -= n.ticks as u32;
+            true
+        });
+    }
+    Some(notes)
+}
+
 /// Whether singer B sings any line: alone, as the melody of a shared line,
 /// or as the other voice of one. If not, a duet header is unused.
 fn duet_used(sections: &[Section]) -> bool {
@@ -1977,6 +2160,9 @@ pub fn to_wire(song: &Song) -> Value {
         }
         if let Some(r) = s.rubato {
             o.insert("rubato".into(), Value::String(r.as_str().into()));
+        }
+        if let Some(e) = s.energy {
+            o.insert("energy".into(), Value::String(e.as_str().into()));
         }
         if s.repeat_of.is_some() {
             o.insert("same".into(), Value::Bool(true));
@@ -2055,6 +2241,12 @@ pub fn to_wire(song: &Song) -> Value {
                 }
                 SectionBody::Instrumental(bars) => {
                     o.insert("chords".into(), Value::Array(bars_text(song, bars)));
+                    if let Some(t) = &s.break_tune {
+                        o.insert(
+                            "tune".into(),
+                            Value::String(crate::tune::break_tune_text(t)),
+                        );
+                    }
                 }
             }
         }

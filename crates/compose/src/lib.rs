@@ -3,7 +3,6 @@
 //! and preparation for rendering.
 
 pub mod contour;
-pub mod dance;
 pub mod form;
 pub mod melody;
 pub mod pitch;
@@ -12,3 +11,4 @@ pub mod rhythm;
 pub mod theory;
 pub mod timeline;
 pub mod voices;
+pub mod written;

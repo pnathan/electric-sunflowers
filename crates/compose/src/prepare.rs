@@ -130,7 +130,7 @@ fn compose_for_voice(
     let tonic = (song.key.get() as i32 + key_shift).rem_euclid(12);
     let t = register_of(tonic);
     let inst_shift = t - comp.t;
-    for n in comp.inst.iter_mut() {
+    for n in comp.inst.iter_mut().filter(|n| !n.written) {
         n.midi += inst_shift;
     }
     comp.t = t;
@@ -152,6 +152,7 @@ fn compose_for_voice(
             p.iter_mut().for_each(|x| *x += tr);
         }
     }
+    crate::written::place(&mut comp.inst, &form, &mut comp.repairs);
     (form, tl, comp, key_shift)
 }
 
