@@ -46,7 +46,7 @@ pub const VIB_WOBBLE2: f64 = 0.0;
 
 /// Depth (0..1) of the glottal-flow modulation of the noise in voiced
 /// fricatives (dh v z zh); 0 is unmodulated noise (issue 22).
-pub const VFRIC_MOD: f64 = 0.0;
+pub const VFRIC_MOD: f64 = 0.85;
 
 /// Multiplier on the Q of the frication and burst band-pass (1 is today).
 /// A narrower band puts less noise in the upper skirt, so a velar burst

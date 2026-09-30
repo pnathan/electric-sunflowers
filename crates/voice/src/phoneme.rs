@@ -147,7 +147,7 @@ pub const VOWELS: [Option<[f64; 3]>; Phoneme::COUNT] = {
     use Phoneme as P;
     let mut t = [None; Phoneme::COUNT];
     t[P::Iy as usize] = Some([270.0, 2290.0, 3010.0]);
-    t[P::Ih as usize] = Some([390.0, 1990.0, 2550.0]);
+    t[P::Ih as usize] = Some([430.0, 2010.0, 2600.0]);
     t[P::Eh as usize] = Some([530.0, 1840.0, 2480.0]);
     t[P::Ae as usize] = Some([660.0, 1720.0, 2410.0]);
     t[P::Aa as usize] = Some([730.0, 1090.0, 2440.0]);
@@ -175,7 +175,7 @@ pub const CONSONANTS: [Option<Consonant>; Phoneme::COUNT] = {
     t[P::R as usize] = Some(son(Sonorant, [420.0, 1250.0, 1650.0], 0.78, 0.06));
     t[P::W as usize] = Some(son(Sonorant, [300.0, 650.0, 2200.0], 0.65, 0.055));
     t[P::Y as usize] = Some(son(Sonorant, [270.0, 2100.0, 3000.0], 0.65, 0.05));
-    t[P::M as usize] = Some(son(Nasal, [280.0, 1100.0, 2300.0], 0.55, 0.065));
+    t[P::M as usize] = Some(son(Nasal, [280.0, 1100.0, 2300.0], 0.55, 0.085));
     t[P::N as usize] = Some(son(Nasal, [280.0, 1650.0, 2600.0], 0.55, 0.06));
     t[P::Ng as usize] = Some(son(Nasal, [280.0, 2100.0, 2700.0], 0.5, 0.065));
     t[P::S as usize] = Some(fric(6500.0, 3500.0, 0.62, false, 0.095));
@@ -188,7 +188,7 @@ pub const CONSONANTS: [Option<Consonant>; Phoneme::COUNT] = {
     // Voiced "th" is mostly voicing.
     t[P::Dh as usize] = Some(Consonant {
         vv: 0.6,
-        ..fric(4500.0, 5000.0, 0.05, true, 0.045)
+        ..fric(4500.0, 5000.0, 0.10, true, 0.065)
     });
     t[P::Hh as usize] = Some(Consonant {
         class: ConsClass::Aspirate,
@@ -256,7 +256,7 @@ mod tests {
         assert_eq!(vowel_formants(Phoneme::Ey1), Some([340.0, 2210.0, 2780.0]));
         assert_eq!(
             consonant(Phoneme::Dh).map(|c| (c.af, c.vv)),
-            Some((0.05, 0.6))
+            Some((0.10, 0.6))
         );
     }
 }
