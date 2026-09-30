@@ -111,3 +111,17 @@ rust_binary(
         normal_dev = True,
     ),
 )
+
+# Prints the arranger pass's view of a song (no model call).
+rust_binary(
+    name = "arranger_view",
+    srcs = ["examples/arranger_view.rs"],
+    edition = "2021",
+    deps = [
+        ":engine",
+        "//crates/songwriter",
+    ] + ENGINE_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

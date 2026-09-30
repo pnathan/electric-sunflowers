@@ -10,6 +10,13 @@
 //! (`songwriter::sidecar::RenderSidecar`) and `<stem>.sheet.json`
 //! (`engine::SongSheet`). `sheet` prints a song's chord sheet.
 //!
+//! The arranger pass (`write --arrange`, `rearrange`): after the rule-based
+//! arranger has arranged, Claude reads the song and a view of the
+//! arrangement and returns edits (`songwriter::arranger`); the CLI applies
+//! them (`engine::arranger`, pure), saves the arrangement as
+//! `<stem>.arrangement.json` (and `<stem>.mix.json` when the edits change
+//! the mix) and plays that. The engine makes no model call.
+//!
 //! Settings (docs/features-2.md section 2) are loaded once per run
 //! (`settings::load`) and fill in anything a flag left unset: flag beats
 //! settings file beats built-in default.
@@ -20,7 +27,7 @@ use engine::{BandPart, MixSettings, Progress, Stems, TrackId};
 use export::{BitDepth, Format, Meta};
 use song::{Band, Repair, Song, Voice};
 use songwriter::claude::{Effort, Transport};
-use songwriter::sidecar::RenderSidecar;
+use songwriter::sidecar::{ArrangerInfo, RenderSidecar};
 use songwriter::usage::Generation;
 use std::path::{Path, PathBuf};
 
@@ -132,12 +139,44 @@ enum Cmd {
         /// low | medium | high | xhigh | max. Defaults to settings claude.effort.
         #[arg(long, value_parser = parse_effort)]
         effort: Option<Effort>,
+        /// After the song is written, run the arranger pass: Claude edits
+        /// the rule-based arrangement (saved as <stem>.arrangement.json,
+        /// and <stem>.mix.json when it changes the mix) and the song is
+        /// played from it.
+        #[arg(long)]
+        arrange: bool,
         #[command(flatten)]
         render: RenderArgs,
         #[command(flatten)]
         export: ExportArgs,
         #[command(flatten)]
         mix: MixArgs,
+    },
+    /// Run the arranger pass on an existing song: the rule-based arranger
+    /// arranges it, Claude edits the arrangement, and the result is
+    /// played. Saves <stem>.arrangement.json (and <stem>.mix.json when the
+    /// edits change the mix) beside the output. Output defaults to song.ogg.
+    Rearrange {
+        song: PathBuf,
+        #[arg(long)]
+        style: Option<String>,
+        /// More guidance for the arranger, added to the song's own arranging
+        /// note.
+        #[arg(long)]
+        note: Option<String>,
+        /// cli | api. Defaults to settings claude.transport.
+        #[arg(long, value_parser = parse_transport)]
+        via: Option<Transport>,
+        /// Defaults to settings claude.model.
+        #[arg(long)]
+        model: Option<String>,
+        /// low | medium | high | xhigh | max. Defaults to settings claude.effort.
+        #[arg(long, value_parser = parse_effort)]
+        effort: Option<Effort>,
+        #[command(flatten)]
+        render: RenderArgs,
+        #[command(flatten)]
+        export: ExportArgs,
     },
     /// Arrange a song JSON file: write the note events of every part (the
     /// performance, JSON) and stop. `play` renders them.
@@ -277,6 +316,7 @@ fn run() -> Result<()> {
                     song_json: json_path,
                     model: None,
                     generation: None,
+                    arranger: None,
                 },
             )
         }
@@ -309,6 +349,7 @@ fn run() -> Result<()> {
                     song_json: path,
                     model: None,
                     generation: None,
+                    arranger: None,
                 },
             )
         }
@@ -367,6 +408,7 @@ fn run() -> Result<()> {
             via,
             model,
             effort,
+            arrange,
             render,
             export,
             mix,
@@ -381,9 +423,35 @@ fn run() -> Result<()> {
                 via,
                 &model,
                 effort,
+                arrange,
                 &render,
                 &export,
                 &mix,
+                settings,
+            )
+        }
+        Cmd::Rearrange {
+            song: path,
+            style,
+            note,
+            via,
+            model,
+            effort,
+            render,
+            export,
+        } => {
+            let via = via.unwrap_or(settings.claude.transport);
+            let model = model.unwrap_or_else(|| settings.claude.model.clone());
+            let effort = effort.unwrap_or(settings.claude.effort);
+            cmd_rearrange(
+                &path,
+                style.as_deref(),
+                note.as_deref(),
+                via,
+                &model,
+                effort,
+                &render,
+                &export,
                 settings,
             )
         }
@@ -457,6 +525,16 @@ struct Source {
     model: Option<String>,
     /// The Claude usage record, when the song was written this run.
     generation: Option<Generation>,
+    /// The arranger pass of this run, when there was one.
+    arranger: Option<ArrangerRun>,
+}
+
+/// An arranger pass's result: the edited performance, which is played in
+/// place of the rule-based arrangement, and its record for the sidecar.
+struct ArrangerRun {
+    /// The composition and the edited performance; taken by `pipeline`.
+    played: Option<(engine::Prepared, engine::Performance)>,
+    info: ArrangerInfo,
 }
 
 /// Lowercases `s`, replaces runs of non-alphanumerics with a single `-`, and
@@ -688,7 +766,7 @@ fn pipeline(
     export: &ExportArgs,
     mix_args: &MixArgs,
     settings: &settings::Settings,
-    src: Source,
+    mut src: Source,
 ) -> Result<()> {
     let quality = export.quality.unwrap_or(settings.export.ogg_quality);
     let fmt = Format::from_path(out, quality, export.flac16, export.float)?;
@@ -697,7 +775,14 @@ fn pipeline(
         "sunflower: rendering on {} threads",
         rayon::current_num_threads()
     );
-    let (prepared, stems) = engine::render(song, seed, render.voice.voice(), &Report);
+    let (prepared, stems) = match src.arranger.as_mut().and_then(|a| a.played.take()) {
+        // The arranger pass's performance is the source of this recording.
+        Some((prepared, perf)) => {
+            let stems = engine::play(&perf, &Report);
+            (prepared, stems)
+        }
+        None => engine::render(song, seed, render.voice.voice(), &Report),
+    };
     eprintln!("sunflower: mixing");
     let defaults = MixSettings::default_for(&stems);
     let (mix_settings, mix_path) = resolve_mix(mix_args, out, &defaults)?;
@@ -836,6 +921,7 @@ fn write_sidecars(
         mix: mix_path.map(abs),
         stems: stems_dir.map(abs),
         created: Some(utc_now_iso()),
+        arranger: src.arranger.as_ref().map(|a| a.info.clone()),
     };
     let side_path = stem_path(out, "render.json");
     side.write(&side_path).map_err(|e| anyhow!("{e}"))?;
@@ -878,6 +964,7 @@ fn cmd_write(
     via: Transport,
     model: &str,
     effort: Effort,
+    arrange: bool,
     render: &RenderArgs,
     export: &ExportArgs,
     mix_args: &MixArgs,
@@ -900,13 +987,7 @@ fn cmd_write(
         seed: Some(seed),
         voice: render.voice,
     };
-    let claude: Box<dyn songwriter::claude::Claude> = match via {
-        Transport::Cli => Box::new(songwriter::claude::ClaudeCli::default()),
-        Transport::Api => Box::new(
-            songwriter::claude::ClaudeApi::from_env()
-                .map_err(|e| anyhow!("could not build the API client: {e}"))?,
-        ),
-    };
+    let claude = make_claude(via)?;
     let year = current_year(); // CLAUDE.md: age counted from 1999 as of the current year.
     let style_id = style
         .filter(|s| !s.trim().eq_ignore_ascii_case("auto"))
@@ -966,14 +1047,186 @@ fn cmd_write(
         .model
         .clone()
         .unwrap_or_else(|| generation.requested_model.clone());
+    // The song is written and paid for: an arranger pass that fails leaves
+    // the rule-based arrangement, with a warning.
+    let arranger = if arrange {
+        match arranger_pass(
+            &song,
+            seed,
+            render.voice.voice(),
+            claude.as_ref(),
+            model,
+            effort,
+            None,
+            &out,
+        ) {
+            Ok(run) => Some(run),
+            Err(e) => {
+                eprintln!(
+                    "sunflower: warning: the arranger pass failed ({e:#}); rendering the rule-based arrangement"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let src = Source {
         song_json: json_path,
         model: Some(model_used),
         generation: Some(generation),
+        arranger,
     };
     pipeline(
         &song, &render, song.band, &out, export, mix_args, settings, src,
     )
+}
+
+/// The Claude client for `via`.
+fn make_claude(via: Transport) -> Result<Box<dyn songwriter::claude::Claude>> {
+    Ok(match via {
+        Transport::Cli => Box::new(songwriter::claude::ClaudeCli::default()),
+        Transport::Api => Box::new(
+            songwriter::claude::ClaudeApi::from_env()
+                .map_err(|e| anyhow!("could not build the API client: {e}"))?,
+        ),
+    })
+}
+
+/// `rearrange`: the arranger pass on a song file, then the render.
+// Each parameter is a distinct CLI input, as for `cmd_write`.
+#[allow(clippy::too_many_arguments)]
+fn cmd_rearrange(
+    path: &Path,
+    style: Option<&str>,
+    note: Option<&str>,
+    via: Transport,
+    model: &str,
+    effort: Effort,
+    render: &RenderArgs,
+    export: &ExportArgs,
+    settings: &settings::Settings,
+) -> Result<()> {
+    let out = export
+        .out
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("song.ogg"));
+    check_format(&out, export, settings)?;
+    let song = load_song(path, style)?;
+    let seed = resolve_seed(render.seed);
+    let render = RenderArgs {
+        seed: Some(seed),
+        voice: render.voice,
+    };
+    let claude = make_claude(via)?;
+    let run = arranger_pass(
+        &song,
+        seed,
+        render.voice.voice(),
+        claude.as_ref(),
+        model,
+        effort,
+        note,
+        &out,
+    )?;
+    let mix = MixArgs {
+        mix: None,
+        no_mix: false,
+        stems: false,
+    };
+    pipeline(
+        &song,
+        &render,
+        song.band,
+        &out,
+        export,
+        &mix,
+        settings,
+        Source {
+            song_json: path.to_path_buf(),
+            model: None,
+            generation: None,
+            arranger: Some(run),
+        },
+    )
+}
+
+/// The arranger pass. The rule-based arranger arranges `song`; Claude reads
+/// the song's arranging note, `extra_note` and a view of the arrangement and
+/// returns edits; `engine::arranger::apply` validates and applies them. The
+/// edited performance is saved as `<out-stem>.arrangement.json` (the
+/// recording's source), the raw reply as `<out-stem>.arranger.json`, and a
+/// mix edit as `<out-stem>.mix.json`, which `resolve_mix` then applies. An
+/// old `.mix.json` stays when the reply has no mix edit.
+// Each parameter is a distinct input, as for `cmd_write`.
+#[allow(clippy::too_many_arguments)]
+fn arranger_pass(
+    song: &Song,
+    seed: u64,
+    voice: Option<Voice>,
+    claude: &dyn songwriter::claude::Claude,
+    model: &str,
+    effort: Effort,
+    extra_note: Option<&str>,
+    out: &Path,
+) -> Result<ArrangerRun> {
+    let (prepared, mut perf) =
+        engine::arrange_song(song, seed, engine::VoiceChoice { a: voice, b: None });
+    let view = engine::arranger::view(song, &prepared, &perf);
+    let req = songwriter::arranger::ArrangeRequest {
+        view: &view,
+        style: song
+            .style
+            .as_deref()
+            .and_then(|k| songwriter::styles::style(k).ok()),
+        writer_note: song.arranging.as_deref(),
+        extra_note,
+        schema: engine::arranger::edit_schema(),
+        model: Some(model.to_string()),
+        effort,
+    };
+    eprintln!("sunflower: asking Claude to arrange the song ({model}, effort {effort})");
+    let got = songwriter::arranger::arrange(claude, &req).map_err(|e| anyhow!("arranger: {e}"))?;
+    eprintln!("{}", got.generation.summary());
+
+    let raw_path = stem_path(out, "arranger.json");
+    std::fs::write(&raw_path, serde_json::to_string_pretty(&got.raw)?)
+        .with_context(|| format!("saving the arranger's reply to {}", raw_path.display()))?;
+    let edits = engine::arranger::ArrangerEdits::from_value(&got.raw)
+        .map_err(|e| anyhow!("arranger: {e}"))?;
+    let applied = engine::arranger::apply(&prepared, &mut perf, &edits);
+    for r in &applied.repairs {
+        eprintln!("sunflower: warning: arranger: {r}");
+    }
+    if let Some(s) = &applied.summary {
+        println!("arranger: {s}");
+    }
+
+    let arr_path = stem_path(out, "arrangement.json");
+    std::fs::write(&arr_path, serde_json::to_string(&perf)?)
+        .with_context(|| format!("writing the arrangement to {}", arr_path.display()))?;
+    eprintln!(
+        "sunflower: wrote {} ({} edits applied)",
+        arr_path.display(),
+        applied.applied
+    );
+    if let Some(mix) = &applied.mix {
+        let mix_path = stem_path(out, "mix.json");
+        std::fs::write(&mix_path, serde_json::to_string_pretty(mix)?)
+            .with_context(|| format!("writing the mix to {}", mix_path.display()))?;
+        eprintln!("sunflower: wrote {}", mix_path.display());
+    }
+    Ok(ArrangerRun {
+        played: Some((prepared, perf)),
+        info: ArrangerInfo {
+            summary: applied.summary,
+            generation: Some(got.generation),
+            arrangement: Some(abs(&arr_path)),
+            edits_applied: applied.applied,
+            repairs: applied.repairs,
+            note: extra_note.map(str::to_string),
+        },
+    })
 }
 
 /// The current UTC year (CLAUDE.md: the songwriter persona's age is counted

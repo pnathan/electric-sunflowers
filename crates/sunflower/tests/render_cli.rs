@@ -811,3 +811,107 @@ fn write_refuses_an_existing_output_before_it_calls_claude() {
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(err.contains("exists") && err.contains("--force"), "{err}");
 }
+
+/// A `claude` stand-in for PATH: stores the prompt it reads on stdin in
+/// `$FAKE_PROMPT` and prints the envelope in `$FAKE_REPLY`.
+fn fake_claude(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let script = dir.join("claude");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\ncat > \"$FAKE_PROMPT\"\ncat \"$FAKE_REPLY\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn rearrange_saves_the_arrangement_and_mix_and_plays_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fake_claude(d);
+    let edits = serde_json::json!({
+        "edits": [
+            {"part": "drums", "from_bar": 0, "to_bar": 1, "notes": [
+                {"beat": 0, "drum": "Kick", "vel": 0.9},
+                {"beat": 1, "drum": "Kick", "vel": 0.9},
+                {"beat": 2, "drum": "Kick", "vel": 0.9},
+                {"beat": 3, "drum": "Kick", "vel": 9}]},
+            {"part": "violin", "from_bar": 0, "to_bar": 1, "notes": []}
+        ],
+        "mix": {"tracks": {"drums": {"gain_db": 4}}, "duck_db": 2},
+        "summary": "A kick on every beat."
+    });
+    let envelope = serde_json::json!({"is_error": false, "result": edits.to_string(),
+        "usage": {"input_tokens": 10, "output_tokens": 20}});
+    std::fs::write(d.join("reply.json"), envelope.to_string()).unwrap();
+    let out = d.join("tune.wav");
+    let path = format!(
+        "{}:{}",
+        d.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let o = Command::new(bin())
+        .env("PATH", path)
+        .env("FAKE_REPLY", d.join("reply.json"))
+        .env("FAKE_PROMPT", d.join("prompt.txt"))
+        .args([
+            "rearrange",
+            song_path().to_str().unwrap(),
+            "--seed",
+            "7",
+            "--via",
+            "cli",
+            "--note",
+            "More bass, please.",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{err}");
+    // The prompt had the view and the extra guidance.
+    let prompt = std::fs::read_to_string(d.join("prompt.txt")).unwrap();
+    assert!(prompt.contains("More bass, please.") && prompt.contains("bar 0 (s0)"));
+    // The violin is off in this song, so that edit is dropped with a warning.
+    assert!(err.contains("violin is off"), "{err}");
+    assert!(err.contains("velocity 9 clamped"), "{err}");
+
+    let perf: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(d.join("tune.arrangement.json")).unwrap())
+            .unwrap();
+    let kicks = perf["arrangement"]["drums"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|h| h["kind"] == "Kick" && h["vel"] == 0.9)
+        .count();
+    assert_eq!(kicks, 3);
+    let mix: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(d.join("tune.mix.json")).unwrap()).unwrap();
+    assert_eq!(mix["duck_db"], 2.0);
+    let side: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(d.join("tune.render.json")).unwrap())
+            .unwrap();
+    assert_eq!(side["arranger"]["summary"], "A kick on every beat.");
+    assert_eq!(side["arranger"]["edits_applied"], 1);
+    assert_eq!(side["arranger"]["note"], "More bass, please.");
+    assert!(side["mix"].as_str().unwrap().ends_with("tune.mix.json"));
+
+    // Playing the saved files gives the same samples: the file is the source.
+    let again = d.join("again.wav");
+    let o = Command::new(bin())
+        .args([
+            "play",
+            d.join("tune.arrangement.json").to_str().unwrap(),
+            "--mix",
+            d.join("tune.mix.json").to_str().unwrap(),
+            "-o",
+            again.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(read_wav(&out).data == read_wav(&again).data);
+}
