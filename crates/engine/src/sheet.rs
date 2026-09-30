@@ -65,6 +65,10 @@ pub struct SheetSection {
     /// The section carries the hook (a chorus, or a later verse when there
     /// is no chorus).
     pub lift: bool,
+    /// Tonic of the key in force, after transposition for the voice,
+    /// spelled for its mode.
+    pub key: String,
+    pub mode: Mode,
     pub t0: f64,
     pub t1: f64,
     /// Bars as played, with the chord names sounding in each.
@@ -293,6 +297,12 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
             occurrence: sec.occ + 1,
             sung: sec.is_sung(),
             lift: sec.is_lift(),
+            key: sec
+                .key
+                .0
+                .name(sec.key.1.prefers_flats(sec.key.0))
+                .to_string(),
+            mode: sec.key.1,
             t0: tl.to_time(b0 as f64),
             t1: tl.to_time(b1 as f64),
             bars,
@@ -524,8 +534,13 @@ impl SongSheet {
             out.push_str(&self.note);
             out.push('\n');
         }
+        let mut running = (self.key.as_str(), self.mode);
         for sec in &self.sections {
             out.push('\n');
+            if (sec.key.as_str(), sec.mode) != running {
+                running = (sec.key.as_str(), sec.mode);
+                out.push_str(&format!("Key: {} {}\n", sec.key, sec.mode));
+            }
             out.push_str(&format!("[{}]  {}\n", sec.label, clock(sec.t0)));
             if !sec.sung {
                 let mut row = String::from("|");

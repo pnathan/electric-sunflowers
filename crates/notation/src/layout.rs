@@ -120,8 +120,8 @@ pub(crate) fn text(
 }
 
 /// Width of the clef, key signature and (first system) time signature.
-fn head_w(score: &Score, first: bool) -> f64 {
-    let ks = score.fifths.unsigned_abs() as f64;
+fn head_w(fifths: i32, first: bool) -> f64 {
+    let ks = fifths.unsigned_abs() as f64;
     3.6 * SP
         + if ks > 0.0 {
             ks * 1.05 * SP + 0.6 * SP
@@ -230,7 +230,7 @@ pub(crate) fn layout(score: &Score) -> Page {
     let mut systems: Vec<(usize, usize, bool)> = Vec::new(); // (first, end, wrapped)
     let mut i = 0;
     while i < ms.len() {
-        let avail = width - 2.0 * MARGIN - head_w(score, systems.is_empty());
+        let avail = width - 2.0 * MARGIN - head_w(ms[i].fifths, systems.is_empty());
         let mut j = i;
         let mut w = 0.0;
         while j < ms.len() && ms[j].chunk == ms[i].chunk && (j == i || w + nat[j].0 <= avail) {
@@ -295,7 +295,7 @@ pub(crate) fn layout(score: &Score) -> Page {
 
     let last_measure = ms.len().saturating_sub(1);
     for (si, &(first, end, wrapped)) in systems.iter().enumerate() {
-        let head = head_w(score, si == 0);
+        let head = head_w(ms[first].fifths, si == 0);
         let avail = width - 2.0 * MARGIN - head;
         let natural: f64 = nat[first..end].iter().map(|x| x.0).sum();
         let scale = if natural <= 0.0 {
@@ -494,15 +494,13 @@ pub(crate) fn layout(score: &Score) -> Page {
             1.0,
         );
         let mut hx = MARGIN + 3.6 * SP;
-        let (steps, acc) = if score.fifths > 0 {
+        let fifths = ms[first].fifths;
+        let (steps, acc) = if fifths > 0 {
             ([38, 35, 39, 36, 33, 37, 34], &glyphs::ACCIDENTAL_SHARP)
         } else {
             ([34, 37, 33, 36, 32, 35, 31], &glyphs::ACCIDENTAL_FLAT)
         };
-        for &st in steps
-            .iter()
-            .take(score.fifths.unsigned_abs().min(7) as usize)
-        {
+        for &st in steps.iter().take(fifths.unsigned_abs().min(7) as usize) {
             glyph(&mut s, acc, hx, y_of(st), 1.0);
             hx += 1.05 * SP;
         }

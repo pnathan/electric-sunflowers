@@ -77,7 +77,6 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vec<BowNote> {
         69,
         88,
         |s| s.kind == SectionKind::Verse && s.occ > 0,
-        song,
         seed,
         VIOLIN_FILL,
     );

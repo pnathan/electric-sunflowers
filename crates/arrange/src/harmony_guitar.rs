@@ -61,7 +61,6 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> HarmonyGuitar {
         59,
         79,
         |s| s.kind == SectionKind::Verse,
-        song,
         seed,
         HG_FILL,
     );

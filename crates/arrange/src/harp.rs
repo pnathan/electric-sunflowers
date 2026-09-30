@@ -18,11 +18,11 @@
 //! the ring time). Randomness: roll k's onset jitter (+-5 ms per tone) from
 //! `Rng::event(seed, HARP_ROLL, k)`.
 
-use compose::form::Form;
+use compose::form::{Form, Sec};
 use compose::timeline::Timeline;
 use sfcore::random::{tag, Rng, Tag};
 use song::events::PluckNote;
-use song::{SectionKind, Song};
+use song::{Pc, PcSet, SectionKind};
 
 const HARP_ROLL: Tag = tag("harp.roll");
 
@@ -45,8 +45,13 @@ fn note(t: f64, midi: u8, vel: f64) -> PluckNote {
     }
 }
 
+/// The glissando's scale: the mode of the section's own key on `root`.
+fn gliss_scale(sec: &Sec, root: Pc) -> PcSet {
+    sec.key.1.scale().transpose(root.get() as i32)
+}
+
 /// The harp part.
-pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> Vec<PluckNote> {
+pub fn plan(form: &Form, tl: &Timeline, seed: u64) -> Vec<PluckNote> {
     let bpb = form.bpb();
     let mut notes: Vec<PluckNote> = Vec::new();
 
@@ -103,10 +108,7 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> Vec<PluckNote
         let b = sec.beats(&form.meter).start;
         let t1 = tl.to_time(b) - GLISS_GAP;
         let t0 = t1 - GLISS_LEN;
-        let scale = song
-            .mode
-            .scale()
-            .transpose(tl.chord_at(form, b).root.get() as i32);
+        let scale = gliss_scale(sec, tl.chord_at(form, b).root);
         let n = scale.tones_in(GLISS_LO, GLISS_HI).count();
         for (k, m) in scale.tones_in(GLISS_LO, GLISS_HI).enumerate() {
             let x = k as f64 / n as f64;
@@ -114,4 +116,62 @@ pub fn plan(song: &Song, form: &Form, tl: &Timeline, seed: u64) -> Vec<PluckNote
         }
     }
     notes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use song::Mode;
+
+    /// A minor song whose last chorus turns to A major: the glissando into
+    /// that chorus uses the major scale, the one into the bridge the minor.
+    #[test]
+    fn the_glissando_scale_follows_the_section_key() {
+        let v = json!({
+            "schema_version":2,"key":"A","mode":"minor","meter":"4/4","tempo":100,
+            "band":{"harp":true},
+            "sections":[
+                {"type":"verse","lines":[{"syl":"*one *two three *four","chords":["Am","Em"]}]},
+                {"type":"bridge","lines":[{"syl":"*five *six seven *eight","chords":["F","G"]}]},
+                {"type":"chorus","key":"A major","lines":[{"syl":"*nine *ten","chords":["A","E"]}]}
+            ]
+        });
+        let s = song::normalize_value(&v).unwrap().0;
+        let p = compose::prepare::prepare(&s, 3, None);
+        let form = &p.form;
+        let bridge = &form.sections[1];
+        let chorus = &form.sections[2];
+        assert!(chorus.lift.is_some_and(|l| l.is_final));
+        assert_eq!(bridge.key.1, Mode::Minor);
+        assert_eq!(chorus.key.1, Mode::Major);
+        let root = |sec: &Sec| p.timeline.chord_at(form, sec.beats(&form.meter).start).root;
+        let maj = gliss_scale(chorus, root(chorus));
+        let min = gliss_scale(bridge, root(bridge));
+        assert_eq!(
+            maj,
+            Mode::Major.scale().transpose(root(chorus).get() as i32)
+        );
+        assert_eq!(
+            min,
+            Mode::Minor.scale().transpose(root(bridge).get() as i32)
+        );
+        // The plan sounds both glissandi.
+        let notes = plan(form, &p.timeline, 3);
+        let t1 = |sec: &Sec| p.timeline.to_time(sec.beats(&form.meter).start) - GLISS_GAP;
+        let gliss = |sec: &Sec| -> Vec<u8> {
+            notes
+                .iter()
+                .filter(|n| {
+                    (t1(sec) - GLISS_LEN - 1e-9..=t1(sec) + 1e-9).contains(&n.t0)
+                        && n.vel < 0.54
+                        && n.vel > 0.279
+                })
+                .map(|n| n.midi as u8)
+                .collect()
+        };
+        let g = gliss(chorus);
+        assert!(g.len() >= 8, "{g:?}");
+        assert!(g.iter().all(|&m| maj.contains(Pc::new(m as i32))));
+    }
 }

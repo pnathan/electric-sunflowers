@@ -25,7 +25,7 @@ use compose::timeline::Timeline;
 use song::events::DrumKind;
 use song::{Mode, Pc, SectionKind, SingerId, Song, Voice};
 
-use crate::score::{key_alterations, key_fifths, spell, Grid};
+use crate::score::{key_alterations, key_fifths, key_name, spell, Grid};
 
 /// One sounding part of the score, in the order the score is printed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -169,6 +169,8 @@ pub struct BarCol {
     pub bar: usize,
     /// Index into the form's sections.
     pub sec: usize,
+    /// Key signature in force in this bar's section (sharps positive).
+    pub fifths: i32,
     /// Break group: bars of one lyric line, or a run of bars without lyrics
     /// in one section (the lead sheet's chunking rule). Wave 1 starts a
     /// system per chunk.
@@ -191,6 +193,7 @@ pub struct FullScore {
     pub width: f64,
     pub(crate) meter: song::Meter,
     pub(crate) tempo: f64,
+    /// The opening key signature; each bar carries its own (`BarCol::fifths`).
     pub(crate) fifths: i32,
     pub staves: Vec<StaffDef>,
     pub bars: Vec<BarCol>,
@@ -210,6 +213,7 @@ pub enum PartBar {
     Bar {
         bar: usize,
         sec: usize,
+        fifths: i32,
         chunk: usize,
         label: Option<String>,
         chords: Vec<(i64, String)>,
@@ -219,6 +223,8 @@ pub enum PartBar {
     },
     MultiRest {
         bars: usize,
+        /// Key signature of the section the run lies in.
+        fifths: i32,
     },
 }
 
@@ -552,15 +558,14 @@ fn unit_of(tl: &Timeline, grid: &Grid, sec: f64) -> i64 {
 }
 
 /// One voice's raw notes into per-bar `Ev` lists (rests fill the gaps, a
-/// silent bar is one whole rest), spelling pitched heads in `fifths` with
-/// key alterations `key_alt`, resetting the spelling state each bar.
+/// silent bar is one whole rest), spelling pitched heads in each bar's key
+/// (`keys[bar]`), resetting the spelling state each bar.
 fn quantize_voice(
     notes: &[&RawNote],
     tl: &Timeline,
     grid: &Grid,
     n_bars: usize,
-    fifths: i32,
-    key_alt: &[i32; 7],
+    keys: &[BarKey],
     written: i32,
 ) -> Vec<Vec<Ev>> {
     let bar_u = grid.bar_u;
@@ -629,6 +634,7 @@ fn quantize_voice(
         let b1 = b0 + bar_u;
         let mut c = 0i64;
         let mut state: Vec<(i32, i32)> = Vec::new();
+        let (fifths, key_alt) = &keys[bar];
         for it in &items {
             let end = it.end_gu.unwrap();
             if end <= b0 || it.gu0 >= b1 {
@@ -662,7 +668,7 @@ fn quantize_voice(
                         },
                         None => {
                             let (l, a, step) =
-                                spell(midi.round() as i32 + written, fifths, key_alt);
+                                spell(midi.round() as i32 + written, *fifths, key_alt);
                             let cur = state
                                 .iter()
                                 .find(|x| x.0 == step)
@@ -717,12 +723,15 @@ fn quantize_voice(
     per_bar
 }
 
-/// How a staff's pitches are spelled: key signature, key alterations and
-/// the written-octave offset.
+/// A bar's key signature (sharps positive) and its alteration of each
+/// letter.
+type BarKey = (i32, [i32; 7]);
+
+/// How a staff's pitches are spelled: each bar's key and the
+/// written-octave offset.
 #[derive(Clone, Copy)]
 struct Spelling<'a> {
-    fifths: i32,
-    key_alt: &'a [i32; 7],
+    keys: &'a [BarKey],
     written: i32,
 }
 
@@ -749,15 +758,7 @@ fn build_cells(
     let per_voice: Vec<Vec<Vec<Ev>>> = (0..=max_voice)
         .map(|v| {
             let notes: Vec<&RawNote> = raw.iter().filter(|r| r.voice == v).collect();
-            quantize_voice(
-                &notes,
-                tl,
-                grid,
-                n_bars,
-                spelling.fifths,
-                spelling.key_alt,
-                spelling.written,
-            )
+            quantize_voice(&notes, tl, grid, n_bars, spelling.keys, spelling.written)
         })
         .collect();
     (0..n_bars)
@@ -803,7 +804,19 @@ impl FullScore {
         let grid = Grid::of(song.meter);
         let n_bars = form.bars.len();
         let fifths = key_fifths(prep.tonic, song.mode);
-        let key_alt = key_alterations(fifths);
+        // Each bar's key: that of its section.
+        let bar_keys: Vec<BarKey> = form
+            .bars
+            .iter()
+            .map(|b| {
+                let (tonic, mode) = form
+                    .sections
+                    .get(b.sec)
+                    .map_or((Pc::new(prep.tonic), song.mode), |s| s.key);
+                let f = key_fifths(tonic.get() as i32, mode);
+                (f, key_alterations(f))
+            })
+            .collect();
 
         let verses = form
             .sections
@@ -833,7 +846,14 @@ impl FullScore {
                 .sections
                 .get(sec)
                 .filter(|s| bar == s.start_bar)
-                .map(|s| section_label(s.kind, s.role, s.occ, verses));
+                .map(|s| {
+                    let l = section_label(s.kind, s.role, s.occ, verses);
+                    // A section whose key differs from the one before it says so.
+                    match sec.checked_sub(1).and_then(|p| form.sections.get(p)) {
+                        Some(p) if p.key != s.key => format!("{l} (Key: {})", key_name(s.key)),
+                        _ => l,
+                    }
+                });
             let b0 = (bar as i64 * grid.bar_u) as f64 * u;
             let b1 = ((bar + 1) as i64 * grid.bar_u) as f64 * u;
             bar_meta.push((
@@ -894,8 +914,7 @@ impl FullScore {
                 &grid,
                 n_bars,
                 Spelling {
-                    fifths: if pitched { fifths } else { 0 },
-                    key_alt: &key_alt,
+                    keys: &bar_keys,
                     written,
                 },
                 !pitched,
@@ -918,6 +937,7 @@ impl FullScore {
                 BarCol {
                     bar,
                     sec,
+                    fifths: bar_keys[bar].0,
                     chunk,
                     label,
                     chords: chs,
@@ -985,7 +1005,10 @@ impl FullScore {
                 }
                 let run = j - i;
                 if run >= 2 {
-                    bars.push(PartBar::MultiRest { bars: run });
+                    bars.push(PartBar::MultiRest {
+                        bars: run,
+                        fifths: b.fifths,
+                    });
                     i = j;
                     continue;
                 }
@@ -993,6 +1016,7 @@ impl FullScore {
             bars.push(PartBar::Bar {
                 bar: b.bar,
                 sec: b.sec,
+                fifths: b.fifths,
                 chunk: b.chunk,
                 label: b.label.clone(),
                 chords: b.chords.clone(),

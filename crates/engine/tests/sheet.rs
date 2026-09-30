@@ -191,3 +191,71 @@ fn a_melisma_is_one_sheet_syllable() {
         .flat_map(|l| &l.syllables)
         .all(|s| s.notes == 1));
 }
+
+/// C major, then a chorus in D major, then a copied verse in E major.
+fn modulating() -> song::Song {
+    let v = serde_json::json!({
+        "schema_version":2,"key":"C","mode":"major","meter":"4/4","tempo":100,
+        "sections":[
+            {"type":"verse","lines":[{"syl":"one *two three *four","chords":["C G"]}]},
+            {"type":"chorus","key":"D","lines":[{"syl":"*five *six *seven *eight","chords":["D A"]}]},
+            {"type":"verse","same":true,"key":"E"},
+            {"type":"chorus","same":true}
+        ]
+    });
+    song::normalize_value(&v).unwrap().0
+}
+
+#[test]
+fn sections_carry_their_key_and_the_text_says_when_it_changes() {
+    let s = modulating();
+    let sheet = song_sheet(&s, 4, None);
+    let p = prepare(&s, 4, None);
+    let name = |tonic: i32, mode: song::Mode| {
+        let t = song::Pc::new(tonic).transpose(p.key_shift);
+        t.name(mode.prefers_flats(t)).to_string()
+    };
+    let want = [
+        (name(0, song::Mode::Major), song::Mode::Major),
+        (name(2, song::Mode::Major), song::Mode::Major),
+        (name(4, song::Mode::Major), song::Mode::Major),
+        // The last chorus copies the chorus, sounding in the running key E.
+        (name(4, song::Mode::Major), song::Mode::Major),
+    ];
+    let got: Vec<_> = sheet
+        .sections
+        .iter()
+        .map(|x| (x.key.clone(), x.mode))
+        .collect();
+    assert_eq!(got, want);
+    // The song's own key stays the opening key.
+    assert_eq!(sheet.key, want[0].0);
+    let text = sheet.to_text();
+    let lines: Vec<&str> = text.lines().collect();
+    let key_lines: Vec<(usize, &str)> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.starts_with("Key: "))
+        .map(|(i, l)| (i, *l))
+        .collect();
+    assert_eq!(key_lines.len(), 2, "{text}");
+    assert_eq!(key_lines[0].1, format!("Key: {} major", want[1].0));
+    assert_eq!(key_lines[1].1, format!("Key: {} major", want[2].0));
+    // Each sits directly above its section's header.
+    assert!(lines[key_lines[0].0 + 1].starts_with("[Chorus"), "{text}");
+    assert!(lines[key_lines[1].0 + 1].starts_with("[Verse 2"), "{text}");
+    // The JSON carries the fields.
+    let j = serde_json::to_value(&sheet).unwrap();
+    assert_eq!(j["sections"][1]["key"], want[1].0);
+    assert_eq!(j["sections"][1]["mode"], "major");
+}
+
+#[test]
+fn a_song_without_key_change_prints_no_key_line() {
+    let sheet = song_sheet(demo_song(), 7, None);
+    assert!(sheet
+        .sections
+        .iter()
+        .all(|s| s.key == sheet.key && s.mode == sheet.mode));
+    assert!(!sheet.to_text().contains("Key: "));
+}

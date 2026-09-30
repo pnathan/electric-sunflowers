@@ -232,7 +232,7 @@ fn violin_part_view_has_a_multi_bar_rest_and_parses() {
         violin
             .bars
             .iter()
-            .any(|b| matches!(b, notation::full::PartBar::MultiRest { bars } if *bars >= 2)),
+            .any(|b| matches!(b, notation::full::PartBar::MultiRest { bars, .. } if *bars >= 2)),
         "expected at least one multi-bar rest in the violin part"
     );
 

@@ -150,6 +150,8 @@ pub(crate) struct Measure {
     pub from_u: i64,
     /// Index into `Form::sections`.
     pub sec: usize,
+    /// Key signature in force in this bar's section (sharps positive).
+    pub fifths: i32,
     /// Break group: bars of one lyric line, or a run of bars without lyrics
     /// in one section. Each group starts a new system.
     pub chunk: usize,
@@ -196,8 +198,6 @@ pub struct Score {
     pub width: f64,
     pub(crate) meter: Meter,
     pub(crate) tempo: f64,
-    /// Key signature: sharps positive, flats negative.
-    pub(crate) fifths: i32,
     pub(crate) grid: Grid,
     pub(crate) measures: Vec<Measure>,
     /// Whether the song is a duet: gates every duet-only drawing (labels,
@@ -405,6 +405,17 @@ pub(crate) fn key_fifths(tonic: i32, mode: Mode) -> i32 {
     }
 }
 
+/// "A", "F# minor": a key's tonic name, spelled for its mode, and the mode
+/// when it is not major.
+pub(crate) fn key_name((tonic, mode): (Pc, Mode)) -> String {
+    let name = tonic.name(mode.prefers_flats(tonic));
+    if mode == Mode::Major {
+        name.to_string()
+    } else {
+        format!("{name} {mode}")
+    }
+}
+
 /// Alteration of each letter C..B in the key signature.
 pub(crate) fn key_alterations(fifths: i32) -> [i32; 7] {
     let mut alt = [0; 7];
@@ -482,8 +493,8 @@ impl Score {
         let tl = &prep.timeline;
         let lead = &prep.comp.lead;
         let second_notes = &prep.comp.second;
+        let prep_tonic = Pc::new(prep.tonic);
         let fifths = key_fifths(prep.tonic, song.mode);
-        let key_alt = key_alterations(fifths);
         let voice_a = prep.voice;
         let voice_b = prep.voice_b;
         let voice_of = |s: SingerId| {
@@ -564,10 +575,24 @@ impl Score {
             let starts = |x: &compose::form::Sec| {
                 bar < 0 || (bar == x.start_bar as i64 && !(bar == 0 && first_bar < 0))
             };
-            let label = form
+            let sec_key = form
                 .sections
                 .get(sec)
-                .and_then(|x| starts(x).then(|| section_label(x.kind, x.role, x.occ, verses)));
+                .map_or((prep_tonic, song.mode), |x| x.key);
+            let sec_fifths = key_fifths(sec_key.0.get() as i32, sec_key.1);
+            let sec_alt = key_alterations(sec_fifths);
+            // A section whose key differs from the one before it says so.
+            let modulated = sec > 0 && form.sections.get(sec - 1).is_some_and(|p| p.key != sec_key);
+            let label = form.sections.get(sec).and_then(|x| {
+                starts(x).then(|| {
+                    let l = section_label(x.kind, x.role, x.occ, verses);
+                    if modulated {
+                        format!("{l} (Key: {})", key_name(sec_key))
+                    } else {
+                        l
+                    }
+                })
+            });
             let from_u = if bar < 0 {
                 notes.first().map_or(0, |x| x.0)
             } else {
@@ -600,8 +625,8 @@ impl Score {
                 &mut events,
                 lead,
                 if m_clef8 { 12 } else { 0 },
-                fifths,
-                &key_alt,
+                sec_fifths,
+                &sec_alt,
             );
 
             let from_u2 = if bar < 0 {
@@ -619,8 +644,8 @@ impl Score {
                     &mut second,
                     second_notes,
                     if second_clef8 { 12 } else { 0 },
-                    fifths,
-                    &key_alt,
+                    sec_fifths,
+                    &sec_alt,
                 );
             }
 
@@ -632,6 +657,7 @@ impl Score {
                 bar,
                 from_u,
                 sec,
+                fifths: sec_fifths,
                 chunk,
                 label,
                 events,
@@ -672,7 +698,6 @@ impl Score {
             width: DEFAULT_WIDTH,
             meter: song.meter,
             tempo: song.tempo_bpm,
-            fifths,
             grid,
             measures,
             duet: song.is_duet(),

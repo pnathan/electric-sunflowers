@@ -341,9 +341,9 @@ pub fn compose_line(
 
 /// Cache key of a sung line: kind, line index, text, the chords under it as
 /// (root, intervals), one list per bar (so the bar count and the bar
-/// boundaries are part of the key), and the melody singer (design 4.5, so a
+/// boundaries are part of the key), the melody singer (design 4.5, so a
 /// line sung by A and the same line sung by B, whose register centre
-/// differs, compose separately). Equal keys compose to equal lines, and the
+/// differs, compose separately), and the section's key. Equal keys compose to equal lines, and the
 /// key transposes with the song, so the cache hits the same lines in any key.
 type LineKey = (
     SectionKind,
@@ -351,6 +351,8 @@ type LineKey = (
     String,
     Vec<Vec<(u8, &'static [u8])>>,
     SingerId,
+    // The section's key: a chorus repeated in a new key composes anew.
+    (u8, Mode),
 );
 
 fn line_key(form: &Form, li_idx: usize, kind: SectionKind) -> LineKey {
@@ -379,7 +381,15 @@ fn line_key(form: &Form, li_idx: usize, kind: SectionKind) -> LineKey {
     } else {
         l.text.clone()
     };
-    (kind, l.li, text, chords, l.part.melody())
+    let (tonic, mode) = form.sections[l.sec].key;
+    (
+        kind,
+        l.li,
+        text,
+        chords,
+        l.part.melody(),
+        (tonic.get(), mode),
+    )
 }
 
 /// Grace notes: on a long (>= 1.5 beats) last note, with probability 0.55,
@@ -422,19 +432,20 @@ pub fn compose_melody(
 
     {
         let form_r: &Form = form;
-        let h = Harmony {
-            form: form_r,
-            tl,
-            tonic: Pc::new(tonic),
-            mode: song.mode,
-            register: t,
-        };
         for li_idx in 0..form_r.lines.len() {
             let line = &form_r.lines[li_idx];
             let sec = &form_r.sections[line.sec];
             let (kind, li, nl) = (sec.kind, line.li, sec.lines.len());
             let line_beat = (line.start_bar as i32 * bpb) as f64;
             let key = line_key(form_r, li_idx, kind);
+            let (sec_tonic, sec_mode) = sec.key;
+            let h = Harmony {
+                form: form_r,
+                tl,
+                tonic: sec_tonic,
+                mode: sec_mode,
+                register: t,
+            };
             let singer = line.part.melody();
 
             if !cache.contains_key(&key) {
@@ -551,7 +562,7 @@ pub fn compose_melody(
         }
     }
 
-    let inst = compose_instrumental(song, form, tl, seed, tonic, t);
+    let inst = compose_instrumental(form, tl, seed, t);
     Comp {
         lead,
         inst,
@@ -564,22 +575,8 @@ pub fn compose_melody(
 /// Instrumental lead lines for sections without lyrics: one line per two
 /// written bars, 4-6 notes (times 1.5 when stretched), echoing the chorus
 /// lines; the last chunk closes open, or on the tonic in an outro.
-fn compose_instrumental(
-    song: &Song,
-    form: &Form,
-    tl: &Timeline,
-    seed: u64,
-    tonic: i32,
-    t: i32,
-) -> Vec<InstNote> {
+fn compose_instrumental(form: &Form, tl: &Timeline, seed: u64, t: i32) -> Vec<InstNote> {
     let bpb = form.bpb();
-    let h = Harmony {
-        form,
-        tl,
-        tonic: Pc::new(tonic),
-        mode: song.mode,
-        register: t,
-    };
     let chorus = form
         .sections
         .iter()
@@ -591,6 +588,13 @@ fn compose_instrumental(
         if s.is_sung() || s.n_bars < cb {
             continue;
         }
+        let h = Harmony {
+            form,
+            tl,
+            tonic: s.key.0,
+            mode: s.key.1,
+            register: t,
+        };
         let chunks = s.n_bars / cb;
         for k in 0..chunks {
             let mut rr = Rng::event(seed, INST_RHYTHM, event_key(si, k, 0));
@@ -757,6 +761,79 @@ mod tests {
         let s = song(json!({"schema_version":2,"sections":[
             {"type":"verse","lines":[{"syl":"*one *two three *four","chords":["C G"]}]},
             {"type":"verse","lines":[{"syl":"*one~ *two three *four","chords":["C G"]}]}
+        ]}));
+        let form = crate::form::build_form(&s, 0);
+        assert_ne!(
+            line_key(&form, 0, SectionKind::Verse),
+            line_key(&form, 1, SectionKind::Verse)
+        );
+    }
+
+    /// A key change moves the chorus to D major (chords written in D) and a
+    /// copied verse to E major (chords moved by the section's key).
+    fn modulating_song() -> Song {
+        song(json!({"schema_version":2,"sections":[
+            {"type":"verse","lines":[
+                {"syl":"one *two three *four","chords":["C G"]},
+                {"syl":"*five *six *seven *eight","chords":["F C"]}]},
+            {"type":"chorus","key":"D","lines":[
+                {"syl":"*five *six *seven *eight","chords":["D A"]},
+                {"syl":"one *two three *four","chords":["G D"]}]},
+            {"type":"verse","same":true,"key":"E"}
+        ]}))
+    }
+
+    #[test]
+    fn a_section_in_a_new_key_uses_its_scale() {
+        let s = modulating_song();
+        assert!(s.modulates());
+        let mut sharp_fourth = 0;
+        for seed in 0..12u64 {
+            let mut form = crate::form::build_form(&s, 0);
+            let keys: Vec<(u8, Mode)> = form
+                .sections
+                .iter()
+                .map(|x| (x.key.0.get(), x.key.1))
+                .collect();
+            assert_eq!(
+                keys,
+                vec![(0, Mode::Major), (2, Mode::Major), (4, Mode::Major)]
+            );
+            let tl = Timeline::new(&form, s.tempo_bpm);
+            let comp = compose_melody(&s, &mut form, &tl, seed, Voice::Baritone, None);
+            for n in &comp.lead {
+                let sec = &form.sections[form.lines[n.line_idx].sec];
+                let scale = local_scale(sec.key.0, sec.key.1, tl.chord_at(&form, n.beat + 0.01));
+                assert!(
+                    scale.contains(Pc::new(n.midi)),
+                    "seed {seed}: note {} in a {:?} section is off its scale",
+                    n.midi,
+                    sec.key
+                );
+                // F# is the chorus's own note: in D major only.
+                if sec.key.0.get() == 2 && n.midi.rem_euclid(12) == 6 {
+                    sharp_fourth += 1;
+                }
+            }
+        }
+        assert!(sharp_fourth > 0, "the D major chorus never sings F#");
+    }
+
+    #[test]
+    fn a_song_without_key_change_reads_one_key() {
+        let s = song(json!({}));
+        assert!(!s.modulates());
+        let form = crate::form::build_form(&s, 3);
+        assert!(form.sections.iter().all(|x| x.key == form.sections[0].key));
+        assert_eq!(form.sections[0].key, (Pc::new(3), Mode::Major));
+    }
+
+    #[test]
+    fn line_key_separates_keys() {
+        // The same text and chord symbols in two keys compose apart.
+        let s = song(json!({"schema_version":2,"sections":[
+            {"type":"verse","lines":[{"syl":"one *two three *four","chords":["C G"]}]},
+            {"type":"verse","key":"D","lines":[{"syl":"one *two three *four","chords":["C G"]}]}
         ]}));
         let form = crate::form::build_form(&s, 0);
         assert_ne!(

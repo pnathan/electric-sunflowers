@@ -202,8 +202,6 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
             &lifted_a,
             form,
             &p.timeline,
-            song,
-            p.tonic,
             p.voice != Voice::Soprano,
         ));
     }
@@ -218,8 +216,6 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
                 &lifted_b,
                 form,
                 &p.timeline,
-                song,
-                p.tonic,
                 vb != Voice::Soprano,
             ));
         }

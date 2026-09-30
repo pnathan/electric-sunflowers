@@ -79,7 +79,6 @@ impl Sheet {
                     let p = crate::full::layout::layout_part(
                         &ps,
                         full.meter,
-                        full.fifths,
                         &full.title,
                         width.max(300.0),
                     );
