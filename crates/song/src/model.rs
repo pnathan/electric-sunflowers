@@ -59,8 +59,11 @@ impl Mode {
 /// repair). See `song::schema` and `wire`.
 pub const SCHEMA_V1: u32 = 1;
 pub const SCHEMA_V2: u32 = 2;
+/// Version 3 adds tunes: `tune` on lines and sections, `tunes` on the song
+/// (`song::tune`).
+pub const SCHEMA_V3: u32 = 3;
 /// The newest version; what `schema::json_schema` describes and Claude writes.
-pub const SCHEMA_LATEST: u32 = SCHEMA_V2;
+pub const SCHEMA_LATEST: u32 = SCHEMA_V3;
 
 /// The most notes one syllable may carry (a melisma), including the first.
 pub const MELISMA_MAX_NOTES: u8 = 4;
@@ -518,6 +521,10 @@ pub struct Line {
     /// Which singer(s) carry this line. `Part::default()` (`Solo(A)`) outside
     /// a duet, always.
     pub part: Part,
+    /// Schema 3: the melody the writer sketched, one entry per sung note
+    /// (melisma notes included); `None` for no sketch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tune: Option<Vec<crate::tune::TuneNote>>,
 }
 
 impl Line {
@@ -760,6 +767,7 @@ mod tests {
             syllables: vec![syl("hel", 0), syl("lo", 0), syl("world", 1)],
             bars: vec![],
             part: Part::default(),
+            tune: None,
         };
         assert_eq!(l.words().collect::<Vec<_>>(), vec!["hello", "world"]);
         assert_eq!(l.text(), "hel lo world");

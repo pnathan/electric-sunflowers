@@ -14,6 +14,11 @@
 //! "Emotion and Meaning in Music", 1956), and penalise wobbles (a step and
 //! straight back) and three repeated notes.
 //!
+//! Hints (schema 3 tunes): a note may carry a hinted MIDI pitch. The hinted
+//! pitch is always a candidate, even outside the scale, and every other
+//! candidate pays `PitchWeights::hint_miss`, so a line whose notes are all
+//! hinted comes out as written.
+//!
 //! Variety: perturb-and-MAP (Papandreou and Yuille, ICCV 2011); uniform
 //! noise of width `PitchStyle::noise` on every emission, then the exact
 //! MAP path. All arithmetic is relative to the register pitch, so the
@@ -105,6 +110,9 @@ pub struct PitchWeights {
     /// repeated pitch.
     pub melisma_leap: f64,
     pub melisma_repeat: f64,
+    /// A candidate other than the hinted pitch of its note; far larger than
+    /// any other score, so a hint wins over every other consideration.
+    pub hint_miss: f64,
 }
 
 /// Most scale steps between two notes of one melisma.
@@ -138,6 +146,7 @@ pub const PITCH_WEIGHTS: PitchWeights = PitchWeights {
     repeat3: -0.5,
     melisma_leap: -6.0,
     melisma_repeat: -1.2,
+    hint_miss: -60.0,
 };
 
 /// Candidates per note: the window size.
@@ -179,6 +188,54 @@ pub struct PitchProblem<'a> {
     /// `MELISMA_STEPS` scale steps from note `i - 1`). Empty, or shorter
     /// than the phrase: the missing notes are not continuations.
     pub conts: &'a [bool],
+    /// `hints[i]`: the MIDI pitch the writer asked for note `i`. Empty, or
+    /// shorter than the phrase: the missing notes are free. A hint outside
+    /// the candidate window is moved by whole octaves into it (`fit_hints`
+    /// does it for a whole line first).
+    pub hints: &'a [Option<i32>],
+}
+
+/// Lowest and highest pitch of the candidate window around `register`.
+pub fn window(register: i32) -> (i32, i32) {
+    (
+        register - PITCH_WEIGHTS.below,
+        register - PITCH_WEIGHTS.below + W as i32 - 1,
+    )
+}
+
+/// Moves hinted pitches into the candidate window around `register` by
+/// whole octaves. The whole line moves together by the smallest number of
+/// octaves that fits every hint (the tune keeps its shape); if its span is
+/// wider than the window, each note moves alone. Returns the new hints and
+/// the octaves moved (the line's shift, or the sum of the notes' shifts).
+pub fn fit_hints(hints: &[Option<i32>], register: i32) -> (Vec<Option<i32>>, i32) {
+    let (wlo, whi) = window(register);
+    let some = || hints.iter().flatten().copied();
+    let (Some(lo), Some(hi)) = (some().min(), some().max()) else {
+        return (hints.to_vec(), 0);
+    };
+    for k in [0, -1, 1, -2, 2, -3, 3, -4, 4] {
+        if lo + 12 * k >= wlo && hi + 12 * k <= whi {
+            let out = hints.iter().map(|h| h.map(|m| m + 12 * k)).collect();
+            return (out, k);
+        }
+    }
+    let mut total = 0;
+    let out = hints
+        .iter()
+        .map(|h| {
+            h.map(|m| {
+                let k = if (wlo..=whi).contains(&m) {
+                    0
+                } else {
+                    (wlo - m).div_euclid(12) + i32::from((wlo - m).rem_euclid(12) != 0)
+                };
+                total += k;
+                m + 12 * k
+            })
+        })
+        .collect();
+    (out, total)
 }
 
 impl PitchProblem<'_> {
@@ -332,14 +389,27 @@ pub fn pitch_line_with(p: &PitchProblem, w: &PitchWeights, rng: &mut Rng) -> Vec
     // A tonic cadence over a chord that holds the tonic ends on the tonic.
     let tonic_only = p.cadence == Cadence::Tonic && p.chord_pcs[n - 1].contains(p.tonic);
     for i in 0..n {
+        // A hint outside the window (`fit_hints` moves whole lines first)
+        // folds into it alone.
+        let hint = p.hints.get(i).copied().flatten().map(|h| {
+            if (lo..lo + W as i32).contains(&h) {
+                h
+            } else {
+                lo + (h - lo).rem_euclid(12)
+            }
+        });
         let mut k = 0;
         for m in lo..lo + W as i32 {
-            if i + 1 == n && tonic_only && Pc::new(m) != p.tonic {
+            if hint.is_none() && i + 1 == n && tonic_only && Pc::new(m) != p.tonic {
                 continue;
             }
-            if p.scales[i].contains(Pc::new(m)) {
+            if p.scales[i].contains(Pc::new(m)) || hint == Some(m) {
                 cand[i * W + k] = m;
-                em[i * W + k] = emission(p, i, m, w) + (rng.uniform() - 0.5) * p.style.noise;
+                let mut e = emission(p, i, m, w) + (rng.uniform() - 0.5) * p.style.noise;
+                if hint.is_some_and(|h| h != m) {
+                    e += w.hint_miss;
+                }
+                em[i * W + k] = e;
                 k += 1;
             }
         }
@@ -478,6 +548,7 @@ mod tests {
             style: PitchStyle::default(),
             hook: 0,
             conts: &[],
+            hints: &[],
         }
     }
 
@@ -507,6 +578,57 @@ mod tests {
                 .iter()
                 .all(|&m| scales[0].contains(Pc::new(m)) && (55..=74).contains(&m)));
         }
+    }
+
+    #[test]
+    fn a_fully_hinted_line_comes_out_as_hinted() {
+        let scales = [song::Mode::Major.scale(); 6];
+        let chords = [PcSet::from_intervals(Pc::C, &[0, 4, 7]); 6];
+        let on = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0];
+        let du = [1.0; 6];
+        let wt = [1.0, 0.5, 0.8, 0.5, 1.0, 1.0];
+        // Includes a chromatic note (61) and an ending off the tonic.
+        let want = [67, 64, 61, 69, 72, 65];
+        let hints: Vec<Option<i32>> = want.iter().map(|&m| Some(m)).collect();
+        for k in 0..50 {
+            let mut p = problem(&on, &du, &wt, &chords, &scales, 60, Cadence::Tonic);
+            p.hints = &hints;
+            let out = pitch_line(&p, &mut Rng::event(5, tag("t"), k));
+            assert_eq!(out, want, "seed {k}");
+        }
+    }
+
+    #[test]
+    fn a_partly_hinted_line_keeps_its_hints() {
+        let scales = [song::Mode::Major.scale(); 5];
+        let chords = [PcSet::from_intervals(Pc::C, &[0, 4, 7]); 5];
+        let on = [0.0, 1.0, 2.0, 3.0, 4.0];
+        let du = [1.0; 5];
+        let wt = [1.0, 0.5, 0.8, 0.5, 1.0];
+        let hints = [Some(62), None, None, Some(71), None];
+        for k in 0..30 {
+            let mut p = problem(&on, &du, &wt, &chords, &scales, 60, Cadence::Open);
+            p.hints = &hints;
+            let out = pitch_line(&p, &mut Rng::event(6, tag("t"), k));
+            assert_eq!((out[0], out[3]), (62, 71), "{out:?}");
+            assert!(out[1..3].iter().all(|&m| scales[0].contains(Pc::new(m))));
+        }
+    }
+
+    #[test]
+    fn hints_move_by_octaves_into_the_window() {
+        // Window around 60 is 55..=74.
+        let h = [Some(57), Some(52), None, Some(62)];
+        let (out, k) = fit_hints(&h, 60);
+        assert_eq!((out, k), (vec![Some(69), Some(64), None, Some(74)], 1));
+        // A span no whole-octave shift fits: notes move alone.
+        let (out, k) = fit_hints(&[Some(67), Some(52)], 60);
+        assert_eq!((out, k), (vec![Some(67), Some(64)], 1));
+        let (out, k) = fit_hints(&[Some(60), Some(64)], 60);
+        assert_eq!((out, k), (vec![Some(60), Some(64)], 0));
+        // Too wide for the window: each note moves alone.
+        let (out, k) = fit_hints(&[Some(40), Some(80)], 60);
+        assert_eq!((out, k), (vec![Some(64), Some(56)], 0));
     }
 
     #[test]

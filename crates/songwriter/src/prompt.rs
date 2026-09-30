@@ -143,6 +143,10 @@ CHOIR, MELISMA, KEY AND TIMING (all optional; use each only where the song wants
 - A change of key lifts a late chorus: give a section "key":"<tonic>" (for example "A" or "E minor"); its chords are written in that key, and a {{"type":"chorus","same":true,"key":"A"}} repeats the earlier chorus moved to it. At most two changes, usually a step or a third up.
 - "rubato":"steady|light|free" at top level (a section may set its own): steady for dances and anything with a pulse, light for ballads and airs, free for a slow air or a hymn verse.
 
+TUNES (optional; schema 3)
+- You may sketch the tune of a line in movable-do solfege, with do the tonic of the section's key: "tune":"d d s, s" on a line, one token per sung note (a melisma counts all its notes; if the count is wrong the tune is dropped). Tokens: d r m f s l t; raised di ri fi si li; lowered ra me se le te; a trailing "," drops an octave (s,), a trailing "'" lifts one (d'); "." leaves that note to the engine; "-" after a token holds it one more beat (a hint only). Plain d is the tonic nearest the singer's middle range; the mode does not change the letters, so write me for a minor third. Example: "the *riv-er *keeps its *name," has six notes, so "s, d m m r d" is one token each.
+- Give a tune for at least every chorus line; verses may go without. When verses share a melody (old tune, new words), put the lines once in top-level "tunes":[{{"name":"V","lines":["<tune line>","<tune line>"]}}] and set "tune":"V" on each verse section: line i of the section uses tune line i, wrapping. A line's own "tune" wins.
+
 EMOTIONAL REGISTER
 - Match the feeling the prompt asks for exactly. A happy prompt gets a happy song, a funny prompt a funny one; do not darken it, do not add a twist of loss.
 - If the prompt leaves the feeling open, write it as: {reg}.
@@ -178,13 +182,14 @@ ENCODING (strict; the singer is a machine that reads this literally)
 
 When the song is a duet, add "duet" at top level for singer B: {{"voice":"<baritone|tenor|alto|soprano>","phrasing":{{"delivery":"<...>","endings":"<...>"}}}} (its "phrasing" is optional; omitted, it follows the song's). Then mark any section or line that is not "A" throughout with "sing":"A|B|both" (default "A"), the shared line's melody with "lead":"A|B" (default "A") and the other singer's interval with "blend":"harmony|octave" (default "harmony"), for example a shared chorus: {{"type":"chorus","sing":"both","lead":"B","blend":"harmony","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord>","<chord>"]}}]}}.
 
-Reply with ONLY one JSON object, no prose, no code fence, in exactly this form ("schema_version" is always 2):
-{{"schema_version":2,"title":"<title>","note":"<liner note>","key":"<tonic, e.g. A or Eb>","mode":"<major|minor|dorian|mixolydian>","meter":"<4/4|3/4|6/8>","tempo":<bpm>,"guitar":"<strum|fingerpick|travis|arpeggio>","voice":"<baritone|tenor|alto|soprano>","phrasing":{{"delivery":"<legato|flowing|parlando|detached>","endings":"<held|released|clipped>"}},
+Reply with ONLY one JSON object, no prose, no code fence, in exactly this form ("schema_version" is always 3):
+{{"schema_version":3,"title":"<title>","note":"<liner note>","key":"<tonic, e.g. A or Eb>","mode":"<major|minor|dorian|mixolydian>","meter":"<4/4|3/4|6/8>","tempo":<bpm>,"guitar":"<strum|fingerpick|travis|arpeggio>","voice":"<baritone|tenor|alto|soprano>","phrasing":{{"delivery":"<legato|flowing|parlando|detached>","endings":"<held|released|clipped>"}},
 "band":{{"drums":"<none|brushes|soft|full>","bass":<bool>,"harmonyGuitar":<bool>,"harp":<bool>,"violin":<bool>,"choir":<bool>,"harmonies":<bool>,"doubles":<bool>}},
+"tunes":[{{"name":"<name>","lines":["<solfege>","<solfege>"]}}],
 "sections":[
 {{"type":"intro","chords":["<chord>","<chord>","<chord>","<chord>"]}},
-{{"type":"verse","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord>","<chord>"]}}]}},
-{{"type":"chorus","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord> <chord>","<chord>"]}}]}},
+{{"type":"verse","tune":"<tune name, if shared>","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord>","<chord>"]}}]}},
+{{"type":"chorus","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord> <chord>","<chord>"],"tune":"<solfege, one token per note>"}}]}},
 {{"type":"chorus","same":true}},
 {{"type":"outro","chords":["<chord>","<chord>","<chord>"]}}]}}
 Angle-bracketed items are placeholders; replace every one with a real value (numbers and booleans unquoted)."#,
