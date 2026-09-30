@@ -65,6 +65,8 @@ use std::fmt;
 
 pub const TITLE_MAX_CHARS: usize = 120;
 pub const NOTE_MAX_CHARS: usize = 400;
+/// The writer's arranging note (schema 3), characters.
+pub const ARRANGING_MAX_CHARS: usize = 1500;
 pub const LINE_MAX_BARS: usize = 4;
 pub const INSTRUMENTAL_MAX_BARS: usize = 8;
 pub const BAR_MAX_CHORDS: usize = 2;
@@ -110,6 +112,9 @@ pub struct WireSong {
     /// Schema 2: the song's rubato.
     #[serde(deserialize_with = "loose_str")]
     pub rubato: Option<String>,
+    /// Schema 3: the writer's free-text note to the arranger.
+    #[serde(deserialize_with = "loose_str")]
+    pub arranging: Option<String>,
     /// Schema 3: named tunes, each a list of tune lines.
     #[serde(deserialize_with = "loose_tunes")]
     pub tunes: Option<BTreeMap<String, Vec<String>>>,
@@ -1417,6 +1422,7 @@ fn uses_v2(w: &WireSong) -> bool {
 /// Whether the document uses any version-3 field.
 fn uses_v3(w: &WireSong) -> bool {
     w.tunes.is_some()
+        || w.arranging.is_some()
         || w.sections.iter().flatten().any(|s| {
             s.tune.is_some()
                 || s.energy.is_some()
@@ -1453,6 +1459,14 @@ fn resolve_version(w: &mut WireSong, rep: &mut Vec<Repair>) -> Result<u32, SongE
         None => SCHEMA_V1,
     };
     if version < SCHEMA_V3 {
+        if w.arranging.take().is_some() {
+            rep.push(Repair::FieldNeedsSchema {
+                field: "arranging",
+                needs: SCHEMA_V3,
+                section: None,
+                line: None,
+            });
+        }
         if w.tunes.take().is_some() {
             rep.push(Repair::FieldNeedsSchema {
                 field: "tunes",
@@ -1618,6 +1632,19 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             String::new()
         }
     };
+
+    let arranging = w
+        .arranging
+        .take()
+        .map(|a| {
+            truncate_chars(
+                a.trim().to_string(),
+                ARRANGING_MAX_CHARS,
+                "arranging",
+                &mut rep,
+            )
+        })
+        .filter(|a| !a.is_empty());
 
     let key_text = w.key.unwrap_or_default();
     let key_text = key_text.trim();
@@ -2028,6 +2055,7 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         phrasing,
         duet,
         rubato,
+        arranging,
         sections,
         chords,
     };
@@ -2279,6 +2307,9 @@ pub fn to_wire(song: &Song) -> Value {
         if song.rubato != Rubato::Steady {
             o.insert("rubato".into(), Value::String(song.rubato.as_str().into()));
         }
+    }
+    if let Some(a) = &song.arranging {
+        o.insert("arranging".into(), Value::String(a.clone()));
     }
     if let Some(p) = song.phrasing {
         o.insert("phrasing".into(), phrasing_to_wire(p));

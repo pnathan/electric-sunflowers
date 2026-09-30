@@ -518,3 +518,56 @@ fn energy_needs_schema_three() {
     assert_eq!(s.schema_version, 3);
     assert!(r.contains(&Repair::SchemaVersionInferred(3)));
 }
+
+// -------------------------------------------------------------- arranging
+
+fn with_arranging(text: Value) -> Value {
+    song(
+        true,
+        json!([verse(json!([{"syl": "*one *two", "chords": ["C"]}]))]),
+        json!({ "arranging": text }),
+    )
+}
+
+#[test]
+fn the_arranging_note_is_read_trimmed_and_round_trips() {
+    let (s, r) = read(&with_arranging(json!("  Kick on every beat.  ")));
+    assert!(r.is_empty(), "{r:?}");
+    assert_eq!(s.arranging.as_deref(), Some("Kick on every beat."));
+    let (back, r) = read(&to_wire(&s));
+    assert!(r.is_empty(), "{r:?}");
+    assert_eq!(back, s);
+    let (s, _) = read(&with_arranging(json!("   ")));
+    assert!(s.arranging.is_none());
+}
+
+#[test]
+fn a_long_arranging_note_is_cut() {
+    let (s, r) = read(&with_arranging(json!("x".repeat(2000))));
+    assert_eq!(s.arranging.as_ref().map(|a| a.chars().count()), Some(1500));
+    assert!(r.contains(&Repair::TruncatedField {
+        field: "arranging",
+        chars: 1500
+    }));
+}
+
+#[test]
+fn arranging_needs_schema_three() {
+    let mut v = with_arranging(json!("Drive it."));
+    v["schema_version"] = json!(2);
+    let (s, r) = read(&v);
+    assert!(s.arranging.is_none());
+    assert!(r.iter().any(|x| matches!(
+        x,
+        Repair::FieldNeedsSchema {
+            field: "arranging",
+            needs: 3,
+            ..
+        }
+    )));
+    v.as_object_mut().unwrap().remove("schema_version");
+    let (s, r) = read(&v);
+    assert_eq!(s.schema_version, 3);
+    assert!(r.contains(&Repair::SchemaVersionInferred(3)));
+    assert!(s.arranging.is_some());
+}

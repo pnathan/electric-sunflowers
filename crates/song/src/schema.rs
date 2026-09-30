@@ -159,6 +159,7 @@ pub fn json_schema_v3() -> Value {
     let mut v = build(SCHEMA_V3);
     v["properties"]["schema_version"] = json!({"type": "integer", "enum": [SCHEMA_V3]});
     v["properties"]["rubato"] = json!({"type": "string", "enum": Rubato::NAMES});
+    v["properties"]["arranging"] = json!({"type": "string", "description": "A short note to the arranger in plain words: the feel and groove, what each instrument should do, where the energy peaks. No fixed vocabulary."});
     v["properties"]["tunes"] = json!({
         "type": "array",
         "description": "Named tunes: for verses that share a melody, each has tune lines in the notation of a line's tune; for instrumental sections, a break tune (solfege with lengths; the lines are joined). A section names one with its tune field.",
