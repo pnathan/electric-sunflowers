@@ -12,7 +12,7 @@
 
 use compose::form::{Form, Sec};
 use compose::timeline::Timeline;
-use song::{Pc, PcSet};
+use song::{Pc, PcSet, SectionKind};
 
 /// MIDI range searched per part, low to high: bass, tenor, alto, soprano.
 pub const CHOIR_RANGE: [(u8, u8); 4] = [(40, 55), (48, 62), (55, 69), (60, 74)];
@@ -50,6 +50,12 @@ impl Cands {
     fn as_slice(&self) -> &[i32] {
         &self.m[..self.n]
     }
+}
+
+/// Whether the choir sings in `s`: repeat lifts, bridges and outros. The
+/// single copy; the audio (`vocals`) and the full score both call it.
+pub fn sings_here(s: &Sec) -> bool {
+    s.is_repeat_lift() || matches!(s.kind, SectionKind::Bridge | SectionKind::Outro)
 }
 
 /// Voicings for every segment whose section passes `filter`. A segment with

@@ -436,10 +436,7 @@ fn raw_notes_of(
             };
             let form = &prep.form;
             let tl = &prep.timeline;
-            let sings = |s: &compose::form::Sec| {
-                s.is_repeat_lift() || matches!(s.kind, SectionKind::Bridge | SectionKind::Outro)
-            };
-            arrange::choir::voicings(form, tl, sings)
+            arrange::choir::voicings(form, tl, arrange::choir::sings_here)
                 .iter()
                 .map(|v| {
                     let sg = &tl.segs[v.seg];
@@ -698,8 +695,16 @@ fn build_cells(
     fifths: i32,
     key_alt: &[i32; 7],
     written: i32,
+    drums: bool,
 ) -> Vec<Cell> {
-    let max_voice = raw.iter().map(|r| r.voice).max().unwrap_or(0);
+    // The drum staff always carries two voices (hands up, feet down), even
+    // when the kit plays no kick.
+    let max_voice = raw
+        .iter()
+        .map(|r| r.voice)
+        .max()
+        .unwrap_or(0)
+        .max(usize::from(drums));
     let per_voice: Vec<Vec<Vec<Ev>>> = (0..=max_voice)
         .map(|v| {
             let notes: Vec<&RawNote> = raw.iter().filter(|r| r.voice == v).collect();
@@ -842,6 +847,7 @@ impl FullScore {
                 if pitched { fifths } else { 0 },
                 &key_alt,
                 written,
+                !pitched,
             );
             all_cells.push(cells);
             staves.push(StaffDef {

@@ -24,7 +24,6 @@
 //!   glide, no scoop, no breaths. Pan: -0.5, -0.2, 0.25, 0.55 per part,
 //!   singers spread 0.35 apart, within +-0.9.
 
-use compose::form::Sec;
 use compose::melody::LeadNote;
 use compose::prepare::{harmony_line, vocal_notes, Prepared, VocalNote as ComposedNote};
 use sfcore::random::{tag, Rng, Tag};
@@ -278,9 +277,7 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
 pub fn choir_singers(p: &Prepared, seed: u64) -> [Vec<Singer>; 4] {
     let form = &p.form;
     let tl = &p.timeline;
-    let sings =
-        |s: &Sec| s.is_repeat_lift() || matches!(s.kind, SectionKind::Bridge | SectionKind::Outro);
-    let vs = choir::voicings(form, tl, sings);
+    let vs = choir::voicings(form, tl, choir::sings_here);
     let mut parts: [Vec<Singer>; 4] = Default::default();
     if vs.is_empty() {
         return parts;

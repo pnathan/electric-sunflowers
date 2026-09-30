@@ -242,6 +242,34 @@ pub(crate) fn slap_sources<'a>(
     out
 }
 
+/// One block of a route's dry (main bus) contribution: `x` ducked by `dk`,
+/// panned by `a`/`b`, added into `l`/`r`. The single copy of this loop.
+fn route_dry(l: &mut [f32], r: &mut [f32], x: &[f32], dk: Option<&[f32]>, a: f32, b: f32) {
+    for i in 0..x.len() {
+        let v = x[i] * dk.map_or(1.0, |g| g[i]);
+        l[i] += v * a;
+        r[i] += v * b;
+    }
+}
+
+/// One block of a route's send-bus contribution (see `route_dry`).
+fn route_send(l: &mut [f32], r: &mut [f32], x: &[f32], dk: Option<&[f32]>, c: f32, d: f32) {
+    for i in 0..x.len() {
+        let v = x[i] * dk.map_or(1.0, |g| g[i]);
+        l[i] += v * c;
+        r[i] += v * d;
+    }
+}
+
+/// One block of a slapback: unpanned, unducked, added into `l` and `r`.
+fn slap_add(l: &mut [f32], r: &mut [f32], x: &[f32], gain: f32) {
+    for (i, &v) in x.iter().enumerate() {
+        let v = v * gain;
+        l[i] += v;
+        r[i] += v;
+    }
+}
+
 /// Adds the main-bus-only (dry, no reverb) contribution of `routes`'
 /// entries for `id` into `out`, ducked by `duck` where the route is ducked.
 pub(crate) fn add_track_dry(out: &mut Stereo, routes: &[Route], id: TrackId, duck: Option<&[f32]>) {
@@ -250,12 +278,14 @@ pub(crate) fn add_track_dry(out: &mut Stereo, routes: &[Route], id: TrackId, duc
         let [a, b, _, _] = rt.g;
         for (at, x) in rt.src.iter_blocks() {
             let n = x.len();
-            let d = dk.map(|g| &g[at..at + n]);
-            for i in 0..n {
-                let v = x[i] * d.map_or(1.0, |g| g[i]);
-                out.l[at + i] += v * a;
-                out.r[at + i] += v * b;
-            }
+            route_dry(
+                &mut out.l[at..at + n],
+                &mut out.r[at..at + n],
+                x,
+                dk.map(|g| &g[at..at + n]),
+                a,
+                b,
+            );
         }
     }
 }
@@ -264,11 +294,8 @@ pub(crate) fn add_track_dry(out: &mut Stereo, routes: &[Route], id: TrackId, duc
 pub(crate) fn add_track_slap(out: &mut Stereo, slaps: &[SlapSrc], id: TrackId) {
     for sp in slaps.iter().filter(|s| s.id == id) {
         for (at, x) in sp.src.iter_blocks() {
-            for (i, &v) in x.iter().enumerate() {
-                let v = v * sp.gain;
-                out.l[at + i] += v;
-                out.r[at + i] += v;
-            }
+            let n = x.len();
+            slap_add(&mut out.l[at..at + n], &mut out.r[at..at + n], x, sp.gain);
         }
     }
 }
@@ -280,12 +307,14 @@ pub(crate) fn add_send_bus(sl: &mut [f32], sr: &mut [f32], routes: &[Route], duc
         let [_, _, c, d] = rt.g;
         for (at, x) in rt.src.iter_blocks() {
             let n = x.len();
-            let dg = dk.map(|g| &g[at..at + n]);
-            for i in 0..n {
-                let v = x[i] * dg.map_or(1.0, |g| g[i]);
-                sl[at + i] += v * c;
-                sr[at + i] += v * d;
-            }
+            route_send(
+                &mut sl[at..at + n],
+                &mut sr[at..at + n],
+                x,
+                dk.map(|g| &g[at..at + n]),
+                c,
+                d,
+            );
         }
     }
 }
@@ -294,11 +323,8 @@ pub(crate) fn add_send_bus(sl: &mut [f32], sr: &mut [f32], routes: &[Route], duc
 pub(crate) fn add_send_slap(sl: &mut [f32], sr: &mut [f32], slaps: &[SlapSrc]) {
     for sp in slaps {
         for (at, x) in sp.src.iter_blocks() {
-            for (i, &v) in x.iter().enumerate() {
-                let v = v * sp.gain;
-                sl[at + i] += v;
-                sr[at + i] += v;
-            }
+            let n = x.len();
+            slap_add(&mut sl[at..at + n], &mut sr[at..at + n], x, sp.gain);
         }
     }
 }
@@ -342,23 +368,13 @@ pub(crate) fn premix_rms(
             let Some(x) = rt.src.span(s, n) else { continue };
             let [a, b, c, d] = rt.g;
             let dk = duck.as_deref().filter(|_| rt.ducked).map(|g| &g[s..s + n]);
-            for i in 0..n {
-                let v = x[i] * dk.map_or(1.0, |g| g[i]);
-                ml[i] += v * a;
-                mr[i] += v * b;
-                sl[i] += v * c;
-                sr[i] += v * d;
-            }
+            route_dry(ml, mr, x, dk, a, b);
+            route_send(sl, sr, x, dk, c, d);
         }
         for sp in &slaps {
             let Some(x) = sp.src.span(s, n) else { continue };
-            for i in 0..n {
-                let v = x[i] * sp.gain;
-                ml[i] += v;
-                mr[i] += v;
-                sl[i] += v;
-                sr[i] += v;
-            }
+            slap_add(ml, mr, x, sp.gain);
+            slap_add(sl, sr, x, sp.gain);
         }
         fdn.process_block([&*sl, &*sr], [&mut *ml, &mut *mr], WET);
         out.l[s..s + n].copy_from_slice(ml);
