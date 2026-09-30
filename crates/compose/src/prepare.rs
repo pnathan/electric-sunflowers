@@ -159,7 +159,7 @@ fn compose_for_voice(
 /// Note times in seconds: a phrase-final note ends `PHRASE_END_GAP` early;
 /// a note that would reach within 10 ms of the next ends `BREATH_GAP`
 /// (phrase end) or `LEGATO_GAP` before it, but lasts at least `MIN_NOTE`.
-fn time_notes(lead: &mut [LeadNote], tl: &Timeline) {
+pub fn time_notes(lead: &mut [LeadNote], tl: &Timeline) {
     for n in lead.iter_mut() {
         n.t0 = tl.to_time(n.beat);
         n.t1 = tl.to_time(n.beat + n.dur) - if n.phrase_end { PHRASE_END_GAP } else { 0.0 };
