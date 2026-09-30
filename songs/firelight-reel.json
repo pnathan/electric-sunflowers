@@ -1,4 +1,5 @@
 {
+ "schema_version": 3,
  "title": "Firelight Reel",
  "note": "A tavern reel on Irish session lineage: fiddle, stamping feet, and a chorus for the whole room.",
  "key": "D",
@@ -89,7 +90,8 @@
       "D"
      ]
     }
-   ]
+   ],
+   "tune": "C"
   },
   {
    "type": "interlude",
@@ -176,7 +178,8 @@
       "D"
      ]
     }
-   ]
+   ],
+   "tune": "C"
   },
   {
    "type": "interlude",
@@ -222,7 +225,8 @@
       "D"
      ]
     }
-   ]
+   ],
+   "tune": "C"
   },
   {
    "type": "tag",
@@ -233,9 +237,18 @@
      "chords": [
       "D",
       "D"
-     ]
+     ],
+     "tune": "s, te, te, r m r d"
     }
    ]
   }
- ]
+ ],
+ "tunes": {
+  "C": [
+   "s, d d m s m r r te, d",
+   "s, d m s f m r r m",
+   "l l f l s f m",
+   "s, te, te, r f r te, d"
+  ]
+ }
 }
