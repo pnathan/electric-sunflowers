@@ -418,6 +418,8 @@ fn prompt_asks_for_schema_3_and_describes_its_fields() {
         "z8",
         "\"tune\":\"<break tune: solfege with lengths>\"",
         "\"d8 d8 r8 m8 s4 m4 | r8 m8 r8 d8 t,4 s,4\"",
+        "ARRANGING NOTE (schema 3",
+        "\"arranging\":\"<arranging note>\"",
     ] {
         assert!(p.contains(f), "{f}");
     }
@@ -426,6 +428,12 @@ fn prompt_asks_for_schema_3_and_describes_its_fields() {
     let sch = song::schema::json_schema();
     assert_eq!(sch["properties"]["schema_version"]["enum"][0], 3);
     assert!(sch["properties"].get("tunes").is_some());
+    assert_eq!(sch["properties"]["arranging"]["type"], "string");
+    assert!(!sch["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v == "arranging"));
     assert!(sch["required"]
         .as_array()
         .unwrap()

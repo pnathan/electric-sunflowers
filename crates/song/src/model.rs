@@ -667,6 +667,10 @@ pub struct Song {
     pub duet: Option<Duet>,
     /// The song's rubato; a section may override it.
     pub rubato: Rubato,
+    /// Schema 3: the writer's free-text note to the arranger (at most 1500
+    /// characters). The rule-based arranger ignores it; the optional
+    /// arranger pass reads it.
+    pub arranging: Option<String>,
     /// At least one section is sung.
     pub sections: Vec<Section>,
     /// Every chord the song uses; `BarChords` index into it.

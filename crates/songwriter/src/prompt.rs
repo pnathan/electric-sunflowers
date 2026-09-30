@@ -157,6 +157,9 @@ ENERGY (schema 3)
 - Give every section "energy":"quiet|low|mid|high": how hard the band plays it (quiet: a few instruments, soft; high: the whole band, full drums, hard strumming). You decide the curve; the engine adds none. Without it the engine builds like a ballad (quiet intro, low first verse, lifted choruses), which is wrong for a dance. A stomp-along dance song runs mid or high from the first bar, intro included, and does not build like a ballad; a ballad may build from quiet. Keep the lyrics in step: a high-energy verse is packed, about one syllable per eighth note, with short words on the beat; a quiet one has room for long notes.
 - This style: {drive}.
 
+ARRANGING NOTE (schema 3; optional, and welcome)
+- Add a top-level "arranging": a short note to the band's arranger, in plain words: the feel and the groove, what each instrument should do, where the energy peaks. Two to four sentences, no fixed vocabulary; say what you hear. For example: "Drive it hard from the first bar: a kick on every beat, the bass walking the roots and fifths, the fiddle playing the tune in the break and again over the last chorus. Brushes only under the bridge, then everything back at once." The engine's own arranger ignores the note; a second arranging pass reads it.
+
 EMOTIONAL REGISTER
 - Match the feeling the prompt asks for exactly. A happy prompt gets a happy song, a funny prompt a funny one; do not darken it, do not add a twist of loss.
 - If the prompt leaves the feeling open, write it as: {reg}.
@@ -193,7 +196,7 @@ ENCODING (strict; the singer is a machine that reads this literally)
 When the song is a duet, add "duet" at top level for singer B: {{"voice":"<baritone|tenor|alto|soprano>","phrasing":{{"delivery":"<...>","endings":"<...>"}}}} (its "phrasing" is optional; omitted, it follows the song's). Then mark any section or line that is not "A" throughout with "sing":"A|B|both" (default "A"), the shared line's melody with "lead":"A|B" (default "A") and the other singer's interval with "blend":"harmony|octave" (default "harmony"), for example a shared chorus: {{"type":"chorus","sing":"both","lead":"B","blend":"harmony","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord>","<chord>"]}}]}}.
 
 Reply with ONLY one JSON object, no prose, no code fence, in exactly this form ("schema_version" is always 3):
-{{"schema_version":3,"title":"<title>","note":"<liner note>","key":"<tonic, e.g. A or Eb>","mode":"<major|minor|dorian|mixolydian>","meter":"<4/4|3/4|6/8>","tempo":<bpm>,"guitar":"<strum|fingerpick|travis|arpeggio>","voice":"<baritone|tenor|alto|soprano>","phrasing":{{"delivery":"<legato|flowing|parlando|detached>","endings":"<held|released|clipped>"}},
+{{"schema_version":3,"title":"<title>","note":"<liner note>","arranging":"<arranging note>","key":"<tonic, e.g. A or Eb>","mode":"<major|minor|dorian|mixolydian>","meter":"<4/4|3/4|6/8>","tempo":<bpm>,"guitar":"<strum|fingerpick|travis|arpeggio>","voice":"<baritone|tenor|alto|soprano>","phrasing":{{"delivery":"<legato|flowing|parlando|detached>","endings":"<held|released|clipped>"}},
 "band":{{"drums":"<none|brushes|soft|full>","bass":<bool>,"harmonyGuitar":<bool>,"harp":<bool>,"violin":<bool>,"choir":<bool>,"harmonies":<bool>,"doubles":<bool>}},
 "tunes":[{{"name":"<name>","lines":["<solfege>","<solfege>"]}}],
 "sections":[

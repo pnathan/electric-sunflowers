@@ -6,7 +6,7 @@ Claude may sketch the lead melody in movable-do solfege, reuse a tune across sec
 
 | Version | Adds |
 |---|---|
-| 3 | `tune` (line and section, sung or instrumental); `tunes` (song); `energy` (section). |
+| 3 | `tune` (line and section, sung or instrumental); `tunes` (song); `energy` (section); `arranging` (song). |
 
 `song::wire::resolve_version`: a document without `schema_version` that uses a version-3 field is read as 3 with `Repair::SchemaVersionInferred(3)`. In a document that declares 1 or 2, each version-3 field is dropped with `Repair::FieldNeedsSchema { needs: 3 }`. Greater than 3 is `SongError::UnsupportedSchema`. `song::schema`: `json_schema_v3`, now the latest (`json_schema()`, requires `schema_version: 3`); `json_schema_for(3)`.
 
@@ -74,7 +74,11 @@ The prompt tells the writer that the curve is its decision: a stomp-along dance 
 
 Density. In a version-3 song the writer sets the lyric density. The engine stretches a song (`Form::stretch` 2, each bar played as two) only when its lines average more than one syllable per grid slot; versions 1 and 2 keep the old threshold (fewer than 1.75 slots per syllable), so they render as before.
 
-## 8. Example
+## 8. Arranging note
+
+A song may carry `"arranging": "free text"`: the writer's note to the arranger, in plain words (the feel and groove, what each instrument should do, where the energy peaks). There is no fixed vocabulary. The text is trimmed, empty text is absent, and text over `song::wire::ARRANGING_MAX_CHARS` (1500) is cut with `Repair::TruncatedField { field: "arranging" }`. In a document that declares version 1 or 2 the field is dropped with `FieldNeedsSchema`; in a document with no version it makes the document version 3. `Song::arranging` holds it and `to_wire` writes it back. The rule-based arranger ignores it, so a song renders the same with or without the note. Only the optional arranger pass (`sunflower write --arrange`, `sunflower rearrange`; `docs/engine-design.md` section 8a) reads it.
+
+## 9. Example
 
 ```json
 {"schema_version": 3, "title": "Old Tune", "key": "G", "mode": "major",
