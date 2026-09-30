@@ -47,7 +47,7 @@ Read this before changing anything. It records what the system is, how to work i
 - CLI: `sunflower demo`, `sunflower render song.json [--style KEY] [--no PART] [--seed N] [--voice V] -o x.ogg`, `sunflower write "mood" [--style KEY] [--via cli|api] [--model ID]`, `sunflower sheet song.json --seed N`, `sunflower styles`. The extension picks the format. `render`, `write` and `demo` write `<stem>.render.json` (seed, voice, style) and `<stem>.sheet.json` beside the audio; `write` saves Claude's raw JSON as `<stem>.json` before validating it.
 - Studio: `target/release/studio [SONG.json] [--dir DIR]`; the library defaults to `~/Music/sunflower`.
 - `RAYON_NUM_THREADS=1` renders on one thread with bit-identical output.
-- `ClaudeCli` runs `claude -p --output-format json` in an empty directory with `--strict-mcp-config`, `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` and no tools; not `--bare`, which disables the logged-in account. Default model `claude-opus-5-5`.
+- `ClaudeCli` runs `claude -p --output-format json` in an empty directory with `--strict-mcp-config`, `--setting-sources ""` (no plugins, skills or agents), `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` and no tools; not `--bare`, which disables the logged-in account. Default model `claude-opus-5-5`.
 
 ## Models and the decisions behind them
 

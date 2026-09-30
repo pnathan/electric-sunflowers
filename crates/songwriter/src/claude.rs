@@ -358,6 +358,10 @@ impl ClaudeCli {
             req.effort.as_str(),
             "--tools",
             "",
+            // No user, project or local settings: no plugins, skills or
+            // agents load into the songwriter's context. Login still works.
+            "--setting-sources",
+            "",
             "--no-session-persistence",
         ]
         .iter()
@@ -842,6 +846,7 @@ mod tests {
         };
         assert_eq!(after("--model").as_deref(), Some(DEFAULT_MODEL));
         assert_eq!(after("--effort").as_deref(), Some("max"));
+        assert_eq!(after("--setting-sources").as_deref(), Some(""));
         assert_eq!(
             after("--json-schema").as_deref(),
             Some(r#"{"type":"object"}"#)
