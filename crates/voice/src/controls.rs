@@ -243,17 +243,19 @@ pub fn rasterise(plan: &[(Span, Segment)], w: Window, out: &mut ControlTracks, b
 /// `w`, for `notes`. `ph.swell`, `ph.fade_depth` and `ph.fade_from` replace
 /// the 0.16, 0.4 and 0.55 of today's constants.
 pub fn shape_dynamics(av: &mut [f32], notes: &[VocalNote], w: Window, ph: &PhrasingParams) {
-    for n in notes {
+    for (k, n) in notes.iter().enumerate() {
         let dur = n.t1 - n.t0;
         if dur <= 0.5 && !n.phrase_end {
             continue;
         }
+        // Notes of one melisma hold one level: no swell between them.
+        let joined = n.legato || notes.get(k + 1).is_some_and(|x| x.legato);
         let i0 = Window::frame(n.t0);
         let i1 = Window::frame(n.t1);
         let len = (i1 - i0).max(1) as f64;
         for i in w.clip(i0, i1) {
             let x = (w.abs(i) - i0) as f64 / len;
-            let mut e = if dur > 0.5 {
+            let mut e = if dur > 0.5 && !joined {
                 0.9 + ph.swell * (PI * (x * 1.1).min(1.0)).sin()
             } else {
                 1.0
@@ -567,6 +569,7 @@ mod tests {
             phrase_start: false,
             phrase_end: false,
             grace: None,
+            legato: false,
         }
     }
 

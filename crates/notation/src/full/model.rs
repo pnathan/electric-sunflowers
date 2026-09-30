@@ -136,6 +136,11 @@ pub struct NoteChord {
     /// The Lead staff only.
     pub lyric: Option<String>,
     pub hyphen: bool,
+    /// The Lead staff only: an extension line runs under this chord in the
+    /// lyric row (a melisma's continuation, or a later part of a melisma
+    /// note), and a slur runs from it to the next note.
+    pub ext: bool,
+    pub slur_out: bool,
     pub t0: f64,
     pub t1: f64,
     /// Drum swish only ("sw.").
@@ -234,6 +239,9 @@ struct RawNote {
     notehead: Notehead,
     lyric: Option<String>,
     hyphen: bool,
+    /// The note belongs to a melisma, and is a continuation of it.
+    melisma: bool,
+    cont: bool,
     text: Option<String>,
     /// 0, or for drums 0 (up: everything but the kick) and 1 (down: kick).
     voice: usize,
@@ -250,6 +258,8 @@ impl RawNote {
             notehead: Notehead::Normal,
             lyric: None,
             hyphen: false,
+            melisma: false,
+            cont: false,
             text: None,
             voice: 0,
         }
@@ -372,10 +382,16 @@ fn raw_notes_of(
             .comp
             .lead
             .iter()
-            .map(|n| RawNote {
-                lyric: Some(n.syl.text.clone()),
-                hyphen: !n.syl.word_end,
-                ..RawNote::pitched(n.t0, n.t1, n.midi as f64)
+            .map(|n| {
+                let cont = n.syl.is_continuation();
+                let melisma = cont || n.syl.notes > 1;
+                RawNote {
+                    lyric: (!cont).then(|| n.syl.text.clone()),
+                    hyphen: !melisma && !n.syl.word_end,
+                    melisma,
+                    cont,
+                    ..RawNote::pitched(n.t0, n.t1, n.midi as f64)
+                }
             })
             .collect(),
         PartId::LeadB => {
@@ -405,10 +421,16 @@ fn raw_notes_of(
             b.notes
                 .iter()
                 .zip(lyric_notes)
-                .map(|(n, ln)| RawNote {
-                    lyric: Some(ln.syl.text.clone()),
-                    hyphen: !ln.syl.word_end,
-                    ..RawNote::pitched(n.t0, n.t1, n.midi as f64)
+                .map(|(n, ln)| {
+                    let cont = ln.syl.is_continuation();
+                    let melisma = cont || ln.syl.notes > 1;
+                    RawNote {
+                        lyric: (!cont).then(|| ln.syl.text.clone()),
+                        hyphen: !melisma && !ln.syl.word_end,
+                        melisma,
+                        cont,
+                        ..RawNote::pitched(n.t0, n.t1, n.midi as f64)
+                    }
                 })
                 .collect()
         }
@@ -493,6 +515,8 @@ fn raw_notes_of(
                         notehead,
                         lyric: None,
                         hyphen: false,
+                        melisma: false,
+                        cont: false,
                         text: text.map(str::to_string),
                         voice: drum_voice(h.kind),
                     }
@@ -513,6 +537,10 @@ struct Cluster {
     heads: Vec<(f64, Option<i32>, Notehead)>,
     lyric: Option<String>,
     hyphen: bool,
+    melisma: bool,
+    cont: bool,
+    /// The next cluster continues this melisma.
+    slur_next: bool,
     text: Option<String>,
 }
 
@@ -567,6 +595,9 @@ fn quantize_voice(
                 heads: vec![head],
                 lyric: n.lyric.clone(),
                 hyphen: n.hyphen,
+                melisma: n.melisma,
+                cont: n.cont,
+                slur_next: false,
                 text: n.text.clone(),
             }),
         }
@@ -589,6 +620,7 @@ fn quantize_voice(
         };
         let raw_end = items[i].end_gu.unwrap_or(cap);
         items[i].end_gu = Some(raw_end.min(cap).max(items[i].gu0 + 1));
+        items[i].slur_next = items.get(i + 1).is_some_and(|c| c.cont);
     }
 
     let mut per_bar: Vec<Vec<Ev>> = vec![Vec::new(); n_bars];
@@ -661,6 +693,8 @@ fn quantize_voice(
                         tie_out,
                         lyric: (j == 0 && starts_here).then(|| it.lyric.clone()).flatten(),
                         hyphen: j == 0 && starts_here && it.hyphen,
+                        ext: it.melisma && (it.cont || j > 0 || !starts_here),
+                        slur_out: it.slur_next && e == end && j + 1 == np,
                         t0: tl.to_time(g0 as f64 * grid.unit()),
                         t1: tl.to_time(g1 as f64 * grid.unit()),
                         text: (j == 0).then(|| it.text.clone()).flatten(),

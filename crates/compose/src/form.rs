@@ -6,8 +6,8 @@ use std::ops::Range;
 
 use song::chord::transpose_symbol;
 use song::{
-    BarChords, Chord, ChordId, Meter, MeterGrid, Mode, Part, Pc, Rubato, SectionBody, SectionKind,
-    SectionRole, Song, Syllable,
+    BarChords, Chord, ChordId, Meter, MeterGrid, Mode, Part, Pc, Phoneme, Rubato, SectionBody,
+    SectionKind, SectionRole, Song, Syllable,
 };
 
 /// A metric bar: its chord(s) plus the section and line it belongs to.
@@ -187,6 +187,62 @@ fn transposed_chords(song: &Song, transpose: i32) -> (Vec<Chord>, Vec<ChordId>) 
     (chords, canon)
 }
 
+/// Notes a line sings: a melisma syllable counts its notes.
+fn note_count(syls: &[Syllable]) -> usize {
+    syls.iter().map(|s| (s.notes as usize).max(1)).sum()
+}
+
+/// `syls` with each melisma syllable (`notes = N > 1`) expanded to N note
+/// syllables. The first keeps the text, stress, word start and `notes = N`;
+/// the others are continuations (`notes = 0`, no text, unstressed, no word
+/// start), and only the last carries the word end. Phones split at the
+/// nucleus: the first note has the onset consonants, the last the coda,
+/// and every note but the last holds the first vowel target of the nucleus
+/// (a diphthong glides only on the last note). A line with no melisma is
+/// returned unchanged.
+pub fn expand_melismas(syls: &[Syllable]) -> Vec<Syllable> {
+    let mut out = Vec::with_capacity(note_count(syls));
+    for s in syls {
+        let n = s.notes as usize;
+        if n < 2 {
+            out.push(s.clone());
+            continue;
+        }
+        let first = s.phones.iter().position(|p| p.is_vowel());
+        let last = s.phones.iter().rposition(|p| p.is_vowel());
+        let (onset, nucleus, coda) = match (first, last) {
+            (Some(a), Some(b)) => (&s.phones[..a], &s.phones[a..=b], &s.phones[b + 1..]),
+            _ => (&s.phones[..0], &[Phoneme::Aa][..], &s.phones[..]),
+        };
+        let hold = match nucleus[0].diphthong_targets() {
+            Some([v, _]) => v,
+            None => nucleus[0],
+        };
+        for k in 0..n {
+            let mut x = s.clone();
+            let mut ph: Vec<Phoneme> = Vec::new();
+            if k == 0 {
+                ph.extend_from_slice(onset);
+            } else {
+                x.text = String::new();
+                x.stress = false;
+                x.word_start = false;
+                x.notes = 0;
+            }
+            if k + 1 == n {
+                ph.extend_from_slice(nucleus);
+                ph.extend_from_slice(coda);
+            } else {
+                ph.push(hold);
+                x.word_end = false;
+            }
+            x.phones = ph;
+            out.push(x);
+        }
+    }
+    out
+}
+
 /// Lays out `song` with its chords transposed by `transpose` semitones.
 pub fn build_form(song: &Song, transpose: i32) -> Form {
     let meter = song.meter;
@@ -211,7 +267,7 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
     let mut nl = 0i32;
     for s in &song.sections {
         for ln in s.lines() {
-            ns += ln.syllables.len() as f64 / ln.bars.len() as f64;
+            ns += note_count(&ln.syllables) as f64 / ln.bars.len() as f64;
             nl += 1;
         }
     }
@@ -250,7 +306,7 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
                         li,
                         start_bar,
                         n_bars: bars.len() - start_bar,
-                        syls: ln.syllables.clone(),
+                        syls: expand_melismas(&ln.syllables),
                         part: ln.part,
                         text: ln.text(),
                         pitches: None,
@@ -365,7 +421,7 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
@@ -403,6 +459,77 @@ mod tests {
         assert!(form.sections[3].is_repeat_lift());
         assert_eq!(form.sections[1].intensity, Intensity::Low);
         assert_eq!(form.sections[1].beats(&form.meter), 8.0..12.0);
+    }
+
+    /// A version-2 song with melismas on the chorus and verse lines.
+    pub(crate) fn melisma_song() -> Song {
+        song_of(json!({
+            "schema_version":2,"key":"G","mode":"major","meter":"4/4","tempo":92,
+            "sections":[
+                {"type":"verse","lines":[{"syl":"*glo~3-ry *hal~4-le~-lu~ *jah","chords":["G","C","D","G"]}]},
+                {"type":"chorus","lines":[{"syl":"*sing~ out *loud","chords":["C","G"]}]}
+            ]
+        }))
+    }
+
+    #[test]
+    fn melisma_expands_to_notes() {
+        let song = melisma_song();
+        let form = build_form(&song, 0);
+        let l = &form.lines[0];
+        // glo(3) ry hal(4) le(2) lu(2) jah = 13 notes; text is unexpanded.
+        assert_eq!(l.syls.len(), 13);
+        assert_eq!(l.text, "glo ry hal le lu jah");
+        let notes: Vec<u8> = l.syls.iter().map(|s| s.notes).collect();
+        assert_eq!(notes, vec![3, 0, 0, 1, 4, 0, 0, 0, 2, 0, 2, 0, 1]);
+        for (i, s) in l.syls.iter().enumerate() {
+            if s.is_continuation() {
+                assert!(s.text.is_empty() && !s.stress && !s.word_start, "note {i}");
+                // Vowel only, except the last note, which may carry a coda.
+                assert!(s.phones.first().is_some_and(|p| p.is_vowel()));
+            }
+        }
+        // "glo": onset consonants on the first note, the vowel alone after.
+        assert!(l.syls[0].phones.first().is_some_and(|p| p.is_consonant()));
+        assert!(l.syls[0].phones.last().is_some_and(|p| p.is_vowel()));
+        assert_eq!(l.syls[1].phones.len(), 1);
+        assert_eq!(l.syls[2].phones.len(), 1);
+        assert_eq!(l.syls[1].phones[0], *l.syls[0].phones.last().unwrap());
+        // "glo-ry" is one word: no note of "glo" ends it, "ry" does.
+        assert!(!l.syls[2].word_end && l.syls[3].word_end);
+        // "hal": the coda /l/ moves to the last of its four notes.
+        let coda = |i: usize| l.syls[i].phones.iter().filter(|p| p.is_consonant()).count();
+        assert_eq!((coda(4), coda(5), coda(6)), (1, 0, 0));
+        assert!(l.syls[7].phones.last().is_some_and(|p| p.is_consonant()));
+        // "hallelu" is one word: only its last note (of "lu") ends it.
+        assert!(!l.syls[7].word_end && !l.syls[6].word_end);
+        assert!(l.syls[11].word_end && !l.syls[10].word_end);
+        // The chorus line: "sing" + "out" + "loud" = 2 + 1 + 1 notes.
+        assert_eq!(form.lines[1].syls.len(), 4);
+    }
+
+    #[test]
+    fn a_diphthong_glides_only_on_the_last_note() {
+        let song = song_of(json!({
+            "schema_version":2,"key":"C","meter":"4/4","tempo":100,
+            "sections":[{"type":"verse","lines":[{"syl":"*fly~3","ph":"f l ay","chords":["C"]}]}]
+        }));
+        let syls = &build_form(&song, 0).lines[0].syls;
+        assert_eq!(syls.len(), 3);
+        assert_eq!(syls[0].phones, vec![Phoneme::F, Phoneme::L, Phoneme::Aa]);
+        assert_eq!(syls[1].phones, vec![Phoneme::Aa]);
+        assert_eq!(syls[2].phones, vec![Phoneme::Ay]);
+    }
+
+    #[test]
+    fn a_song_without_melismas_is_unchanged() {
+        let song = song_of(json!({
+            "key":"C","mode":"major","meter":"4/4","tempo":100,
+            "sections":[{"type":"verse","lines":[{"syl":"one *two three *four","chords":["C G"]}]}]
+        }));
+        let form = build_form(&song, 0);
+        assert_eq!(form.lines[0].syls, song.sections[0].lines()[0].syllables);
+        assert!(form.lines[0].syls.iter().all(|s| s.notes == 1));
     }
 
     #[test]

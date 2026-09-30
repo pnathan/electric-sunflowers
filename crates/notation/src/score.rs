@@ -113,6 +113,14 @@ pub(crate) struct NoteEv {
     pub hyphen: bool,
     pub tie_in: bool,
     pub tie_out: bool,
+    /// The note belongs to a melisma (the syllable's first note, or a
+    /// continuation of it).
+    pub melisma: bool,
+    /// The lyric row carries an extension line under this note: a
+    /// melisma's continuation, or a later part of any melisma note.
+    pub ext: bool,
+    /// A slur runs from this note to the next, which continues the melisma.
+    pub slur_out: bool,
     /// Seconds.
     pub t0: f64,
     pub t1: f64,
@@ -241,15 +249,20 @@ fn bucket_notes(
             let be = e[i].min((b + 1) * bar_u);
             let beat0 = st as f64 * u;
             let beat1 = be as f64 * u;
+            let cont = ln.syl.is_continuation();
+            let melisma = cont || ln.syl.notes > 1;
             let ev = NoteEv {
                 note: i,
                 line: ln.line_idx,
                 step: 0,
                 accidental: None,
-                lyric: first.then(|| ln.syl.text.clone()),
-                hyphen: first && !ln.syl.word_end,
+                lyric: (first && !cont).then(|| ln.syl.text.clone()),
+                hyphen: first && !melisma && !ln.syl.word_end,
                 tie_in: !first,
                 tie_out: be < e[i],
+                melisma,
+                ext: cont || (melisma && !first),
+                slur_out: be >= e[i] && notes.get(i + 1).is_some_and(|x| x.syl.is_continuation()),
                 t0: if first {
                     ln.t0
                 } else {
@@ -297,9 +310,11 @@ fn events_of(notes: Vec<(i64, i64, NoteEv)>, from_u: i64, bar_u: i64, grid: &Gri
                 p.lyric = None;
                 p.hyphen = false;
                 p.tie_in = true;
+                p.ext = p.melisma;
             }
             if j + 1 < np {
                 p.tie_out = true;
+                p.slur_out = false;
             }
             let a = (ps - st) as f64 / d as f64;
             let b = (ps + pd - st) as f64 / d as f64;

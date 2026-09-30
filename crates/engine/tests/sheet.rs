@@ -150,3 +150,44 @@ fn text_sheet_has_every_label_and_word() {
     let json = serde_json::to_string(&sheet).expect("sheet serialises");
     assert!(json.contains("\"sections\""));
 }
+
+/// A melisma is one sheet syllable with the first note's time and its note
+/// count; the continuation notes are not listed, and the line covers them.
+#[test]
+fn a_melisma_is_one_sheet_syllable() {
+    let raw = serde_json::json!({
+        "schema_version":2,"title":"Melisma","key":"G","mode":"major","meter":"4/4","tempo":92,
+        "sections":[{"type":"verse","lines":[{"syl":"*glo~3-ry *hal~4-le~-lu~ *jah","chords":["G","C","D","G"]}]}]
+    });
+    let song = song::normalize_value(&raw).expect("melisma song").0;
+    let sheet = song_sheet(&song, 6, None);
+    let p = prepare(&song, 6, None);
+    let line = &sheet.sections[0].lines[0];
+    let texts: Vec<&str> = line.syllables.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(texts, ["glo", "ry", "hal", "le", "lu", "jah"]);
+    let notes: Vec<u8> = line.syllables.iter().map(|s| s.notes).collect();
+    assert_eq!(notes, [3, 1, 4, 2, 2, 1]);
+    assert_eq!(line.text, "glory hallelu jah");
+    // The first note's time and pitch; the line reaches the last note's end.
+    let lead = &p.comp.lead;
+    assert_eq!(
+        (line.syllables[0].t0, line.syllables[0].t1),
+        (lead[0].t0, lead[0].t1)
+    );
+    assert_eq!(line.syllables[0].midi, lead[0].midi);
+    assert!(line.t1 >= lead[lead.len() - 1].t1);
+    // The word "glory" covers the melisma's notes.
+    assert_eq!(line.words[0].text, "glory");
+    assert!(line.words[0].t1 >= lead[3].t1);
+    assert!(sheet.to_text().contains("glory hallelu jah"));
+    let json = serde_json::to_value(&sheet).unwrap();
+    assert_eq!(json["sections"][0]["lines"][0]["syllables"][0]["notes"], 3);
+    // Every ordinary syllable of the demo song has notes 1.
+    let demo = song_sheet(demo_song(), 1, None);
+    assert!(demo
+        .sections
+        .iter()
+        .flat_map(|s| &s.lines)
+        .flat_map(|l| &l.syllables)
+        .all(|s| s.notes == 1));
+}

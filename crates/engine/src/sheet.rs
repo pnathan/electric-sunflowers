@@ -151,9 +151,13 @@ pub struct SheetSyllable {
     pub word: usize,
     pub t0: f64,
     pub t1: f64,
-    /// Sung pitch after transposition.
+    /// Sung pitch after transposition (the first note's, in a melisma).
     pub midi: i32,
     pub stress: bool,
+    /// Notes the syllable is sung over: 1, or 2 to 4 for a melisma
+    /// (schema 2). A melisma is one syllable here, with the times and
+    /// pitch of its first note; its continuation notes are not listed.
+    pub notes: u8,
 }
 
 /// One word: its syllables joined.
@@ -390,7 +394,24 @@ fn sung_line(
     let mut spans: Vec<(f64, f64)> = Vec::with_capacity(syls.len());
     let mut prev_word: Option<u16> = None;
     let mut last_t = bar_t0;
+    // End of the last note of the line, continuations included.
+    let mut end_t = bar_t0;
     for (k, s) in syls.iter().enumerate() {
+        if s.is_continuation() {
+            // A melisma's later note: no syllable of its own; the word, the
+            // chord span and the line reach to its end.
+            if let Some(n) = notes.get(k).copied().flatten() {
+                last_t = n.t1;
+                end_t = end_t.max(n.t1);
+                if let Some(sp) = spans.last_mut() {
+                    sp.1 = n.beat + n.dur;
+                }
+                if let Some(w) = words.last_mut() {
+                    w.t1 = n.t1;
+                }
+            }
+            continue;
+        }
         let new_word = prev_word != Some(s.word);
         if new_word && k > 0 {
             text.push(' ');
@@ -405,6 +426,7 @@ fn sung_line(
             None => (last_t, last_t, 0, (f64::NAN, f64::NAN)),
         };
         last_t = t1;
+        end_t = end_t.max(t1);
         spans.push(span);
         if new_word {
             words.push(SheetWord {
@@ -426,6 +448,7 @@ fn sung_line(
             t1,
             midi,
             stress: s.stress,
+            notes: s.notes.max(1),
         });
     }
 
@@ -436,7 +459,11 @@ fn sung_line(
     }
 
     let t0 = syllables.first().map_or(bar_t0, |s| s.t0.min(bar_t0));
-    let t1 = syllables.last().map_or(bar_t1, |s| s.t1.max(bar_t1));
+    let t1 = if syllables.is_empty() {
+        bar_t1
+    } else {
+        end_t.max(bar_t1)
+    };
     SheetLine {
         t0,
         t1,

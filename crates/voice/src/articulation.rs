@@ -436,6 +436,8 @@ pub fn plan_syllables(
         let vf0 = sc.of(vt[0].f);
         let vfl = sc.of(vt[vt.len() - 1].f);
         let next = notes.get(k + 1).zip(syl.get(k + 1));
+        // The next note continues this vowel (a melisma): no pause between.
+        let next_legato = next.is_some_and(|(nn, _)| nn.legato);
 
         // Onset consonants.
         let mut t = s.onset_start;
@@ -456,6 +458,9 @@ pub fn plan_syllables(
         if let Some((_, ns)) = next {
             if ns.onset_start < n.t1 + 0.03 {
                 coda_end = ns.onset_start.min((s.vowel_start + 0.06).max(n.t1));
+            }
+            if next_legato {
+                coda_end = ns.onset_start.max(s.vowel_start);
             }
         }
         let d2: f64 = s.coda_dur.iter().sum();
@@ -516,7 +521,7 @@ pub fn plan_syllables(
 
         // Pause until the next onset: silence, or a breath before a phrase.
         let next_on = next.map_or(coda_end + 0.5, |(_, ns)| ns.onset_start);
-        if next_on > coda_end + 0.01 {
+        if next_on > coda_end + 0.01 && !next_legato {
             let nf = next.map_or(vfl, |(_, ns)| sc.of(ns.targets[0].f));
             let phrase = next.is_some_and(|(nn, _)| nn.phrase_start);
             if phrase && next_on - coda_end > BREATH_PAUSE && settings.breath_pauses {
@@ -682,6 +687,7 @@ mod tests {
             phrase_start: false,
             phrase_end: false,
             grace: None,
+            legato: false,
         }
     }
 
@@ -744,6 +750,38 @@ mod tests {
             .filter(|(sp, _)| sp.t0 >= t0 - 1e-9 && sp.t0 < t1)
             .cloned()
             .collect()
+    }
+
+    /// A legato (melisma continuation) note after a gap: no pause between
+    /// the notes, no onset segments, and the vowel runs to its onset; the
+    /// same notes not marked legato get the pause.
+    #[test]
+    fn legato_continuation_has_no_pause_or_onset() {
+        let settings = VoiceSettings::default();
+        let p = voice_params(Voice::Baritone);
+        let mut notes = [
+            note(0.5, 0.9, &["s", "ay"], true),
+            note(1.0, 1.4, &["aa"], false),
+        ];
+        let is_silence = |g: &Segment| matches!(g, Segment::Silence { .. });
+        let plan = plan_segments(&notes, &p, &settings);
+        assert!(inside(&plan, 0.9, 1.0).iter().any(|(_, g)| is_silence(g)));
+        notes[1].legato = true;
+        let plan = plan_segments(&notes, &p, &settings);
+        assert!(!plan
+            .iter()
+            .any(|(sp, g)| is_silence(g) && sp.t0 < 1.4 && sp.t0 >= 0.5));
+        // The first note's vowel reaches the continuation's onset.
+        let reach = plan
+            .iter()
+            .filter(|(sp, g)| matches!(g, Segment::Vowel { .. }) && sp.t0 < 1.0)
+            .map(|(sp, _)| sp.t1)
+            .fold(0.0, f64::max);
+        assert!((reach - 1.0).abs() < 1e-9, "vowel reaches {reach}");
+        // Nothing but vowel segments starts inside the continuation.
+        assert!(inside(&plan, 1.0, 1.4)
+            .iter()
+            .all(|(_, g)| matches!(g, Segment::Vowel { .. })));
     }
 
     /// "the RIV-er ci-ty": the unstressed /t/ of "ty" after an open "ci"

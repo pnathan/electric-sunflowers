@@ -643,6 +643,39 @@ fn draw_voice(
                 yy + c * 0.7
             );
         }
+        let y_lyric = row_top + 4.0 * SP + ROW_PAD + 1.6 * SP;
+        if chord.ext {
+            // Melisma: an underscore in the lyric row from the note before
+            // (or its lyric's end) to the end of this note.
+            let a = match ei.checked_sub(1).and_then(|j| voice.get(j)) {
+                Some(q) => {
+                    let qw = if q.d >= 16 { WHOLE_W } else { HEAD_W };
+                    let lyr = q.chord.as_ref().and_then(|c| c.lyric.as_deref());
+                    x_of(q.s) + qw * 0.5 + lyr.map_or(0.0, |l| lyric_w(l) * 0.5 + 0.3 * SP)
+                }
+                None => x - 0.3 * SP,
+            };
+            let b = (x + hw + 0.2 * SP).min(MARGIN + sys_end_local);
+            if b > a {
+                line(s, a, y_lyric + 1.0, b, y_lyric + 1.0, 0.9);
+            }
+        }
+        if chord.slur_out {
+            let x1 = x + hw * 0.5;
+            let x2 = voice
+                .get(ei + 1)
+                .map_or(x + hw + 2.0 * SP, |q| x_of(q.s) + HEAD_W * 0.5)
+                .min(MARGIN + sys_end_local);
+            let yy = row_top + y_step(clef, rep) + if up { SP } else { -SP };
+            let c = if up { 1.6 * SP } else { -1.6 * SP };
+            let xm = (x1 + x2) * 0.5;
+            let _ = write!(
+                s,
+                r##"<path d="M{x1:.2} {yy:.2}Q{xm:.2} {:.2} {x2:.2} {yy:.2}Q{xm:.2} {:.2} {x1:.2} {yy:.2}Z" fill="#111"/>"##,
+                yy + c,
+                yy + c * 0.8
+            );
+        }
         if let Some(l) = &chord.lyric {
             text(
                 s,

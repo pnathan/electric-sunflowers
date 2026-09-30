@@ -108,7 +108,8 @@ const MIN_SHAPED: f64 = 0.05;
 /// before articulation plans anything from them:
 ///
 /// - A note that is not `phrase_end` and has a following note ends at
-///   `min(t1, t0 + max(MIN_SHAPED, sustain * (next.t0 - t0)))`.
+///   `min(t1, t0 + max(MIN_SHAPED, sustain * (next.t0 - t0)))`, unless that
+///   note is a melisma continuation (`legato`): it keeps its end.
 /// - A `phrase_end` note keeps `end_len` of its written length (`t1 - t0`),
 ///   at least `MIN_SHAPED`, and never more than its written length.
 ///
@@ -129,7 +130,8 @@ pub fn phrase_notes<'a>(notes: &'a [VocalNote], p: &PhrasingParams) -> Cow<'a, [
                 out[k].t1 = n.t1.min(n.t0 + (p.end_len * len).max(MIN_SHAPED));
             }
         } else if p.sustain != 1.0 {
-            if let Some(next) = notes.get(k + 1) {
+            // A melisma's notes join: the vowel holds into the next note.
+            if let Some(next) = notes.get(k + 1).filter(|x| !x.legato) {
                 let cap = n.t0 + (p.sustain * (next.t0 - n.t0)).max(MIN_SHAPED);
                 out[k].t1 = n.t1.min(cap);
             }
@@ -153,6 +155,7 @@ mod tests {
             phrase_start: false,
             phrase_end,
             grace: None,
+            legato: false,
         }
     }
 

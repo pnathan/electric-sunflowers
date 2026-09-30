@@ -84,6 +84,10 @@ pub struct VocalNote {
     pub phrase_end: bool,
     /// Grace note: pitch (fractional MIDI) the note slides from into `midi`.
     pub grace: Option<f32>,
+    /// Continuation note of a melisma: the vowel of the note before holds
+    /// through, with no onset, no breath and no new attack; only the pitch
+    /// moves. `false` for every ordinary syllable.
+    pub legato: bool,
 }
 
 /// Per-singer performance settings: how one singer departs from the voice

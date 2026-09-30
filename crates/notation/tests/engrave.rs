@@ -178,3 +178,41 @@ fn narrow_page_wraps_lines() {
     }
     write_png(&engrave(&narrow), "demo-narrow");
 }
+
+/// A melisma prints its syllable once, under the first note; each later
+/// note gets an extension line in the lyric row (a 0.9 px stroke; the
+/// syllables here are whole words, so no hyphen uses that stroke); and a
+/// slur joins the notes. The same words with no melisma draw none.
+#[test]
+fn melisma_prints_one_lyric_and_an_extension() {
+    let of = |syl: &str| {
+        song_of(&format!(
+            r#"{{"schema_version":2,"title":"Melisma","key":"G","mode":"major","meter":"4/4","tempo":92,
+               "sections":[{{"type":"verse","lines":[{{"syl":"{syl}","chords":["G","C","D","G"]}}]}}]}}"#
+        ))
+    };
+    let ext = |svg: &str| svg.matches(r#"stroke-width="0.90""#).count();
+    let song = of("*glo~3 *hal~4 *sing~ out");
+    let prep = prepare(&song, 4, None);
+    let score = Score::new(&song, &prep);
+    let svg = engrave(&score);
+    let conts = prep
+        .comp
+        .lead
+        .iter()
+        .filter(|n| n.syl.is_continuation())
+        .count();
+    assert_eq!(conts, 6);
+    assert_eq!(lyrics(&svg), ["glo", "hal", "sing", "out"]);
+    assert!(ext(&svg) >= conts, "{} extension lines", ext(&svg));
+    assert_eq!(
+        note_boxes(&score).len(),
+        svg.matches(r#"<g class="note""#).count()
+    );
+    write_png(&svg, "melisma");
+
+    let plain = of("*glo *hal *sing out");
+    let svg = engrave(&Score::new(&plain, &prepare(&plain, 4, None)));
+    assert_eq!(lyrics(&svg), ["glo", "hal", "sing", "out"]);
+    assert_eq!(ext(&svg), 0);
+}

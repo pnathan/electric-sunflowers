@@ -101,7 +101,14 @@ pub struct PitchWeights {
     pub run: f64,
     /// Three equal notes.
     pub repeat3: f64,
+    /// Inside a melisma: per scale step beyond `MELISMA_STEPS`, and a
+    /// repeated pitch.
+    pub melisma_leap: f64,
+    pub melisma_repeat: f64,
 }
+
+/// Most scale steps between two notes of one melisma.
+pub const MELISMA_STEPS: usize = 2;
 
 /// The pitch weights.
 pub const PITCH_WEIGHTS: PitchWeights = PitchWeights {
@@ -129,6 +136,8 @@ pub const PITCH_WEIGHTS: PitchWeights = PitchWeights {
     wobble: -0.75,
     run: 0.12,
     repeat3: -0.5,
+    melisma_leap: -6.0,
+    melisma_repeat: -1.2,
 };
 
 /// Candidates per note: the window size.
@@ -166,6 +175,28 @@ pub struct PitchProblem<'a> {
     pub style: PitchStyle,
     /// Preferred first interval in semitones; 0 for none.
     pub hook: i32,
+    /// `conts[i]`: note `i` continues a melisma (it moves by at most
+    /// `MELISMA_STEPS` scale steps from note `i - 1`). Empty, or shorter
+    /// than the phrase: the missing notes are not continuations.
+    pub conts: &'a [bool],
+}
+
+impl PitchProblem<'_> {
+    /// Extra pair score of moving from `a` to `b` into note `i`: zero
+    /// unless note `i` continues a melisma.
+    fn cont_pair(&self, i: usize, a: i32, b: i32, w: &PitchWeights) -> f64 {
+        if !self.conts.get(i).copied().unwrap_or(false) {
+            return 0.0;
+        }
+        if a == b {
+            return w.melisma_repeat;
+        }
+        let (lo, hi) = (a.min(b), a.max(b));
+        let steps = (lo + 1..=hi)
+            .filter(|&m| self.scales[i].contains(Pc::new(m)))
+            .count();
+        w.melisma_leap * steps.saturating_sub(MELISMA_STEPS) as f64
+    }
 }
 
 /// Interval score by size in semitones, for a style.
@@ -346,7 +377,7 @@ pub fn pitch_line_with(p: &PitchProblem, w: &PitchWeights, rng: &mut Rng) -> Vec
             } else {
                 0.0
             };
-            dp[a * W + b] = em[a] + em[W + b] + ivs(ma, mb) + hook;
+            dp[a * W + b] = em[a] + em[W + b] + ivs(ma, mb) + hook + p.cont_pair(1, ma, mb, w);
         }
     }
 
@@ -370,7 +401,7 @@ pub fn pitch_line_with(p: &PitchProblem, w: &PitchWeights, rng: &mut Rng) -> Vec
                         arg = a;
                     }
                 }
-                nd[b * W + c] = best + ivs(mb, mc) + em[i * W + c];
+                nd[b * W + c] = best + ivs(mb, mc) + p.cont_pair(i, mb, mc, w) + em[i * W + c];
                 bpi[b * W + c] = arg as u8;
             }
         }
@@ -446,6 +477,7 @@ mod tests {
             line_beats: onsets.len() as f64,
             style: PitchStyle::default(),
             hook: 0,
+            conts: &[],
         }
     }
 

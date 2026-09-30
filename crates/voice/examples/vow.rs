@@ -61,6 +61,7 @@ fn main() {
             phrase_start: false,
             phrase_end: false,
             grace: None,
+            legato: false,
         });
         t += 1.6;
     }

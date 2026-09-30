@@ -185,22 +185,35 @@ pub struct VocalNote {
     pub phrase_end: bool,
     pub grace: Option<i32>,
     pub stress: bool,
+    /// A continuation note of a melisma (`Syllable::is_continuation`): the
+    /// vowel holds from the note before.
+    pub cont: bool,
 }
 
 /// Lead notes as sung notes at level `amp`: unstressed syllables at 0.86,
-/// lifted sections at 1.08.
+/// lifted sections at 1.08. A melisma's continuation notes take the level
+/// of the syllable's first note.
 pub fn vocal_notes(lead: &[LeadNote], amp: f64) -> Vec<VocalNote> {
+    let mut head_stress = false;
     lead.iter()
-        .map(|n| VocalNote {
-            t0: n.t0,
-            t1: n.t1,
-            midi: n.midi,
-            ph: n.syl.phones.clone(),
-            amp: amp * (if n.stress { 1.0 } else { 0.86 }) * (if n.lift { 1.08 } else { 1.0 }),
-            phrase_start: n.phrase_start,
-            phrase_end: n.phrase_end,
-            grace: n.grace,
-            stress: n.stress,
+        .map(|n| {
+            let cont = n.syl.is_continuation();
+            if !cont {
+                head_stress = n.stress;
+            }
+            let loud = if cont { head_stress } else { n.stress };
+            VocalNote {
+                t0: n.t0,
+                t1: n.t1,
+                midi: n.midi,
+                ph: n.syl.phones.clone(),
+                amp: amp * (if loud { 1.0 } else { 0.86 }) * (if n.lift { 1.08 } else { 1.0 }),
+                phrase_start: n.phrase_start,
+                phrase_end: n.phrase_end,
+                grace: n.grace,
+                stress: n.stress,
+                cont,
+            }
         })
         .collect()
 }

@@ -288,6 +288,9 @@ pub struct LineSpec<'a> {
     pub prev_end: Option<i32>,
     /// Preferred first interval; 0 for none.
     pub hook: i32,
+    /// Notes that continue a melisma (see `PitchProblem::conts`); empty for
+    /// a line with none.
+    pub conts: &'a [bool],
 }
 
 /// A composed line.
@@ -326,6 +329,7 @@ pub fn compose_line(
         line_beats: rh.line_beats,
         style: spec.pitch,
         hook: spec.hook,
+        conts: spec.conts,
     };
     let pitches = pitch_line(&problem, pitch_rng);
     LineMelody {
@@ -364,7 +368,18 @@ fn line_key(form: &Form, li_idx: usize, kind: SectionKind) -> LineKey {
                 .collect()
         })
         .collect();
-    (kind, l.li, l.text.clone(), chords, l.part.melody())
+    // A melisma changes the notes of the line, so it is part of the key.
+    let text = if l.syls.iter().any(|s| s.notes > 1) {
+        l.syls
+            .iter()
+            .filter(|s| !s.is_continuation())
+            .map(|s| format!("{}~{}", s.text, s.notes))
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        l.text.clone()
+    };
+    (kind, l.li, text, chords, l.part.melody())
 }
 
 /// Grace notes: on a long (>= 1.5 beats) last note, with probability 0.55,
@@ -424,6 +439,7 @@ pub fn compose_melody(
 
             if !cache.contains_key(&key) {
                 let stresses: Vec<bool> = line.syls.iter().map(|s| s.stress).collect();
+                let conts: Vec<bool> = line.syls.iter().map(Syllable::is_continuation).collect();
                 let cadence = cadence_for(kind, li, nl);
                 let mut ts = prof.tess(kind);
                 if singer == SingerId::B {
@@ -461,6 +477,7 @@ pub fn compose_melody(
                     reference,
                     prev_end,
                     hook: if first_lift && li == 0 { prof.hook } else { 0 },
+                    conts: &conts,
                 };
                 let mut rr = Rng::event(seed, RHYTHM, event_key(kind as usize, li, 0));
                 let mut pr = Rng::event(seed, PITCH, event_key(kind as usize, li, sec.occ));
@@ -491,7 +508,9 @@ pub fn compose_melody(
                 let midi = m.pitches[i];
                 let syl = &line.syls[i];
                 let mut grace = None;
-                if i + 1 == n && dur >= 1.5 && gr.uniform() < GRACE_END_P {
+                if syl.is_continuation() {
+                    // A grace note never lands on a continuation.
+                } else if i + 1 == n && dur >= 1.5 && gr.uniform() < GRACE_END_P {
                     grace = (1..=3)
                         .map(|d| midi + d)
                         .find(|&g| m.scales[i].contains(Pc::new(g)));
@@ -611,6 +630,7 @@ fn compose_instrumental(
                 reference,
                 prev_end: None,
                 hook: 0,
+                conts: &[],
             };
             let m = compose_line(&spec, &h, &mut rr, &mut pr);
             for i in 0..m.pitches.len() {
@@ -703,6 +723,46 @@ mod tests {
         assert_eq!(form.lines[1].n_bars, 2);
         assert_ne!(k[0], k[1]);
         assert_eq!(k[0], k[2]);
+    }
+
+    /// Continuation notes of a melisma move by at most two scale steps
+    /// (four semitones) from the note before, carry no grace note, and the
+    /// composed line has one note per expanded syllable.
+    #[test]
+    fn melisma_continuations_step() {
+        let s = crate::form::tests::melisma_song();
+        let mut seen = 0;
+        for seed in 0..24u64 {
+            let mut form = crate::form::build_form(&s, 0);
+            let tl = Timeline::new(&form, s.tempo_bpm);
+            let comp = compose_melody(&s, &mut form, &tl, seed, Voice::Tenor, None);
+            let n_notes: usize = form.lines.iter().map(|l| l.syls.len()).sum();
+            assert_eq!(comp.lead.len(), n_notes);
+            for w in comp.lead.windows(2) {
+                let (a, b) = (&w[0], &w[1]);
+                assert!(!b.syl.is_continuation() || b.grace.is_none(), "seed {seed}");
+                if b.syl.is_continuation() {
+                    seen += 1;
+                    assert_eq!(a.line_idx, b.line_idx);
+                    let d = (b.midi - a.midi).abs();
+                    assert!((1..=4).contains(&d), "seed {seed}: step of {d} semitones");
+                }
+            }
+        }
+        assert!(seen > 24 * 5);
+    }
+
+    #[test]
+    fn line_key_separates_melismas() {
+        let s = song(json!({"schema_version":2,"sections":[
+            {"type":"verse","lines":[{"syl":"*one *two three *four","chords":["C G"]}]},
+            {"type":"verse","lines":[{"syl":"*one~ *two three *four","chords":["C G"]}]}
+        ]}));
+        let form = crate::form::build_form(&s, 0);
+        assert_ne!(
+            line_key(&form, 0, SectionKind::Verse),
+            line_key(&form, 1, SectionKind::Verse)
+        );
     }
 
     #[test]

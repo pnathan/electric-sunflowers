@@ -813,6 +813,40 @@ pub(crate) fn layout(score: &Score) -> Page {
                     yy + c * 0.7
                 );
             }
+            if p.n.ext {
+                // Melisma: an underscore in the lyric row from the middle
+                // of the note before (or its lyric's end) to this note's end.
+                let a = match k.checked_sub(1).map(|j| &pns[j]) {
+                    Some(q) => {
+                        let qhw = if q.ev.d >= 16 { WHOLE_W } else { HEAD_W };
+                        q.x + qhw * 0.5
+                            + q.n.lyric.as_deref().map_or(0.0, lyric_w) * 0.5
+                            + if q.n.lyric.is_some() { 0.3 * SP } else { 0.0 }
+                    }
+                    None => p.x - 0.3 * SP,
+                };
+                let b = (p.x + hw + 0.2 * SP).min(sys_end);
+                if b > a {
+                    line(&mut s, a, y_lyric + 1.0, b, y_lyric + 1.0, 0.9);
+                }
+            }
+            if p.n.slur_out {
+                // Slur to the next note, on the side away from the stems.
+                let x1 = p.x + hw * 0.5;
+                let x2 = pns
+                    .get(k + 1)
+                    .map_or(sys_end - 0.3 * SP, |q| q.x + HEAD_W * 0.5);
+                let below = p.up;
+                let yy = p.y + if below { SP } else { -SP };
+                let c = if below { 1.6 * SP } else { -1.6 * SP };
+                let xm = (x1 + x2) * 0.5;
+                let _ = write!(
+                    s,
+                    r##"<path d="M{x1:.2} {yy:.2}Q{xm:.2} {:.2} {x2:.2} {yy:.2}Q{xm:.2} {:.2} {x1:.2} {yy:.2}Z" fill="#111"/>"##,
+                    yy + c,
+                    yy + c * 0.8
+                );
+            }
             if p.n.hyphen {
                 let Some(l) = &p.n.lyric else { continue };
                 let a = p.x + hw * 0.5 + lyric_w(l) * 0.5;

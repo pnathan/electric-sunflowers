@@ -74,6 +74,7 @@ fn event(n: &ComposedNote, offset: f64) -> VocalNote {
         phrase_start: n.phrase_start,
         phrase_end: n.phrase_end,
         grace: n.grace.map(|g| g as f32),
+        legato: n.cont,
     }
 }
 
@@ -336,6 +337,7 @@ pub fn choir_singers(p: &Prepared, seed: u64) -> [Vec<Singer>; 4] {
                     phrase_start,
                     phrase_end: false,
                     grace: None,
+                    legato: false,
                 });
             }
             let n = notes.len();

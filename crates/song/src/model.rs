@@ -496,8 +496,18 @@ pub struct Syllable {
     /// Phonemes, with at least one vowel.
     pub phones: Vec<Phoneme>,
     /// Notes this syllable is sung over: 1, or 2..=`MELISMA_MAX_NOTES` for a
-    /// melisma (schema 2). The vowel holds across them.
+    /// melisma (schema 2). The vowel holds across them. In a line expanded
+    /// to notes (`compose::form`), 0 marks a continuation note of the
+    /// melisma the syllable before it began.
     pub notes: u8,
+}
+
+impl Syllable {
+    /// A continuation note of a melisma: sung on the vowel of the syllable
+    /// before it, with no text of its own (`notes == 0`).
+    pub const fn is_continuation(&self) -> bool {
+        self.notes == 0
+    }
 }
 
 /// One lyric line: at least one syllable and 1-4 bars.

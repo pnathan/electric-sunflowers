@@ -34,6 +34,7 @@ fn demo_lead_notes(seed: u64) -> (Voice, Vec<VocalNote>) {
             phrase_start: n.phrase_start,
             phrase_end: n.phrase_end,
             grace: n.grace.map(|g| g as f32),
+            legato: false,
         })
         .collect();
     (p.voice, notes)

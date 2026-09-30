@@ -182,6 +182,7 @@ fn note(t0: f64, t1: f64, midi: f32, phones: Vec<Phoneme>) -> VocalNote {
         phrase_start: true,
         phrase_end: true,
         grace: None,
+        legato: false,
     }
 }
 
@@ -289,6 +290,7 @@ fn short_gap_keeps_the_sounding_note() {
         phrase_start: false,
         phrase_end: false,
         grace: None,
+        legato: false,
     };
     let mut notes = vec![
         n(0.5, 1.5, 50.0),
@@ -345,6 +347,7 @@ fn demo_lead_notes(seed: u64) -> (Voice, Vec<VocalNote>) {
             phrase_start: n.phrase_start,
             phrase_end: n.phrase_end,
             grace: n.grace.map(|g| g as f32),
+            legato: false,
         })
         .collect();
     (p.voice, notes)
@@ -388,5 +391,53 @@ fn demo_lead_render_is_bit_identical_at_default_phrasing() {
         fnv1a(&bytes),
         0x08a630ed57eeb7de,
         "demo lead render changed at the default phrasing"
+    );
+}
+
+/// A three-note melisma (onset on the first note, then two legato /aa/
+/// notes a step apart) renders finite, audible audio whose level does not
+/// fall to the noise floor between the notes: one attack for the melisma.
+#[test]
+fn melisma_is_one_held_vowel() {
+    let mut a = note(0.5, 0.896, 52.0, vec![Phoneme::S, Phoneme::Aa]);
+    let mut b = note(0.9, 1.296, 54.0, vec![Phoneme::Aa]);
+    let mut c = note(1.3, 1.8, 55.0, vec![Phoneme::Aa, Phoneme::N]);
+    (a.phrase_end, b.phrase_start, b.phrase_end, c.phrase_start) = (false, false, false, false);
+    b.legato = true;
+    c.legato = true;
+    let notes = [a, b, c];
+    let len = (2.5 * SR_F) as usize;
+    let mut out = vec![0.0f32; len];
+    render_phrases(
+        &notes,
+        Voice::Baritone,
+        &VoiceSettings::default(),
+        3,
+        len,
+        |s, x| out[s..s + x.len()].copy_from_slice(x),
+    );
+    assert!(out.iter().all(|x| x.is_finite()));
+    // RMS in 20 ms windows from 0.62 s (well past the onset) to 1.5 s (before the
+    // final note's phrase-end fade and coda).
+    let w = (0.02 * SR_F) as usize;
+    let start = (0.62 * SR_F) as usize;
+    let rms: Vec<f64> = (0..)
+        .map(|k| start + k * w)
+        .take_while(|&i| i + w <= (1.5 * SR_F) as usize)
+        .map(|i| {
+            (out[i..i + w]
+                .iter()
+                .map(|&x| (x as f64).powi(2))
+                .sum::<f64>()
+                / w as f64)
+                .sqrt()
+        })
+        .collect();
+    let mean = rms.iter().sum::<f64>() / rms.len() as f64;
+    let min = rms.iter().copied().fold(f64::INFINITY, f64::min);
+    assert!(mean > 1e-3, "mean rms {mean}");
+    assert!(
+        min > 0.35 * mean,
+        "level dips to {min} (mean {mean}): {rms:.3?}"
     );
 }
