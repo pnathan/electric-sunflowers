@@ -13,7 +13,7 @@ pub use crate::pitch::{Cadence, PitchStyle};
 pub use crate::rhythm::RhythmStyle;
 
 use crate::form::Form;
-use crate::pitch::{pitch_line, PitchProblem};
+use crate::pitch::{fit_hints, pitch_line, PitchProblem};
 use crate::rhythm::{set_text, RhythmResult};
 use crate::theory::local_scale;
 use crate::timeline::Timeline;
@@ -236,11 +236,27 @@ pub struct Comp {
     pub t: i32,
     /// Tonic pitch class, 0-11.
     pub tonic: i32,
+    /// Repairs made while composing (`Repair::TuneMoved`).
+    pub repairs: Vec<song::Repair>,
 }
 
 /// The register pitch of a tonic: the tonic between F#3 and F#4 (MIDI 54-66).
 pub fn register_of(tonic: i32) -> i32 {
     60 + tonic - if tonic > 6 { 12 } else { 0 }
+}
+
+/// The MIDI pitch each note of a tune hints: `do` is the tonic (pitch class
+/// `tonic`) nearest `register`, then the degree and octave marks. A free
+/// note (`.`) has no hint. Not yet fitted to the voice (`pitch::fit_hints`).
+pub fn tune_hints(tune: &[song::TuneNote], tonic: Pc, register: i32) -> Vec<Option<i32>> {
+    let d = (tonic.get() as i32 - register).rem_euclid(12);
+    let base = register + if d > 6 { d - 12 } else { d };
+    tune.iter()
+        .map(|n| {
+            n.pitch
+                .map(|p| base + p.semis as i32 + 12 * p.octave as i32)
+        })
+        .collect()
 }
 
 /// The harmonic context of a composition: the form and timeline give the
@@ -291,6 +307,9 @@ pub struct LineSpec<'a> {
     /// Notes that continue a melisma (see `PitchProblem::conts`); empty for
     /// a line with none.
     pub conts: &'a [bool],
+    /// The MIDI pitch the writer hinted for each note (see
+    /// `PitchProblem::hints`); empty for a line with none.
+    pub hints: &'a [Option<i32>],
 }
 
 /// A composed line.
@@ -330,6 +349,7 @@ pub fn compose_line(
         style: spec.pitch,
         hook: spec.hook,
         conts: spec.conts,
+        hints: spec.hints,
     };
     let pitches = pitch_line(&problem, pitch_rng);
     LineMelody {
@@ -353,6 +373,8 @@ type LineKey = (
     SingerId,
     // The section's key: a chorus repeated in a new key composes anew.
     (u8, Mode),
+    // The writer's tune: a hinted line composes apart from a free one.
+    Option<Vec<song::TuneNote>>,
 );
 
 fn line_key(form: &Form, li_idx: usize, kind: SectionKind) -> LineKey {
@@ -389,6 +411,7 @@ fn line_key(form: &Form, li_idx: usize, kind: SectionKind) -> LineKey {
         chords,
         l.part.melody(),
         (tonic.get(), mode),
+        l.tune.clone(),
     )
 }
 
@@ -428,6 +451,7 @@ pub fn compose_melody(
     let mut first_occ: [Vec<Option<Vec<i32>>>; SectionKind::ALL.len()] = Default::default();
     let mut lead: Vec<LeadNote> = Vec::new();
     let mut prev_end: Option<i32> = None;
+    let mut repairs: Vec<song::Repair> = Vec::new();
     let mut composed: Vec<Option<(RhythmResult, Vec<i32>)>> = vec![None; form.lines.len()];
 
     {
@@ -452,6 +476,22 @@ pub fn compose_melody(
                 let stresses: Vec<bool> = line.syls.iter().map(|s| s.stress).collect();
                 let conts: Vec<bool> = line.syls.iter().map(Syllable::is_continuation).collect();
                 let cadence = cadence_for(kind, li, nl);
+                // A tune shorter or longer than the notes cannot come from
+                // `normalize`; a mismatch means no hints.
+                let hints: Vec<Option<i32>> = match &line.tune {
+                    Some(tn) if tn.len() == stresses.len() => {
+                        let (h, moved) = fit_hints(&tune_hints(tn, sec_tonic, t), t);
+                        if moved != 0 {
+                            repairs.push(song::Repair::TuneMoved {
+                                section: line.sec,
+                                line: li,
+                                octaves: moved,
+                            });
+                        }
+                        h
+                    }
+                    _ => Vec::new(),
+                };
                 let mut ts = prof.tess(kind);
                 if singer == SingerId::B {
                     ts.c += d;
@@ -489,6 +529,7 @@ pub fn compose_melody(
                     prev_end,
                     hook: if first_lift && li == 0 { prof.hook } else { 0 },
                     conts: &conts,
+                    hints: &hints,
                 };
                 let mut rr = Rng::event(seed, RHYTHM, event_key(kind as usize, li, 0));
                 let mut pr = Rng::event(seed, PITCH, event_key(kind as usize, li, sec.occ));
@@ -573,6 +614,7 @@ pub fn compose_melody(
         second: Vec::new(),
         t,
         tonic,
+        repairs,
     }
 }
 
@@ -639,6 +681,7 @@ fn compose_instrumental(form: &Form, tl: &Timeline, seed: u64, t: i32) -> Vec<In
                 prev_end: None,
                 hook: 0,
                 conts: &[],
+                hints: &[],
             };
             let m = compose_line(&spec, &h, &mut rr, &mut pr);
             for i in 0..m.pitches.len() {
@@ -758,6 +801,96 @@ mod tests {
             }
         }
         assert!(seen > 24 * 5);
+    }
+
+    /// A song of one verse whose line sings `tune` (schema 3).
+    fn tune_song(tune: &str) -> Song {
+        song(json!({"schema_version":3,"sections":[
+            {"type":"verse","lines":[
+                {"syl":"*one *two three *four","chords":["C G"],"tune":tune}]}
+        ]}))
+    }
+
+    fn compose_leads(s: &Song, transpose: i32, seed: u64) -> (Vec<i32>, Vec<song::Repair>) {
+        let mut form = crate::form::build_form(s, transpose);
+        let tl = Timeline::new(&form, s.tempo_bpm);
+        let comp = compose_melody(s, &mut form, &tl, seed, Voice::Tenor, None);
+        (comp.lead.iter().map(|n| n.midi).collect(), comp.repairs)
+    }
+
+    /// A line whose every note is hinted sounds exactly as hinted, in any
+    /// key, for any seed.
+    #[test]
+    fn a_fully_hinted_line_is_as_hinted() {
+        let s = tune_song("s m r d");
+        for (transpose, reg) in [(0, 60), (5, 65), (9, 57)] {
+            for seed in 0..12u64 {
+                let (midi, rep) = compose_leads(&s, transpose, seed);
+                assert_eq!(midi, [reg + 7, reg + 4, reg + 2, reg], "seed {seed}");
+                assert!(rep.is_empty());
+            }
+        }
+        // Chromatic and off-chord notes stay as written.
+        let s = tune_song("d ri fi te");
+        let (midi, _) = compose_leads(&s, 0, 3);
+        assert_eq!(midi, [60, 63, 66, 70]);
+    }
+
+    /// Free notes are composed; hinted notes stay.
+    #[test]
+    fn a_partly_hinted_line_keeps_its_hints() {
+        let s = tune_song("s . . d");
+        for seed in 0..12u64 {
+            let (midi, _) = compose_leads(&s, 0, seed);
+            assert_eq!((midi[0], midi[3]), (67, 60));
+        }
+    }
+
+    /// A tune outside the voice moves by whole octaves, as a whole, with a
+    /// repair.
+    #[test]
+    fn a_tune_out_of_range_moves_by_octaves() {
+        let s = tune_song("d'' m'' s'' d''");
+        let (midi, rep) = compose_leads(&s, 0, 1);
+        assert_eq!(midi, [60, 64, 67, 60]);
+        assert_eq!(
+            rep,
+            vec![song::Repair::TuneMoved {
+                section: 0,
+                line: 0,
+                octaves: -2
+            }]
+        );
+    }
+
+    /// Without a tune a version-3 song composes as the same song of version 2.
+    #[test]
+    fn a_song_without_a_tune_composes_as_before() {
+        let with = |v: u32| {
+            song(json!({"schema_version":v,"sections":[
+                {"type":"verse","lines":[{"syl":"*one *two three *four","chords":["C G"]}]}
+            ]}))
+        };
+        for seed in 0..6u64 {
+            assert_eq!(
+                compose_leads(&with(2), 0, seed),
+                compose_leads(&with(3), 0, seed)
+            );
+        }
+    }
+
+    #[test]
+    fn line_key_separates_tunes() {
+        let a = tune_song("s m r d");
+        let b = tune_song("d m r d");
+        let (fa, fb) = (
+            crate::form::build_form(&a, 0),
+            crate::form::build_form(&b, 0),
+        );
+        assert_ne!(
+            line_key(&fa, 0, SectionKind::Verse),
+            line_key(&fb, 0, SectionKind::Verse)
+        );
     }
 
     #[test]

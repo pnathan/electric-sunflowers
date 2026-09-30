@@ -33,6 +33,9 @@ pub struct FormLine {
     pub part: Part,
     /// Syllable texts joined by single spaces.
     pub text: String,
+    /// The writer's tune for the line (schema 3), one entry per note of
+    /// `syls`.
+    pub tune: Option<Vec<song::TuneNote>>,
     /// Set by `compose_melody`; `None` until composed.
     pub pitches: Option<Vec<i32>>,
     /// Set by `compose_melody`; `None` until composed.
@@ -369,6 +372,7 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
                         syls: expand_melismas(&ln.syllables),
                         part: ln.part,
                         text: ln.text(),
+                        tune: ln.tune.clone(),
                         pitches: None,
                         rh: None,
                     });

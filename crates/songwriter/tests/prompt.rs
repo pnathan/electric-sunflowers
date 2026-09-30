@@ -395,23 +395,29 @@ fn fixed_duet_does_not_also_say_sung_by_one_voice() {
 }
 
 #[test]
-fn prompt_asks_for_schema_2_and_describes_its_fields() {
+fn prompt_asks_for_schema_3_and_describes_its_fields() {
     let dir = style_direction(Some(StyleId::Gospel), &mut rng(4));
     let p = song_prompt("a shout", None, &dir, "celebratory", 2026);
-    assert!(p.contains("{\"schema_version\":2,\"title\":"));
+    assert!(p.contains("{\"schema_version\":3,\"title\":"));
     for f in [
         "\"sing\":\"choir\"",
         "\"voicing\":\"unison\"",
         "\"~N\"",
         "\"key\":\"<tonic>\"",
         "\"rubato\":\"steady|light|free\"",
+        "TUNES",
+        "movable-do",
+        "\"tune\":\"d d s, s\"",
+        "\"tunes\":[{\"name\"",
+        "at least every chorus line",
     ] {
         assert!(p.contains(f), "{f}");
     }
     assert!(p.is_ascii());
-    // The schema sent to Claude is version 2 and requires the version.
+    // The schema sent to Claude is version 3 and requires the version.
     let sch = song::schema::json_schema();
-    assert_eq!(sch["properties"]["schema_version"]["enum"][0], 2);
+    assert_eq!(sch["properties"]["schema_version"]["enum"][0], 3);
+    assert!(sch["properties"].get("tunes").is_some());
     assert!(sch["required"]
         .as_array()
         .unwrap()
