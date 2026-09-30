@@ -16,9 +16,17 @@ use song::{Meter, Mode, Part, SectionKind, SingerId, Song, Voice};
 /// Tolerance in beats when matching a chord onset to a note.
 const EPS: f64 = 1e-6;
 
+/// The `<stem>.sheet.json` format version. Version 1 (no `version` key) is
+/// what earlier builds wrote; version 2 adds `version`, and per-section
+/// `key`, `rubato` and the choir's lines as later steps of the schema-2
+/// work define them. A reader ignores unknown fields.
+pub const SHEET_VERSION: u32 = 2;
+
 /// A song as sung and played: header fields and sections.
 #[derive(Clone, Debug, Serialize)]
 pub struct SongSheet {
+    /// `SHEET_VERSION`.
+    pub version: u32,
     pub title: String,
     /// Liner note.
     pub note: String,
@@ -57,6 +65,10 @@ pub struct SheetSection {
     /// The section carries the hook (a chorus, or a later verse when there
     /// is no chorus).
     pub lift: bool,
+    /// Tonic of the key in force, after transposition for the voice,
+    /// spelled for its mode.
+    pub key: String,
+    pub mode: Mode,
     pub t0: f64,
     pub t1: f64,
     /// Bars as played, with the chord names sounding in each.
@@ -116,6 +128,11 @@ fn sheet_part(part: Part, voice_a: Voice, voice_b: Option<Voice>) -> SheetPart {
             melody: id.as_str().to_string(),
             label: capitalize(voice_of(id).as_str()),
         },
+        Part::Choir(_) => SheetPart {
+            part: "choir".to_string(),
+            melody: SingerId::A.as_str().to_string(),
+            label: "Choir".to_string(),
+        },
         Part::Both { melody, .. } => SheetPart {
             part: "both".to_string(),
             melody: melody.as_str().to_string(),
@@ -138,9 +155,13 @@ pub struct SheetSyllable {
     pub word: usize,
     pub t0: f64,
     pub t1: f64,
-    /// Sung pitch after transposition.
+    /// Sung pitch after transposition (the first note's, in a melisma).
     pub midi: i32,
     pub stress: bool,
+    /// Notes the syllable is sung over: 1, or 2 to 4 for a melisma
+    /// (schema 2). A melisma is one syllable here, with the times and
+    /// pitch of its first note; its continuation notes are not listed.
+    pub notes: u8,
 }
 
 /// One word: its syllables joined.
@@ -276,6 +297,12 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
             occurrence: sec.occ + 1,
             sung: sec.is_sung(),
             lift: sec.is_lift(),
+            key: sec
+                .key
+                .0
+                .name(sec.key.1.prefers_flats(sec.key.0))
+                .to_string(),
+            mode: sec.key.1,
             t0: tl.to_time(b0 as f64),
             t1: tl.to_time(b1 as f64),
             bars,
@@ -284,6 +311,7 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
     }
 
     SongSheet {
+        version: SHEET_VERSION,
         title: song.title.clone(),
         note: song.note.clone(),
         style: song.style.clone(),
@@ -376,7 +404,24 @@ fn sung_line(
     let mut spans: Vec<(f64, f64)> = Vec::with_capacity(syls.len());
     let mut prev_word: Option<u16> = None;
     let mut last_t = bar_t0;
+    // End of the last note of the line, continuations included.
+    let mut end_t = bar_t0;
     for (k, s) in syls.iter().enumerate() {
+        if s.is_continuation() {
+            // A melisma's later note: no syllable of its own; the word, the
+            // chord span and the line reach to its end.
+            if let Some(n) = notes.get(k).copied().flatten() {
+                last_t = n.t1;
+                end_t = end_t.max(n.t1);
+                if let Some(sp) = spans.last_mut() {
+                    sp.1 = n.beat + n.dur;
+                }
+                if let Some(w) = words.last_mut() {
+                    w.t1 = n.t1;
+                }
+            }
+            continue;
+        }
         let new_word = prev_word != Some(s.word);
         if new_word && k > 0 {
             text.push(' ');
@@ -391,6 +436,7 @@ fn sung_line(
             None => (last_t, last_t, 0, (f64::NAN, f64::NAN)),
         };
         last_t = t1;
+        end_t = end_t.max(t1);
         spans.push(span);
         if new_word {
             words.push(SheetWord {
@@ -412,6 +458,7 @@ fn sung_line(
             t1,
             midi,
             stress: s.stress,
+            notes: s.notes.max(1),
         });
     }
 
@@ -422,7 +469,11 @@ fn sung_line(
     }
 
     let t0 = syllables.first().map_or(bar_t0, |s| s.t0.min(bar_t0));
-    let t1 = syllables.last().map_or(bar_t1, |s| s.t1.max(bar_t1));
+    let t1 = if syllables.is_empty() {
+        bar_t1
+    } else {
+        end_t.max(bar_t1)
+    };
     SheetLine {
         t0,
         t1,
@@ -483,8 +534,13 @@ impl SongSheet {
             out.push_str(&self.note);
             out.push('\n');
         }
+        let mut running = (self.key.as_str(), self.mode);
         for sec in &self.sections {
             out.push('\n');
+            if (sec.key.as_str(), sec.mode) != running {
+                running = (sec.key.as_str(), sec.mode);
+                out.push_str(&format!("Key: {} {}\n", sec.key, sec.mode));
+            }
             out.push_str(&format!("[{}]  {}\n", sec.label, clock(sec.t0)));
             if !sec.sung {
                 let mut row = String::from("|");
@@ -509,6 +565,7 @@ impl SongSheet {
                 ) {
                     (true, Some("B")) => "[B] ",
                     (true, Some("both")) => "[A+B] ",
+                    (_, Some("choir")) => "[Choir] ",
                     _ => "",
                 };
                 out.push_str(prefix);

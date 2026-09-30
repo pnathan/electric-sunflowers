@@ -232,7 +232,7 @@ fn violin_part_view_has_a_multi_bar_rest_and_parses() {
         violin
             .bars
             .iter()
-            .any(|b| matches!(b, notation::full::PartBar::MultiRest { bars } if *bars >= 2)),
+            .any(|b| matches!(b, notation::full::PartBar::MultiRest { bars, .. } if *bars >= 2)),
         "expected at least one multi-bar rest in the violin part"
     );
 
@@ -253,4 +253,21 @@ fn part_view_of_an_absent_part_does_not_panic() {
     // LeadB never has a staff before wave 3.
     let page = Sheet::Part(full, PartId::LeadB).page(notation::DEFAULT_WIDTH);
     parses(&page.svg);
+}
+
+/// The full score's lead staff prints a melisma's syllable once and draws
+/// an extension line under each later note.
+#[test]
+fn full_score_melisma_has_one_lyric_and_extensions() {
+    let song = song_of(serde_json::json!({
+        "schema_version":2,"title":"Melisma","key":"G","mode":"major","meter":"4/4","tempo":92,
+        "sections":[{"type":"verse","lines":[{"syl":"*glo~3 *hal~4 *sing~ out","chords":["G","C","D","G"]}]}]
+    }));
+    let prep = prepare(&song, 4, None);
+    let arr = arrange(&song, &prep, 4);
+    let full = FullScore::new(&song, &prep, &arr);
+    let svg = Sheet::Full(full).page(notation::DEFAULT_WIDTH).svg;
+    parses(&svg);
+    assert_eq!(svg.matches(r#"class="lyric">"#).count(), 4);
+    assert!(svg.matches(r#"stroke-width="0.90""#).count() >= 6);
 }

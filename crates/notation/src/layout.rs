@@ -120,8 +120,8 @@ pub(crate) fn text(
 }
 
 /// Width of the clef, key signature and (first system) time signature.
-fn head_w(score: &Score, first: bool) -> f64 {
-    let ks = score.fifths.unsigned_abs() as f64;
+fn head_w(fifths: i32, first: bool) -> f64 {
+    let ks = fifths.unsigned_abs() as f64;
     3.6 * SP
         + if ks > 0.0 {
             ks * 1.05 * SP + 0.6 * SP
@@ -230,7 +230,7 @@ pub(crate) fn layout(score: &Score) -> Page {
     let mut systems: Vec<(usize, usize, bool)> = Vec::new(); // (first, end, wrapped)
     let mut i = 0;
     while i < ms.len() {
-        let avail = width - 2.0 * MARGIN - head_w(score, systems.is_empty());
+        let avail = width - 2.0 * MARGIN - head_w(ms[i].fifths, systems.is_empty());
         let mut j = i;
         let mut w = 0.0;
         while j < ms.len() && ms[j].chunk == ms[i].chunk && (j == i || w + nat[j].0 <= avail) {
@@ -295,7 +295,7 @@ pub(crate) fn layout(score: &Score) -> Page {
 
     let last_measure = ms.len().saturating_sub(1);
     for (si, &(first, end, wrapped)) in systems.iter().enumerate() {
-        let head = head_w(score, si == 0);
+        let head = head_w(ms[first].fifths, si == 0);
         let avail = width - 2.0 * MARGIN - head;
         let natural: f64 = nat[first..end].iter().map(|x| x.0).sum();
         let scale = if natural <= 0.0 {
@@ -494,15 +494,13 @@ pub(crate) fn layout(score: &Score) -> Page {
             1.0,
         );
         let mut hx = MARGIN + 3.6 * SP;
-        let (steps, acc) = if score.fifths > 0 {
+        let fifths = ms[first].fifths;
+        let (steps, acc) = if fifths > 0 {
             ([38, 35, 39, 36, 33, 37, 34], &glyphs::ACCIDENTAL_SHARP)
         } else {
             ([34, 37, 33, 36, 32, 35, 31], &glyphs::ACCIDENTAL_FLAT)
         };
-        for &st in steps
-            .iter()
-            .take(score.fifths.unsigned_abs().min(7) as usize)
-        {
+        for &st in steps.iter().take(fifths.unsigned_abs().min(7) as usize) {
             glyph(&mut s, acc, hx, y_of(st), 1.0);
             hx += 1.05 * SP;
         }
@@ -523,7 +521,17 @@ pub(crate) fn layout(score: &Score) -> Page {
         // singer of this system's line, first full then short, or "A+B"
         // on a shared line. Never drawn outside a duet, so a solo song's
         // SVG is unchanged.
-        if score.duet {
+        if ms[first].choir {
+            text(
+                &mut s,
+                MARGIN,
+                y_label,
+                LABEL_PX,
+                "start",
+                r#" font-weight="bold""#,
+                "Choir",
+            );
+        } else if score.duet {
             let m0 = &ms[first];
             let lbl = if m0.shared {
                 Some("A+B".to_string())
@@ -811,6 +819,40 @@ pub(crate) fn layout(score: &Score) -> Page {
                     r##"<path d="M{x1:.2} {yy:.2}Q{xm:.2} {:.2} {x2:.2} {yy:.2}Q{xm:.2} {:.2} {x1:.2} {yy:.2}Z" fill="#111"/>"##,
                     yy + c,
                     yy + c * 0.7
+                );
+            }
+            if p.n.ext {
+                // Melisma: an underscore in the lyric row from the middle
+                // of the note before (or its lyric's end) to this note's end.
+                let a = match k.checked_sub(1).map(|j| &pns[j]) {
+                    Some(q) => {
+                        let qhw = if q.ev.d >= 16 { WHOLE_W } else { HEAD_W };
+                        q.x + qhw * 0.5
+                            + q.n.lyric.as_deref().map_or(0.0, lyric_w) * 0.5
+                            + if q.n.lyric.is_some() { 0.3 * SP } else { 0.0 }
+                    }
+                    None => p.x - 0.3 * SP,
+                };
+                let b = (p.x + hw + 0.2 * SP).min(sys_end);
+                if b > a {
+                    line(&mut s, a, y_lyric + 1.0, b, y_lyric + 1.0, 0.9);
+                }
+            }
+            if p.n.slur_out {
+                // Slur to the next note, on the side away from the stems.
+                let x1 = p.x + hw * 0.5;
+                let x2 = pns
+                    .get(k + 1)
+                    .map_or(sys_end - 0.3 * SP, |q| q.x + HEAD_W * 0.5);
+                let below = p.up;
+                let yy = p.y + if below { SP } else { -SP };
+                let c = if below { 1.6 * SP } else { -1.6 * SP };
+                let xm = (x1 + x2) * 0.5;
+                let _ = write!(
+                    s,
+                    r##"<path d="M{x1:.2} {yy:.2}Q{xm:.2} {:.2} {x2:.2} {yy:.2}Q{xm:.2} {:.2} {x1:.2} {yy:.2}Z" fill="#111"/>"##,
+                    yy + c,
+                    yy + c * 0.8
                 );
             }
             if p.n.hyphen {

@@ -77,7 +77,7 @@ pub fn prepare_voices(song: &Song, seed: u64, voice: VoiceChoice) -> Prepared {
     });
     let (form, timeline, mut comp, key_shift) = compose_for_voice(song, seed, vk, vb);
     time_notes(&mut comp.lead, &timeline);
-    comp.second = compose_second(&comp, &form, &timeline, song, vk, vb);
+    comp.second = compose_second(&comp, &form, &timeline, vk, vb);
     time_notes(&mut comp.second, &timeline);
     let tonic = (song.key.get() as i32 + key_shift).rem_euclid(12);
     Prepared {
@@ -185,43 +185,50 @@ pub struct VocalNote {
     pub phrase_end: bool,
     pub grace: Option<i32>,
     pub stress: bool,
+    /// A continuation note of a melisma (`Syllable::is_continuation`): the
+    /// vowel holds from the note before.
+    pub cont: bool,
 }
 
 /// Lead notes as sung notes at level `amp`: unstressed syllables at 0.86,
-/// lifted sections at 1.08.
+/// lifted sections at 1.08. A melisma's continuation notes take the level
+/// of the syllable's first note.
 pub fn vocal_notes(lead: &[LeadNote], amp: f64) -> Vec<VocalNote> {
+    let mut head_stress = false;
     lead.iter()
-        .map(|n| VocalNote {
-            t0: n.t0,
-            t1: n.t1,
-            midi: n.midi,
-            ph: n.syl.phones.clone(),
-            amp: amp * (if n.stress { 1.0 } else { 0.86 }) * (if n.lift { 1.08 } else { 1.0 }),
-            phrase_start: n.phrase_start,
-            phrase_end: n.phrase_end,
-            grace: n.grace,
-            stress: n.stress,
+        .map(|n| {
+            let cont = n.syl.is_continuation();
+            if !cont {
+                head_stress = n.stress;
+            }
+            let loud = if cont { head_stress } else { n.stress };
+            VocalNote {
+                t0: n.t0,
+                t1: n.t1,
+                midi: n.midi,
+                ph: n.syl.phones.clone(),
+                amp: amp * (if loud { 1.0 } else { 0.86 }) * (if n.lift { 1.08 } else { 1.0 }),
+                phrase_start: n.phrase_start,
+                phrase_end: n.phrase_end,
+                grace: n.grace,
+                stress: n.stress,
+                cont,
+            }
         })
         .collect()
 }
 
 /// A harmony a third to a sixth above (`up`) or below the lead: the chord
 /// tone preferred by interval (3rd and 4th best), else two scale steps.
-pub fn harmony_line(
-    lead: &[LeadNote],
-    form: &Form,
-    tl: &Timeline,
-    song: &Song,
-    tonic: i32,
-    up: bool,
-) -> Vec<LeadNote> {
+pub fn harmony_line(lead: &[LeadNote], form: &Form, tl: &Timeline, up: bool) -> Vec<LeadNote> {
     // Preference by interval in semitones, 3..=9: thirds best, the
     // tritone worst, sixths next.
     const SCORES: [f64; 10] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.2, -1.0, 0.4, 0.6, 0.6];
     lead.iter()
         .map(|n| {
             let ch = tl.chord_at(form, n.beat + 0.01);
-            let sc = local_scale(Pc::new(tonic), song.mode, ch);
+            let (tonic, mode) = form.sections[form.lines[n.line_idx].sec].key;
+            let sc = local_scale(tonic, mode, ch);
             let mut h: Option<i32> = None;
             let mut bs = -1e9f64;
             for d in 3..=9i32 {
@@ -271,7 +278,6 @@ pub fn compose_second(
     comp: &Comp,
     form: &Form,
     tl: &Timeline,
-    song: &Song,
     voice_a: Voice,
     voice_b: Option<Voice>,
 ) -> Vec<LeadNote> {
@@ -329,7 +335,7 @@ pub fn compose_second(
                 let melody_singer = l.part.melody();
                 let up =
                     voice_of(other).range().centre() >= voice_of(melody_singer).range().centre();
-                let base = harmony_line(&mnotes, form, tl, song, comp.tonic, up);
+                let base = harmony_line(&mnotes, form, tl, up);
                 let ks: [i32; 2] = if up { [0, 1] } else { [0, -1] };
                 let cands = ks
                     .iter()
@@ -770,7 +776,7 @@ mod tests {
     fn harmony_line_stays_in_scale() {
         let s = song();
         let p = prepare(&s, 99, None);
-        let hl = harmony_line(&p.comp.lead, &p.form, &p.timeline, &s, p.tonic, true);
+        let hl = harmony_line(&p.comp.lead, &p.form, &p.timeline, true);
         assert_eq!(hl.len(), p.comp.lead.len());
         for n in &hl {
             assert!(n.grace.is_none());

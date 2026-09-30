@@ -695,6 +695,7 @@ fn write_sidecars(
         .map(|g| g.model.clone().unwrap_or_else(|| g.requested_model.clone()))
         .or_else(|| src.model.clone());
     let side = RenderSidecar {
+        version: None,
         seed: Some(sheet.seed),
         voice: Some(sheet.voice.as_str().to_string()),
         voice_b: None,

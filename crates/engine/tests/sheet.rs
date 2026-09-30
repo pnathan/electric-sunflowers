@@ -150,3 +150,135 @@ fn text_sheet_has_every_label_and_word() {
     let json = serde_json::to_string(&sheet).expect("sheet serialises");
     assert!(json.contains("\"sections\""));
 }
+
+/// A melisma is one sheet syllable with the first note's time and its note
+/// count; the continuation notes are not listed, and the line covers them.
+#[test]
+fn a_melisma_is_one_sheet_syllable() {
+    let raw = serde_json::json!({
+        "schema_version":2,"title":"Melisma","key":"G","mode":"major","meter":"4/4","tempo":92,
+        "sections":[{"type":"verse","lines":[{"syl":"*glo~3-ry *hal~4-le~-lu~ *jah","chords":["G","C","D","G"]}]}]
+    });
+    let song = song::normalize_value(&raw).expect("melisma song").0;
+    let sheet = song_sheet(&song, 6, None);
+    let p = prepare(&song, 6, None);
+    let line = &sheet.sections[0].lines[0];
+    let texts: Vec<&str> = line.syllables.iter().map(|s| s.text.as_str()).collect();
+    assert_eq!(texts, ["glo", "ry", "hal", "le", "lu", "jah"]);
+    let notes: Vec<u8> = line.syllables.iter().map(|s| s.notes).collect();
+    assert_eq!(notes, [3, 1, 4, 2, 2, 1]);
+    assert_eq!(line.text, "glory hallelu jah");
+    // The first note's time and pitch; the line reaches the last note's end.
+    let lead = &p.comp.lead;
+    assert_eq!(
+        (line.syllables[0].t0, line.syllables[0].t1),
+        (lead[0].t0, lead[0].t1)
+    );
+    assert_eq!(line.syllables[0].midi, lead[0].midi);
+    assert!(line.t1 >= lead[lead.len() - 1].t1);
+    // The word "glory" covers the melisma's notes.
+    assert_eq!(line.words[0].text, "glory");
+    assert!(line.words[0].t1 >= lead[3].t1);
+    assert!(sheet.to_text().contains("glory hallelu jah"));
+    let json = serde_json::to_value(&sheet).unwrap();
+    assert_eq!(json["sections"][0]["lines"][0]["syllables"][0]["notes"], 3);
+    // Every ordinary syllable of the demo song has notes 1.
+    let demo = song_sheet(demo_song(), 1, None);
+    assert!(demo
+        .sections
+        .iter()
+        .flat_map(|s| &s.lines)
+        .flat_map(|l| &l.syllables)
+        .all(|s| s.notes == 1));
+}
+
+/// C major, then a chorus in D major, then a copied verse in E major.
+fn modulating() -> song::Song {
+    let v = serde_json::json!({
+        "schema_version":2,"key":"C","mode":"major","meter":"4/4","tempo":100,
+        "sections":[
+            {"type":"verse","lines":[{"syl":"one *two three *four","chords":["C G"]}]},
+            {"type":"chorus","key":"D","lines":[{"syl":"*five *six *seven *eight","chords":["D A"]}]},
+            {"type":"verse","same":true,"key":"E"},
+            {"type":"chorus","same":true}
+        ]
+    });
+    song::normalize_value(&v).unwrap().0
+}
+
+#[test]
+fn sections_carry_their_key_and_the_text_says_when_it_changes() {
+    let s = modulating();
+    let sheet = song_sheet(&s, 4, None);
+    let p = prepare(&s, 4, None);
+    let name = |tonic: i32, mode: song::Mode| {
+        let t = song::Pc::new(tonic).transpose(p.key_shift);
+        t.name(mode.prefers_flats(t)).to_string()
+    };
+    let want = [
+        (name(0, song::Mode::Major), song::Mode::Major),
+        (name(2, song::Mode::Major), song::Mode::Major),
+        (name(4, song::Mode::Major), song::Mode::Major),
+        // The last chorus copies the chorus, sounding in the running key E.
+        (name(4, song::Mode::Major), song::Mode::Major),
+    ];
+    let got: Vec<_> = sheet
+        .sections
+        .iter()
+        .map(|x| (x.key.clone(), x.mode))
+        .collect();
+    assert_eq!(got, want);
+    // The song's own key stays the opening key.
+    assert_eq!(sheet.key, want[0].0);
+    let text = sheet.to_text();
+    let lines: Vec<&str> = text.lines().collect();
+    let key_lines: Vec<(usize, &str)> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.starts_with("Key: "))
+        .map(|(i, l)| (i, *l))
+        .collect();
+    assert_eq!(key_lines.len(), 2, "{text}");
+    assert_eq!(key_lines[0].1, format!("Key: {} major", want[1].0));
+    assert_eq!(key_lines[1].1, format!("Key: {} major", want[2].0));
+    // Each sits directly above its section's header.
+    assert!(lines[key_lines[0].0 + 1].starts_with("[Chorus"), "{text}");
+    assert!(lines[key_lines[1].0 + 1].starts_with("[Verse 2"), "{text}");
+    // The JSON carries the fields.
+    let j = serde_json::to_value(&sheet).unwrap();
+    assert_eq!(j["sections"][1]["key"], want[1].0);
+    assert_eq!(j["sections"][1]["mode"], "major");
+}
+
+#[test]
+fn a_song_without_key_change_prints_no_key_line() {
+    let sheet = song_sheet(demo_song(), 7, None);
+    assert!(sheet
+        .sections
+        .iter()
+        .all(|s| s.key == sheet.key && s.mode == sheet.mode));
+    assert!(!sheet.to_text().contains("Key: "));
+}
+
+/// A choir line is prefixed `[Choir]` in the chord sheet, in a solo song
+/// too; the sheet tags its part as "choir".
+#[test]
+fn choir_lines_are_prefixed_in_the_text() {
+    let v = serde_json::json!({
+        "schema_version": 2,
+        "title": "Shanty", "note": "", "key": "G", "mode": "major", "meter": "4/4", "tempo": 92,
+        "guitar": "strum", "voice": "baritone",
+        "band": {"drums": "none", "bass": true, "harmonyGuitar": false, "harp": false,
+                 "violin": false, "choir": true, "harmonies": false, "doubles": false},
+        "sections": [{"type": "chorus", "lines": [
+            {"syl": "*heave *ho", "ph": "hh iy v|hh ow", "chords": ["G"]},
+            {"syl": "*roll *ye *bold", "ph": "r ow l|y iy|b ow l d", "chords": ["C", "D"],
+             "sing": "choir"}]}]
+    });
+    let (s, _) = song::normalize_value(&v).expect("song reads");
+    let sheet = song_sheet(&s, 1, None);
+    let text = sheet.to_text();
+    assert!(text.contains("[Choir] roll ye bold"), "{text}");
+    assert!(text.contains("\nheave ho"), "{text}");
+    assert!(!text.contains("[Choir] heave"), "{text}");
+}

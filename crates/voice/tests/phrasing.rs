@@ -32,6 +32,7 @@ fn note(
         phrase_start,
         phrase_end,
         grace: None,
+        legato: false,
     }
 }
 

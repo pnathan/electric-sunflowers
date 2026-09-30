@@ -43,6 +43,11 @@ pub struct ProcessedStem {
     pub audio: Stem,
     pub level: f32,
     pub slap: Option<SparseBuf>,
+    /// Sample spans `[start, end)` where this stem keys the vocal ducker
+    /// like a lead and is itself never ducked: the choir's word lines. Empty
+    /// for every other stem (and for a choir with no word lines), which
+    /// leaves the ducker as it was.
+    pub key: Vec<(usize, usize)>,
 }
 
 /// The strip's EQ as a fixed array of sections.
@@ -226,6 +231,7 @@ pub fn run_strip(strip: &Strip, mut audio: Stem) -> Option<ProcessedStem> {
         audio,
         level: level as f32,
         slap,
+        key: Vec::new(),
     })
 }
 

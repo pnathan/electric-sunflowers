@@ -289,3 +289,38 @@ fn arrange_has_no_audio_code() {
         }
     }
 }
+
+/// A melisma is one onset: the lead sings each syllable's first note with
+/// its consonants and the others legato on the held vowel alone.
+#[test]
+fn melisma_notes_are_legato_vowels() {
+    let raw = serde_json::json!({
+        "schema_version":2,"title":"Melisma Test","key":"G","mode":"major","meter":"4/4","tempo":92,
+        "sections":[
+            {"type":"verse","lines":[{"syl":"*glo~3-ry *hal~4-le~-lu~ *jah","chords":["G","C","D","G"]}]},
+            {"type":"chorus","lines":[{"syl":"*sing~ out *loud","chords":["C","G"]}]}
+        ]
+    });
+    let song = song::normalize_value(&raw).expect("melisma song").0;
+    let (p, a) = plan(&song, 5);
+    let lead = &a.vocals.lead.notes;
+    // 13 + 4 notes; 6 + 3 of them begin a syllable.
+    assert_eq!(lead.len(), 17);
+    assert_eq!(lead.iter().filter(|n| !n.legato).count(), 9);
+    for (i, n) in lead.iter().enumerate() {
+        if n.legato {
+            assert!(i > 0 && !n.phrase_start);
+            assert!(n.phones.first().is_some_and(|p| p.is_vowel()));
+            // Bound to the note before: no gap to speak of.
+            assert!(n.t0 - lead[i - 1].t1 < 0.02, "note {i}");
+        }
+    }
+    assert_eq!(
+        p.comp
+            .lead
+            .iter()
+            .filter(|n| n.syl.is_continuation())
+            .count(),
+        8
+    );
+}

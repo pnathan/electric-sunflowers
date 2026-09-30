@@ -1,0 +1,26 @@
+{
+ "schema_version": 2,
+ "title": "Haul Away Home",
+ "note": "A work-song test for schema 2: the lead calls, the crew answers, one held syllable, a last chorus a step up, and a light rubato.",
+ "key": "G",
+ "mode": "major",
+ "meter": "4/4",
+ "tempo": 96,
+ "guitar": "strum",
+ "voice": "baritone",
+ "rubato": "light",
+ "phrasing": {"delivery": "flowing", "endings": "released"},
+ "band": {"drums": "soft", "bass": true, "harmonyGuitar": false, "harp": false, "violin": true, "choir": true, "harmonies": false, "doubles": false},
+ "sections": [
+  {"type": "intro", "chords": ["G", "C", "G", "D"]},
+  {"type": "verse", "lines": [
+   {"syl": "*Mon-day we *load the *salt and the *tar,", "chords": ["G", "C G"]},
+   {"syl": "*Tues-day we *mend the *sail and the *spar,", "chords": ["G", "D"]},
+   {"syl": "*haul *a-way *home", "chords": ["C", "G"], "sing": "choir", "voicing": "unison"}]},
+  {"type": "chorus", "lines": [
+   {"syl": "*Haul a-*way, *boys, the *wind is *fair,", "chords": ["G", "C"]},
+   {"syl": "*Sing it with *me till the *har-bor *glo~3-ry", "chords": ["G", "D"]},
+   {"syl": "*haul *a-way *home", "chords": ["C", "G"], "sing": "choir", "voicing": "block"}]},
+  {"type": "chorus", "same": true, "key": "A"}
+ ]
+}

@@ -1,6 +1,7 @@
 //! Typed song model: Song, Section, Mode, Meter, SectionKind, DrumKit, Voice, Band,
 //! duet parts (Part, SingerId, Blend, Duet) and singer phrasing (Phrasing,
-//! Delivery, Endings). Every value is in range after `wire::normalize`; the
+//! Delivery, Endings), and the schema-2 additions (choir lines, melismas,
+//! per-section key and rubato). Every value is in range after `wire::normalize`; the
 //! render path does not validate again.
 
 use crate::chord::{ChordId, ChordTable};
@@ -49,6 +50,20 @@ impl Mode {
         matches!(self, Mode::Minor | Mode::Dorian)
     }
 }
+
+/// The song JSON schema versions this build reads. Version 1 is the
+/// original format; version 2 adds `schema_version`, `rubato`, choir lines
+/// (`sing: "choir"`, `voicing`), melismas (`~N` after a syllable) and a
+/// section `key` and `rubato`. A document with no `schema_version` is
+/// version 1 unless it uses a version-2 field (then it is read as 2, with a
+/// repair). See `song::schema` and `wire`.
+pub const SCHEMA_V1: u32 = 1;
+pub const SCHEMA_V2: u32 = 2;
+/// The newest version; what `schema::json_schema` describes and Claude writes.
+pub const SCHEMA_LATEST: u32 = SCHEMA_V2;
+
+/// The most notes one syllable may carry (a melisma), including the first.
+pub const MELISMA_MAX_NOTES: u8 = 4;
 
 named_enum! {
     /// Time signature.
@@ -302,6 +317,27 @@ named_enum! {
 }
 
 named_enum! {
+    /// How freely the tempo breathes (schema 2). `Steady` is today's timing
+    /// exactly; `Light` and `Free` stretch the end of each phrase and
+    /// relax the beat inside it (`compose::timeline`).
+    pub enum Rubato ("rubato") {
+        Steady = "steady",
+        Light = "light",
+        Free = "free",
+    }
+}
+
+named_enum! {
+    /// How the choir sings a choir line (schema 2): all voices on the tune
+    /// (a crew, a shanty chorus) or four-part block harmony (a gospel
+    /// response).
+    pub enum ChoirVoicing ("choir voicing") {
+        Unison = "unison",
+        Block = "block",
+    }
+}
+
+named_enum! {
     /// How the other singer sings a shared line against the melody: a
     /// harmony interval (`harmony_line`, chord tones first) or the same
     /// tune in another octave.
@@ -318,7 +354,14 @@ named_enum! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Part {
     Solo(SingerId),
-    Both { melody: SingerId, blend: Blend },
+    Both {
+        melody: SingerId,
+        blend: Blend,
+    },
+    /// Sung by the choir instead of the lead (schema 2): the answer of a
+    /// call and response, or a crew's refrain. The tune is composed as
+    /// singer A's; neither lead sings the line.
+    Choir(ChoirVoicing),
 }
 
 impl Default for Part {
@@ -333,14 +376,20 @@ impl Part {
         match self {
             Part::Solo(s) => s,
             Part::Both { melody, .. } => melody,
+            Part::Choir(_) => SingerId::A,
         }
+    }
+
+    /// Whether the choir, not a lead, sings the line.
+    pub fn is_choir(self) -> bool {
+        matches!(self, Part::Choir(_))
     }
 
     /// The other singer and how they blend, on a shared line; `None` when
     /// the line is sung by one singer alone.
     pub fn other(self) -> Option<(SingerId, Blend)> {
         match self {
-            Part::Solo(_) => None,
+            Part::Solo(_) | Part::Choir(_) => None,
             Part::Both { melody, blend } => {
                 let other = match melody {
                     SingerId::A => SingerId::B,
@@ -352,7 +401,7 @@ impl Part {
     }
 }
 
-/// `{"sing": "A"|"B"|"both", "lead"?: "A"|"B", "blend"?: "harmony"|"octave"}`,
+/// `{"sing": "A"|"B"|"both"|"choir", "lead"?: "A"|"B", "blend"?: "harmony"|"octave"}`,
 /// the wire shape of a shared line's part (design 4.3). `lead` and `blend`
 /// are present only when the line is shared.
 impl Serialize for Part {
@@ -362,6 +411,12 @@ impl Serialize for Part {
             Part::Solo(id) => {
                 let mut m = s.serialize_map(Some(1))?;
                 m.serialize_entry("sing", id.as_str())?;
+                m.end()
+            }
+            Part::Choir(v) => {
+                let mut m = s.serialize_map(Some(2))?;
+                m.serialize_entry("sing", "choir")?;
+                m.serialize_entry("voicing", v.as_str())?;
                 m.end()
             }
             Part::Both { melody, blend } => {
@@ -440,6 +495,19 @@ pub struct Syllable {
     pub word_end: bool,
     /// Phonemes, with at least one vowel.
     pub phones: Vec<Phoneme>,
+    /// Notes this syllable is sung over: 1, or 2..=`MELISMA_MAX_NOTES` for a
+    /// melisma (schema 2). The vowel holds across them. In a line expanded
+    /// to notes (`compose::form`), 0 marks a continuation note of the
+    /// melisma the syllable before it began.
+    pub notes: u8,
+}
+
+impl Syllable {
+    /// A continuation note of a melisma: sung on the vowel of the syllable
+    /// before it, with no text of its own (`notes == 0`).
+    pub const fn is_continuation(&self) -> bool {
+        self.notes == 0
+    }
 }
 
 /// One lyric line: at least one syllable and 1-4 bars.
@@ -491,6 +559,14 @@ pub enum SectionBody {
     Instrumental(Vec<BarChords>),
 }
 
+/// A change of key at the start of a section (schema 2): the new tonic and
+/// mode. The chords of the section are written in the new key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct KeyChange {
+    pub tonic: Pc,
+    pub mode: Mode,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Section {
     pub kind: SectionKind,
@@ -499,6 +575,11 @@ pub struct Section {
     /// Index (in `Song::sections`) of the section this one repeats verbatim
     /// (the model's `same: true`); the body is a copy of that section's.
     pub repeat_of: Option<u16>,
+    /// A new key from this section on; `None` keeps the running key (the
+    /// song's, or the last change's). Always `None` in a version-1 song.
+    pub key_change: Option<KeyChange>,
+    /// This section's rubato; `None` takes the song's.
+    pub rubato: Option<Rubato>,
 }
 
 impl Section {
@@ -535,6 +616,8 @@ impl Section {
 /// A song after normalisation. Every value is in range.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Song {
+    /// The schema version the song was read as (1 or 2); `to_wire` writes it back.
+    pub schema_version: u32,
     /// At most 120 characters.
     pub title: String,
     /// At most 400 characters.
@@ -556,6 +639,8 @@ pub struct Song {
     pub phrasing: Option<Phrasing>,
     /// Singer B, when the song is a duet; `None` is solo.
     pub duet: Option<Duet>,
+    /// The song's rubato; a section may override it.
+    pub rubato: Rubato,
     /// At least one section is sung.
     pub sections: Vec<Section>,
     /// Every chord the song uses; `BarChords` index into it.
@@ -579,6 +664,29 @@ impl Song {
 
     pub fn chord(&self, id: ChordId) -> &crate::chord::Chord {
         self.chords.get(id)
+    }
+
+    /// The key and mode in force in section `i`: the last `key_change` at or
+    /// before it, else the song's own. Untransposed.
+    pub fn key_at(&self, i: usize) -> (Pc, Mode) {
+        self.sections[..=i.min(self.sections.len().saturating_sub(1))]
+            .iter()
+            .rev()
+            .find_map(|s| s.key_change)
+            .map_or((self.key, self.mode), |k| (k.tonic, k.mode))
+    }
+
+    /// The rubato in force in section `i`.
+    pub fn rubato_at(&self, i: usize) -> Rubato {
+        self.sections
+            .get(i)
+            .and_then(|s| s.rubato)
+            .unwrap_or(self.rubato)
+    }
+
+    /// Whether any section changes key.
+    pub fn modulates(&self) -> bool {
+        self.sections.iter().any(|s| s.key_change.is_some())
     }
 
     /// Whether the song has a singer B.
@@ -646,6 +754,7 @@ mod tests {
             word_start: false,
             word_end: false,
             phones: vec![],
+            notes: 1,
         };
         let l = Line {
             syllables: vec![syl("hel", 0), syl("lo", 0), syl("world", 1)],

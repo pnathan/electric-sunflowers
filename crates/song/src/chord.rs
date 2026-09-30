@@ -306,6 +306,11 @@ pub fn transpose_symbol(s: &str, semis: i32, flats: bool) -> String {
 pub struct ChordId(u16);
 
 impl ChordId {
+    /// The id at table position `i`; `None` beyond the id range.
+    pub fn from_index(i: usize) -> Option<ChordId> {
+        u16::try_from(i).ok().map(ChordId)
+    }
+
     pub const fn index(self) -> usize {
         self.0 as usize
     }

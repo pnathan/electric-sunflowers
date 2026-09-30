@@ -387,7 +387,7 @@ fn part_view_folds_silent_runs_into_multi_rests() {
         .iter()
         .map(|b| match b {
             PartBar::Bar { .. } => 1,
-            PartBar::MultiRest { bars } => *bars,
+            PartBar::MultiRest { bars, .. } => *bars,
         })
         .sum();
     assert_eq!(
@@ -398,7 +398,138 @@ fn part_view_folds_silent_runs_into_multi_rests() {
         harmony
             .bars
             .iter()
-            .any(|b| matches!(b, PartBar::MultiRest { bars } if *bars >= 2)),
+            .any(|b| matches!(b, PartBar::MultiRest { bars, .. } if *bars >= 2)),
         "expected at least one multi-bar rest in the harmony part"
     );
+}
+
+/// C major, a chorus in D major, then a copied verse in E major and a copied
+/// chorus that stays in E.
+fn modulating() -> Song {
+    song_of(serde_json::json!({
+        "schema_version":2,"key":"C","mode":"major","meter":"4/4","tempo":100,
+        "sections":[
+            {"type":"verse","lines":[{"syl":"one *two three *four","chords":["C G"]}]},
+            {"type":"chorus","key":"D","lines":[
+                {"syl":"*five *six *seven *eight","chords":["D A"]},
+                {"syl":"*nine *ten *e-le-ven","chords":["G D"]}]},
+            {"type":"verse","same":true,"key":"E"},
+            {"type":"chorus","same":true}
+        ]
+    }))
+}
+
+/// Sharps in the signature of a major key on pitch class `pc`.
+fn major_fifths(pc: i32) -> i32 {
+    let f = (pc * 7).rem_euclid(12);
+    if f > 6 {
+        f - 12
+    } else {
+        f
+    }
+}
+
+/// Staff letters (C = 0 .. B = 6) altered by the signature of `fifths`.
+fn signature_letters(fifths: i32) -> Vec<i32> {
+    let n = fifths.unsigned_abs() as usize;
+    let order: [i32; 7] = if fifths > 0 {
+        [3, 0, 4, 1, 5, 2, 6]
+    } else {
+        [6, 2, 5, 1, 4, 0, 3]
+    };
+    order[..n].to_vec()
+}
+
+#[test]
+fn each_bar_takes_its_sections_key() {
+    let song = modulating();
+    let mut checked = 0;
+    let mut in_signature = 0;
+    for seed in 0..24u64 {
+        let voice = song::Voice::ALL[seed as usize % song::Voice::ALL.len()];
+        let prep = prepare(&song, seed, Some(voice));
+        let arr = arrange(&song, &prep, seed);
+        let score = FullScore::new(&song, &prep, &arr);
+        let shift = prep.key_shift;
+        // The song's own tonics, moved by the voice's key shift.
+        let want = |written: i32| major_fifths((written + shift).rem_euclid(12));
+        for b in &score.bars {
+            let w = match b.sec {
+                0 => want(0),
+                1 => want(2),
+                _ => want(4),
+            };
+            assert_eq!(b.fifths, w, "seed {seed} bar {} (section {})", b.bar, b.sec);
+        }
+        // A key change starts a system, so its signature is drawn there.
+        let page = notation::Sheet::Full(score.clone()).page(notation::DEFAULT_WIDTH);
+        let mut sharps = 0i32;
+        let mut flats = 0i32;
+        let pitched = score
+            .staves
+            .iter()
+            .filter(|s| s.clef != Clef::Percussion)
+            .count() as i32;
+        for sec in 0..prep.form.sections.len() {
+            let first = score.bars.iter().find(|b| b.sec == sec).unwrap();
+            assert!(
+                page.systems.iter().any(|s| (s.0 - first.t0).abs() < 1e-6),
+                "seed {seed}: no system starts section {sec}"
+            );
+        }
+        for s in &page.systems {
+            let b = score
+                .bars
+                .iter()
+                .rev()
+                .find(|b| b.t0 <= s.0 + 1e-6)
+                .unwrap();
+            sharps += b.fifths.max(0) * pitched;
+            flats += (-b.fifths).max(0) * pitched;
+        }
+        // Accidentals on notes add their own glyphs.
+        let lead = score
+            .staves
+            .iter()
+            .position(|s| s.part == PartId::Lead)
+            .unwrap();
+        for b in &score.bars {
+            for (si, cell) in b.cells.iter().enumerate() {
+                for e in cell.voices.iter().flatten() {
+                    for h in e.chord.iter().flat_map(|c| &c.heads) {
+                        match h.accidental {
+                            Some(1) => sharps += 1,
+                            Some(-1) => flats += 1,
+                            _ => {}
+                        }
+                        // The melody lies in its section's scale: no accidental
+                        // at all, and in particular none for F# in D major.
+                        if si == lead {
+                            assert_eq!(h.accidental, None, "seed {seed} bar {}", b.bar);
+                            if b.sec == 1
+                                && signature_letters(b.fifths).contains(&h.step.rem_euclid(7))
+                            {
+                                in_signature += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let count = |g: &str| page.svg.matches(&format!("href=\"#g-{g}\"")).count() as i32;
+        assert_eq!(count("accidentalSharp"), sharps, "seed {seed}");
+        assert_eq!(count("accidentalFlat"), flats, "seed {seed}");
+        // The part view carries the same keys.
+        let part = score.part(PartId::Lead).unwrap();
+        for pb in &part.bars {
+            if let PartBar::Bar { bar, fifths, .. } = pb {
+                assert_eq!(*fifths, score.bars[*bar].fifths);
+            }
+        }
+        checked += 1;
+    }
+    assert_eq!(checked, 24);
+    // Notes on the letters of the chorus's signature (F and C in D major)
+    // were spelled with it, and none needed a courtesy accidental.
+    assert!(in_signature > 0, "no chorus note on a signature letter");
 }

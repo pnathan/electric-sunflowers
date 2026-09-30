@@ -25,7 +25,7 @@ use compose::timeline::Timeline;
 use song::events::DrumKind;
 use song::{Mode, Pc, SectionKind, SingerId, Song, Voice};
 
-use crate::score::{key_alterations, key_fifths, spell, Grid};
+use crate::score::{key_alterations, key_fifths, key_name, spell, Grid};
 
 /// One sounding part of the score, in the order the score is printed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -108,6 +108,9 @@ pub struct StaffDef {
     pub abbrev: String,
     pub clef: Clef,
     pub group: Group,
+    /// The staff carries a lyric row: the leads, and a choir staff when the
+    /// choir sings words (choir lines).
+    pub lyrics: bool,
 }
 
 /// A notehead shape.
@@ -133,9 +136,14 @@ pub struct NoteChord {
     pub heads: Vec<Head>,
     pub tie_in: bool,
     pub tie_out: bool,
-    /// The Lead staff only.
+    /// The lead staves and the choir staves' word lines only.
     pub lyric: Option<String>,
     pub hyphen: bool,
+    /// A lyric staff only: an extension line runs under this chord in the
+    /// lyric row (a melisma's continuation, or a later part of a melisma
+    /// note), and a slur runs from it to the next note.
+    pub ext: bool,
+    pub slur_out: bool,
     pub t0: f64,
     pub t1: f64,
     /// Drum swish only ("sw.").
@@ -164,6 +172,8 @@ pub struct BarCol {
     pub bar: usize,
     /// Index into the form's sections.
     pub sec: usize,
+    /// Key signature in force in this bar's section (sharps positive).
+    pub fifths: i32,
     /// Break group: bars of one lyric line, or a run of bars without lyrics
     /// in one section (the lead sheet's chunking rule). Wave 1 starts a
     /// system per chunk.
@@ -186,6 +196,7 @@ pub struct FullScore {
     pub width: f64,
     pub(crate) meter: song::Meter,
     pub(crate) tempo: f64,
+    /// The opening key signature; each bar carries its own (`BarCol::fifths`).
     pub(crate) fifths: i32,
     pub staves: Vec<StaffDef>,
     pub bars: Vec<BarCol>,
@@ -205,6 +216,7 @@ pub enum PartBar {
     Bar {
         bar: usize,
         sec: usize,
+        fifths: i32,
         chunk: usize,
         label: Option<String>,
         chords: Vec<(i64, String)>,
@@ -214,6 +226,8 @@ pub enum PartBar {
     },
     MultiRest {
         bars: usize,
+        /// Key signature of the section the run lies in.
+        fifths: i32,
     },
 }
 
@@ -234,6 +248,9 @@ struct RawNote {
     notehead: Notehead,
     lyric: Option<String>,
     hyphen: bool,
+    /// The note belongs to a melisma, and is a continuation of it.
+    melisma: bool,
+    cont: bool,
     text: Option<String>,
     /// 0, or for drums 0 (up: everything but the kick) and 1 (down: kick).
     voice: usize,
@@ -250,6 +267,8 @@ impl RawNote {
             notehead: Notehead::Normal,
             lyric: None,
             hyphen: false,
+            melisma: false,
+            cont: false,
             text: None,
             voice: 0,
         }
@@ -372,10 +391,18 @@ fn raw_notes_of(
             .comp
             .lead
             .iter()
-            .map(|n| RawNote {
-                lyric: Some(n.syl.text.clone()),
-                hyphen: !n.syl.word_end,
-                ..RawNote::pitched(n.t0, n.t1, n.midi as f64)
+            // A choir line is the choir's: the lead rests.
+            .filter(|n| !prep.form.lines[n.line_idx].part.is_choir())
+            .map(|n| {
+                let cont = n.syl.is_continuation();
+                let melisma = cont || n.syl.notes > 1;
+                RawNote {
+                    lyric: (!cont).then(|| n.syl.text.clone()),
+                    hyphen: !melisma && !n.syl.word_end,
+                    melisma,
+                    cont,
+                    ..RawNote::pitched(n.t0, n.t1, n.midi as f64)
+                }
             })
             .collect(),
         PartId::LeadB => {
@@ -405,10 +432,16 @@ fn raw_notes_of(
             b.notes
                 .iter()
                 .zip(lyric_notes)
-                .map(|(n, ln)| RawNote {
-                    lyric: Some(ln.syl.text.clone()),
-                    hyphen: !ln.syl.word_end,
-                    ..RawNote::pitched(n.t0, n.t1, n.midi as f64)
+                .map(|(n, ln)| {
+                    let cont = ln.syl.is_continuation();
+                    let melisma = cont || ln.syl.notes > 1;
+                    RawNote {
+                        lyric: (!cont).then(|| ln.syl.text.clone()),
+                        hyphen: !melisma && !ln.syl.word_end,
+                        melisma,
+                        cont,
+                        ..RawNote::pitched(n.t0, n.t1, n.midi as f64)
+                    }
                 })
                 .collect()
         }
@@ -436,16 +469,28 @@ fn raw_notes_of(
             };
             let form = &prep.form;
             let tl = &prep.timeline;
-            let sings = |s: &compose::form::Sec| {
-                s.is_repeat_lift() || matches!(s.kind, SectionKind::Bridge | SectionKind::Outro)
-            };
-            arrange::choir::voicings(form, tl, sings)
-                .iter()
-                .map(|v| {
-                    let sg = &tl.segs[v.seg];
-                    RawNote::pitched(tl.to_time(sg.b0), tl.to_time(sg.b1), v.notes[idx] as f64)
-                })
-                .collect()
+            let mut raw: Vec<RawNote> =
+                arrange::choir::voicings_clear(form, tl, arrange::choir::sings_here)
+                    .iter()
+                    .map(|v| {
+                        let sg = &tl.segs[v.seg];
+                        RawNote::pitched(tl.to_time(sg.b0), tl.to_time(sg.b1), v.notes[idx] as f64)
+                    })
+                    .collect();
+            // The choir lines' words, as composed (no jitter, no lateness).
+            raw.extend(arrange::choir::line_notes(prep).iter().map(|w| {
+                let n = &w.note;
+                let cont = n.syl.is_continuation();
+                let melisma = cont || n.syl.notes > 1;
+                RawNote {
+                    lyric: (!cont).then(|| n.syl.text.clone()),
+                    hyphen: !melisma && !n.syl.word_end,
+                    melisma,
+                    cont,
+                    ..RawNote::pitched(n.t0, n.t1, w.midi[idx] as f64)
+                }
+            }));
+            raw
         }
         PartId::Violin => {
             if !song.band.violin {
@@ -496,6 +541,8 @@ fn raw_notes_of(
                         notehead,
                         lyric: None,
                         hyphen: false,
+                        melisma: false,
+                        cont: false,
                         text: text.map(str::to_string),
                         voice: drum_voice(h.kind),
                     }
@@ -516,6 +563,10 @@ struct Cluster {
     heads: Vec<(f64, Option<i32>, Notehead)>,
     lyric: Option<String>,
     hyphen: bool,
+    melisma: bool,
+    cont: bool,
+    /// The next cluster continues this melisma.
+    slur_next: bool,
     text: Option<String>,
 }
 
@@ -527,15 +578,14 @@ fn unit_of(tl: &Timeline, grid: &Grid, sec: f64) -> i64 {
 }
 
 /// One voice's raw notes into per-bar `Ev` lists (rests fill the gaps, a
-/// silent bar is one whole rest), spelling pitched heads in `fifths` with
-/// key alterations `key_alt`, resetting the spelling state each bar.
+/// silent bar is one whole rest), spelling pitched heads in each bar's key
+/// (`keys[bar]`), resetting the spelling state each bar.
 fn quantize_voice(
     notes: &[&RawNote],
     tl: &Timeline,
     grid: &Grid,
     n_bars: usize,
-    fifths: i32,
-    key_alt: &[i32; 7],
+    keys: &[BarKey],
     written: i32,
 ) -> Vec<Vec<Ev>> {
     let bar_u = grid.bar_u;
@@ -570,6 +620,9 @@ fn quantize_voice(
                 heads: vec![head],
                 lyric: n.lyric.clone(),
                 hyphen: n.hyphen,
+                melisma: n.melisma,
+                cont: n.cont,
+                slur_next: false,
                 text: n.text.clone(),
             }),
         }
@@ -592,6 +645,7 @@ fn quantize_voice(
         };
         let raw_end = items[i].end_gu.unwrap_or(cap);
         items[i].end_gu = Some(raw_end.min(cap).max(items[i].gu0 + 1));
+        items[i].slur_next = items.get(i + 1).is_some_and(|c| c.cont);
     }
 
     let mut per_bar: Vec<Vec<Ev>> = vec![Vec::new(); n_bars];
@@ -600,6 +654,7 @@ fn quantize_voice(
         let b1 = b0 + bar_u;
         let mut c = 0i64;
         let mut state: Vec<(i32, i32)> = Vec::new();
+        let (fifths, key_alt) = &keys[bar];
         for it in &items {
             let end = it.end_gu.unwrap();
             if end <= b0 || it.gu0 >= b1 {
@@ -633,7 +688,7 @@ fn quantize_voice(
                         },
                         None => {
                             let (l, a, step) =
-                                spell(midi.round() as i32 + written, fifths, key_alt);
+                                spell(midi.round() as i32 + written, *fifths, key_alt);
                             let cur = state
                                 .iter()
                                 .find(|x| x.0 == step)
@@ -664,6 +719,8 @@ fn quantize_voice(
                         tie_out,
                         lyric: (j == 0 && starts_here).then(|| it.lyric.clone()).flatten(),
                         hyphen: j == 0 && starts_here && it.hyphen,
+                        ext: it.melisma && (it.cont || j > 0 || !starts_here),
+                        slur_out: it.slur_next && e == end && j + 1 == np,
                         t0: tl.to_time(g0 as f64 * grid.unit()),
                         t1: tl.to_time(g1 as f64 * grid.unit()),
                         text: (j == 0).then(|| it.text.clone()).flatten(),
@@ -686,6 +743,18 @@ fn quantize_voice(
     per_bar
 }
 
+/// A bar's key signature (sharps positive) and its alteration of each
+/// letter.
+type BarKey = (i32, [i32; 7]);
+
+/// How a staff's pitches are spelled: each bar's key and the
+/// written-octave offset.
+#[derive(Clone, Copy)]
+struct Spelling<'a> {
+    keys: &'a [BarKey],
+    written: i32,
+}
+
 /// Builds one staff's `Cell`s (one per bar) from its raw notes. `written`
 /// is added to each pitch before spelling: 12 semitones for a clef whose
 /// staff is written an octave from where it sounds (`Treble8vb`,
@@ -695,15 +764,21 @@ fn build_cells(
     tl: &Timeline,
     grid: &Grid,
     n_bars: usize,
-    fifths: i32,
-    key_alt: &[i32; 7],
-    written: i32,
+    spelling: Spelling,
+    drums: bool,
 ) -> Vec<Cell> {
-    let max_voice = raw.iter().map(|r| r.voice).max().unwrap_or(0);
+    // The drum staff always carries two voices (hands up, feet down), even
+    // when the kit plays no kick.
+    let max_voice = raw
+        .iter()
+        .map(|r| r.voice)
+        .max()
+        .unwrap_or(0)
+        .max(usize::from(drums));
     let per_voice: Vec<Vec<Vec<Ev>>> = (0..=max_voice)
         .map(|v| {
             let notes: Vec<&RawNote> = raw.iter().filter(|r| r.voice == v).collect();
-            quantize_voice(&notes, tl, grid, n_bars, fifths, key_alt, written)
+            quantize_voice(&notes, tl, grid, n_bars, spelling.keys, spelling.written)
         })
         .collect();
     (0..n_bars)
@@ -749,7 +824,19 @@ impl FullScore {
         let grid = Grid::of(song.meter);
         let n_bars = form.bars.len();
         let fifths = key_fifths(prep.tonic, song.mode);
-        let key_alt = key_alterations(fifths);
+        // Each bar's key: that of its section.
+        let bar_keys: Vec<BarKey> = form
+            .bars
+            .iter()
+            .map(|b| {
+                let (tonic, mode) = form
+                    .sections
+                    .get(b.sec)
+                    .map_or((Pc::new(prep.tonic), song.mode), |s| s.key);
+                let f = key_fifths(tonic.get() as i32, mode);
+                (f, key_alterations(f))
+            })
+            .collect();
 
         let verses = form
             .sections
@@ -779,7 +866,14 @@ impl FullScore {
                 .sections
                 .get(sec)
                 .filter(|s| bar == s.start_bar)
-                .map(|s| section_label(s.kind, s.role, s.occ, verses));
+                .map(|s| {
+                    let l = section_label(s.kind, s.role, s.occ, verses);
+                    // A section whose key differs from the one before it says so.
+                    match sec.checked_sub(1).and_then(|p| form.sections.get(p)) {
+                        Some(p) if p.key != s.key => format!("{l} (Key: {})", key_name(s.key)),
+                        _ => l,
+                    }
+                });
             let b0 = (bar as i64 * grid.bar_u) as f64 * u;
             let b1 = ((bar + 1) as i64 * grid.bar_u) as f64 * u;
             bar_meta.push((
@@ -839,17 +933,21 @@ impl FullScore {
                 tl,
                 &grid,
                 n_bars,
-                if pitched { fifths } else { 0 },
-                &key_alt,
-                written,
+                Spelling {
+                    keys: &bar_keys,
+                    written,
+                },
+                !pitched,
             );
             all_cells.push(cells);
+            let lyrics = raw.iter().any(|r| r.lyric.is_some());
             staves.push(StaffDef {
                 part,
                 name,
                 abbrev: abbrev.to_string(),
                 clef,
                 group: group_of(part),
+                lyrics: matches!(part, PartId::Lead | PartId::LeadB) || lyrics,
             });
         }
 
@@ -861,6 +959,7 @@ impl FullScore {
                 BarCol {
                     bar,
                     sec,
+                    fifths: bar_keys[bar].0,
                     chunk,
                     label,
                     chords: chs,
@@ -928,7 +1027,10 @@ impl FullScore {
                 }
                 let run = j - i;
                 if run >= 2 {
-                    bars.push(PartBar::MultiRest { bars: run });
+                    bars.push(PartBar::MultiRest {
+                        bars: run,
+                        fifths: b.fifths,
+                    });
                     i = j;
                     continue;
                 }
@@ -936,6 +1038,7 @@ impl FullScore {
             bars.push(PartBar::Bar {
                 bar: b.bar,
                 sec: b.sec,
+                fifths: b.fifths,
                 chunk: b.chunk,
                 label: b.label.clone(),
                 chords: b.chords.clone(),

@@ -178,3 +178,106 @@ fn narrow_page_wraps_lines() {
     }
     write_png(&engrave(&narrow), "demo-narrow");
 }
+
+/// A melisma prints its syllable once, under the first note; each later
+/// note gets an extension line in the lyric row (a 0.9 px stroke; the
+/// syllables here are whole words, so no hyphen uses that stroke); and a
+/// slur joins the notes. The same words with no melisma draw none.
+#[test]
+fn melisma_prints_one_lyric_and_an_extension() {
+    let of = |syl: &str| {
+        song_of(&format!(
+            r#"{{"schema_version":2,"title":"Melisma","key":"G","mode":"major","meter":"4/4","tempo":92,
+               "sections":[{{"type":"verse","lines":[{{"syl":"{syl}","chords":["G","C","D","G"]}}]}}]}}"#
+        ))
+    };
+    let ext = |svg: &str| svg.matches(r#"stroke-width="0.90""#).count();
+    let song = of("*glo~3 *hal~4 *sing~ out");
+    let prep = prepare(&song, 4, None);
+    let score = Score::new(&song, &prep);
+    let svg = engrave(&score);
+    let conts = prep
+        .comp
+        .lead
+        .iter()
+        .filter(|n| n.syl.is_continuation())
+        .count();
+    assert_eq!(conts, 6);
+    assert_eq!(lyrics(&svg), ["glo", "hal", "sing", "out"]);
+    assert!(ext(&svg) >= conts, "{} extension lines", ext(&svg));
+    assert_eq!(
+        note_boxes(&score).len(),
+        svg.matches(r#"<g class="note""#).count()
+    );
+    write_png(&svg, "melisma");
+
+    let plain = of("*glo *hal *sing out");
+    let svg = engrave(&Score::new(&plain, &prepare(&plain, 4, None)));
+    assert_eq!(lyrics(&svg), ["glo", "hal", "sing", "out"]);
+    assert_eq!(ext(&svg), 0);
+}
+
+/// C major, a chorus in D major, then a copied verse in E major.
+fn modulating() -> Song {
+    song_of(
+        r#"{"schema_version":2,"key":"C","mode":"major","meter":"4/4","tempo":100,
+        "sections":[
+            {"type":"verse","lines":[{"syl":"one *two three *four","chords":["C G"]}]},
+            {"type":"chorus","key":"D","lines":[
+                {"syl":"*five *six *seven *eight","chords":["D A"]},
+                {"syl":"*nine *ten *e-le-ven","chords":["G D"]}]},
+            {"type":"verse","same":true,"key":"E"}
+        ]}"#,
+    )
+}
+
+/// Sharps in the signature of a major key on pitch class `pc`.
+fn major_fifths(pc: i32) -> i32 {
+    let f = (pc * 7).rem_euclid(12);
+    if f > 6 {
+        f - 12
+    } else {
+        f
+    }
+}
+
+/// Each system draws the key signature of its own section, and a section
+/// that changes key says so in its label. The melody lies in each section's
+/// scale, so no note carries an accidental and every sharp or flat glyph in
+/// the SVG belongs to a signature.
+#[test]
+fn each_system_draws_its_sections_signature() {
+    let song = modulating();
+    for seed in [1u64, 2, 3, 4] {
+        let prep = prepare(&song, seed, None);
+        let score = Score::new(&song, &prep);
+        let svg = engrave(&score);
+        let tl = &prep.timeline;
+        let form = &prep.form;
+        let starts: Vec<f64> = form
+            .sections
+            .iter()
+            .map(|s| tl.to_time((s.start_bar as i32 * form.bpb()) as f64))
+            .collect();
+        let (mut sharps, mut flats) = (0i32, 0i32);
+        let mut per_section = vec![0usize; starts.len()];
+        for b in system_boxes(&score) {
+            let si = starts.iter().rposition(|&t| t <= b.0 + 1e-6).unwrap_or(0);
+            per_section[si] += 1;
+            let f = major_fifths(form.sections[si].key.0.get() as i32);
+            sharps += f.max(0);
+            flats += (-f).max(0);
+        }
+        // One system per lyric line (or run of bars): the chorus has two.
+        assert_eq!(per_section, vec![1, 2, 1], "seed {seed}");
+        let count = |g: &str| svg.matches(&format!("href=\"#g-{g}\"")).count() as i32;
+        assert_eq!(count("accidentalSharp"), sharps, "seed {seed}");
+        assert_eq!(count("accidentalFlat"), flats, "seed {seed}");
+        // Changed keys are named on the section label; the opening key is not.
+        assert!(
+            !svg.contains("Key:") || svg.contains("(Key: "),
+            "seed {seed}"
+        );
+        assert_eq!(svg.matches("(Key: ").count(), 2, "seed {seed}");
+    }
+}

@@ -61,10 +61,6 @@ fn y_step(clef: Clef, step: i32) -> f64 {
     layout::y_of(step + clef_offset(clef))
 }
 
-fn lyric_staff(part: PartId) -> bool {
-    matches!(part, PartId::Lead | PartId::LeadB)
-}
-
 /// Width contributed by a clef glyph (Bravura for treble, drawn for the
 /// rest): not measured, an eyeballed footprint wide enough for the shape
 /// `drawn` actually draws.
@@ -130,7 +126,7 @@ fn bar_columns(bar: &BarCol, staves: &[StaffDef], bar_u: i64) -> BarNat {
                 if !c.tie_in && c.heads.iter().any(|h| h.accidental.is_some()) {
                     accidental = true;
                 }
-                if lyric_staff(staves[si].part) {
+                if staves[si].lyrics {
                     if let Some(l) = &c.lyric {
                         lyric = Some((l.as_str(), c.hyphen));
                     }
@@ -162,7 +158,7 @@ fn staff_rows(staves: &[StaffDef]) -> (Vec<Row>, f64) {
         };
         rows.push(Row { top: y });
         y += 4.0 * SP + ROW_PAD;
-        if lyric_staff(st.part) {
+        if st.lyrics {
             y += LYRIC_ROOM;
         }
     }
@@ -295,13 +291,14 @@ fn draw_system(
     first: usize,
     end: usize,
     width: f64,
-    fifths: i32,
     meter: song::Meter,
     is_first_system: bool,
     cursor: f64,
     nat: &[BarNat],
     bar_u: i64,
 ) -> f64 {
+    // The system's key signature: that of its first bar's section.
+    let fifths = bars[first].fifths;
     let head = head_w(staves, fifths, is_first_system);
     let avail = width - 2.0 * MARGIN - head;
     let natural: f64 = nat[first..end].iter().map(|x| x.0).sum();
@@ -643,6 +640,39 @@ fn draw_voice(
                 yy + c * 0.7
             );
         }
+        let y_lyric = row_top + 4.0 * SP + ROW_PAD + 1.6 * SP;
+        if chord.ext {
+            // Melisma: an underscore in the lyric row from the note before
+            // (or its lyric's end) to the end of this note.
+            let a = match ei.checked_sub(1).and_then(|j| voice.get(j)) {
+                Some(q) => {
+                    let qw = if q.d >= 16 { WHOLE_W } else { HEAD_W };
+                    let lyr = q.chord.as_ref().and_then(|c| c.lyric.as_deref());
+                    x_of(q.s) + qw * 0.5 + lyr.map_or(0.0, |l| lyric_w(l) * 0.5 + 0.3 * SP)
+                }
+                None => x - 0.3 * SP,
+            };
+            let b = (x + hw + 0.2 * SP).min(MARGIN + sys_end_local);
+            if b > a {
+                line(s, a, y_lyric + 1.0, b, y_lyric + 1.0, 0.9);
+            }
+        }
+        if chord.slur_out {
+            let x1 = x + hw * 0.5;
+            let x2 = voice
+                .get(ei + 1)
+                .map_or(x + hw + 2.0 * SP, |q| x_of(q.s) + HEAD_W * 0.5)
+                .min(MARGIN + sys_end_local);
+            let yy = row_top + y_step(clef, rep) + if up { SP } else { -SP };
+            let c = if up { 1.6 * SP } else { -1.6 * SP };
+            let xm = (x1 + x2) * 0.5;
+            let _ = write!(
+                s,
+                r##"<path d="M{x1:.2} {yy:.2}Q{xm:.2} {:.2} {x2:.2} {yy:.2}Q{xm:.2} {:.2} {x1:.2} {yy:.2}Z" fill="#111"/>"##,
+                yy + c,
+                yy + c * 0.8
+            );
+        }
         if let Some(l) = &chord.lyric {
             text(
                 s,
@@ -695,7 +725,6 @@ fn svg_document(width: f64, height: f64, body: &str) -> String {
 /// every staff of the score in every system.
 pub(crate) fn layout_full(score: &FullScore) -> Page {
     let width = score.width;
-    let fifths = score.fifths;
     let bar_u = {
         let g = score.meter.grid();
         2 * g.sub as i64 * g.beats as i64
@@ -709,12 +738,13 @@ pub(crate) fn layout_full(score: &FullScore) -> Page {
     let mut systems: Vec<(usize, usize)> = Vec::new();
     let mut i = 0;
     while i < score.bars.len() {
-        let head = head_w(&score.staves, fifths, systems.is_empty());
+        let head = head_w(&score.staves, score.bars[i].fifths, systems.is_empty());
         let avail = width - 2.0 * MARGIN - head;
         let mut j = i;
         let mut w = 0.0;
         while j < score.bars.len()
             && score.bars[j].chunk == score.bars[i].chunk
+            && score.bars[j].fifths == score.bars[i].fifths
             && (j == i || w + nat[j].0 <= avail)
         {
             w += nat[j].0;
@@ -758,7 +788,6 @@ pub(crate) fn layout_full(score: &FullScore) -> Page {
             first,
             end,
             width,
-            fifths,
             score.meter,
             si == 0,
             cursor,
@@ -784,13 +813,7 @@ pub(crate) fn layout_full(score: &FullScore) -> Page {
 /// in time-signature digits above it. Section labels are printed as
 /// rehearsal marks (boxed letters are not attempted; the label text
 /// itself, as the lead sheet prints it).
-pub(crate) fn layout_part(
-    part: &PartScore,
-    meter: song::Meter,
-    fifths: i32,
-    title: &str,
-    width: f64,
-) -> Page {
+pub(crate) fn layout_part(part: &PartScore, meter: song::Meter, title: &str, width: f64) -> Page {
     let staves = std::slice::from_ref(&part.staff);
     let bar_u = {
         let g = meter.grid();
@@ -808,6 +831,7 @@ pub(crate) fn layout_part(
             PartBar::Bar {
                 bar,
                 sec,
+                fifths,
                 chunk: _,
                 label,
                 chords,
@@ -819,6 +843,7 @@ pub(crate) fn layout_part(
                     bar: BarCol {
                         bar: *bar,
                         sec: *sec,
+                        fifths: *fifths,
                         chunk,
                         label: label.clone(),
                         chords: chords.clone(),
@@ -829,7 +854,7 @@ pub(crate) fn layout_part(
                     multi: None,
                 });
             }
-            PartBar::MultiRest { bars } => {
+            PartBar::MultiRest { bars, fifths } => {
                 let rest_ev = Ev {
                     s: 0,
                     d: bar_u,
@@ -839,6 +864,7 @@ pub(crate) fn layout_part(
                     bar: BarCol {
                         bar: 0,
                         sec: 0,
+                        fifths: *fifths,
                         chunk,
                         label: None,
                         chords: Vec::new(),
@@ -868,11 +894,15 @@ pub(crate) fn layout_part(
     let mut systems: Vec<(usize, usize)> = Vec::new();
     let mut i = 0;
     while i < bars.len() {
-        let head = head_w(staves, fifths, systems.is_empty());
+        let head = head_w(staves, bars[i].fifths, systems.is_empty());
         let avail = width - 2.0 * MARGIN - head;
         let mut j = i;
         let mut w = 0.0;
-        while j < bars.len() && (j == i || w + nat[j].0 <= avail) {
+        // A key change starts a system, so the new signature is drawn.
+        while j < bars.len()
+            && bars[j].fifths == bars[i].fifths
+            && (j == i || w + nat[j].0 <= avail)
+        {
             w += nat[j].0;
             j += 1;
         }
@@ -905,7 +935,6 @@ pub(crate) fn layout_part(
             first,
             end,
             width,
-            fifths,
             meter,
             si == 0,
             cursor,
@@ -917,7 +946,7 @@ pub(crate) fn layout_part(
             if let Some(n) = pbs[k].multi {
                 let bw = nat[k].0.min(width) * 1.0;
                 let x0 = MARGIN
-                    + head_w(staves, fifths, si == 0)
+                    + head_w(staves, bars[first].fifths, si == 0)
                     + nat[first..k].iter().map(|x| x.0).sum::<f64>();
                 let row_top = staff_rows(staves).0[0].top;
                 let mid = cursor + row_top + 2.0 * SP;

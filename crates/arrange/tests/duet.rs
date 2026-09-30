@@ -131,6 +131,9 @@ fn solo_arrangement_is_unchanged() {
         v.doubles,
         v.choir
     );
+    // The melisma flag `legato` is `false` on every note of this song; the
+    // checksum is of the arrangement as it was before the field existed.
+    let stable = stable.replace(", legato: false", "");
     let h = fnv1a(stable.as_bytes());
     assert_eq!(
         h, 0x6c1999626d93ac0f,

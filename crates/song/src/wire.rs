@@ -46,12 +46,14 @@
 //!   not shared they are ignored. A duet where singer B never sings is
 //!   read as solo.
 
+use crate::chord::transpose_symbol;
 use crate::chord::{parse_detail, Chord, ChordId, ChordTable};
 use crate::g2p::g2p;
 use crate::model::{
-    Band, BarChords, Blend, BreakLead, Delivery, Duet, Endings, GuitarPattern, Line, Meter, Mode,
-    Part, Phrasing, Section, SectionBody, SectionKind, SectionRole, SingerId, Song, Syllable,
-    Voice,
+    Band, BarChords, Blend, BreakLead, ChoirVoicing, Delivery, Duet, Endings, GuitarPattern,
+    KeyChange, Line, Meter, Mode, Part, Phrasing, Rubato, Section, SectionBody, SectionKind,
+    SectionRole, SingerId, Song, Syllable, Voice, MELISMA_MAX_NOTES, SCHEMA_LATEST, SCHEMA_V1,
+    SCHEMA_V2,
 };
 use crate::phoneme::Phoneme;
 use crate::pitch::Pc;
@@ -74,6 +76,10 @@ pub const DEFAULT_TEMPO: f64 = 88.0;
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct WireSong {
+    /// The schema version the document declares; absent is version 1 unless
+    /// a version-2 field is used (see `resolve_version`).
+    #[serde(deserialize_with = "loose_num")]
+    pub schema_version: Option<f64>,
     #[serde(deserialize_with = "loose_str")]
     pub title: Option<String>,
     #[serde(deserialize_with = "loose_str")]
@@ -100,6 +106,9 @@ pub struct WireSong {
     /// present but not an object.
     #[serde(deserialize_with = "loose_obj_seen")]
     pub duet: Option<Option<WireDuet>>,
+    /// Schema 2: the song's rubato.
+    #[serde(deserialize_with = "loose_str")]
+    pub rubato: Option<String>,
     /// `None` entries were not JSON objects.
     #[serde(deserialize_with = "loose_objs")]
     pub sections: Vec<Option<WireSection>>,
@@ -165,6 +174,15 @@ pub struct WireSection {
     /// Default blend of a shared line in this section.
     #[serde(deserialize_with = "loose_str")]
     pub blend: Option<String>,
+    /// Schema 2: default choir voicing of this section's choir lines.
+    #[serde(deserialize_with = "loose_str")]
+    pub voicing: Option<String>,
+    /// Schema 2: the key (and optionally mode) from this section on.
+    #[serde(deserialize_with = "loose_str")]
+    pub key: Option<String>,
+    /// Schema 2: this section's rubato.
+    #[serde(deserialize_with = "loose_str")]
+    pub rubato: Option<String>,
     /// `None` entries were not JSON objects.
     #[serde(deserialize_with = "loose_objs")]
     pub lines: Vec<Option<WireLine>>,
@@ -195,6 +213,9 @@ pub struct WireLine {
     /// This line's own blend; same presence rule as `lead`.
     #[serde(deserialize_with = "loose_str_seen")]
     pub blend: Option<Option<String>>,
+    /// Schema 2: this choir line's voicing.
+    #[serde(deserialize_with = "loose_str")]
+    pub voicing: Option<String>,
 }
 
 /// String, or a number or boolean written as text; anything else is absent.
@@ -321,6 +342,8 @@ pub enum SongError {
     NoChords,
     /// More than 65536 distinct chords.
     TooManyChords,
+    /// `schema_version` newer than this build reads (`SCHEMA_LATEST`).
+    UnsupportedSchema(i64),
 }
 
 impl fmt::Display for SongError {
@@ -331,6 +354,10 @@ impl fmt::Display for SongError {
             SongError::NoLyrics => f.write_str("song has no section with a lyric line"),
             SongError::NoChords => f.write_str("song has no chord that parses"),
             SongError::TooManyChords => f.write_str("song has more than 65536 distinct chords"),
+            SongError::UnsupportedSchema(v) => write!(
+                f,
+                "song schema_version {v} is newer than this build reads ({SCHEMA_LATEST})"
+            ),
         }
     }
 }
@@ -444,6 +471,27 @@ pub enum Repair {
     /// A duet where singer B sings no line, alone, as the melody or as the
     /// other voice; the song is read as solo.
     UnusedDuet,
+    /// No `schema_version`, but the document uses a version-2 field; read
+    /// as version 2.
+    SchemaVersionInferred,
+    /// A field of a newer schema than the document declares; ignored.
+    /// `section` and `line` locate it; both `None` for a top-level field.
+    FieldNeedsSchema {
+        field: &'static str,
+        needs: u32,
+        section: Option<usize>,
+        line: Option<usize>,
+    },
+    /// A melisma length outside 2..=`MELISMA_MAX_NOTES`; clamped.
+    ClampedMelisma {
+        section: usize,
+        line: usize,
+        text: String,
+        to: u8,
+    },
+    /// A choir line in a song whose band has no choir; the choir is
+    /// switched on.
+    ChoirEnabled,
 }
 
 impl fmt::Display for Repair {
@@ -576,6 +624,35 @@ impl fmt::Display for Repair {
                 )
             }
             UnusedDuet => f.write_str("duet dropped: singer B sings no line"),
+            SchemaVersionInferred => {
+                f.write_str("schema_version absent, read as 2 (version-2 fields are used)")
+            }
+            FieldNeedsSchema {
+                field,
+                needs,
+                section,
+                line,
+            } => {
+                write!(f, "{field}")?;
+                if let Some(s) = section {
+                    write!(f, " (section {s}")?;
+                    if let Some(l) = line {
+                        write!(f, " line {l}")?;
+                    }
+                    f.write_str(")")?;
+                }
+                write!(f, ": needs schema_version {needs}, ignored")
+            }
+            ClampedMelisma {
+                section,
+                line,
+                text,
+                to,
+            } => write!(
+                f,
+                "section {section} line {line}: melisma {text:?} clamped to {to} notes"
+            ),
+            ChoirEnabled => f.write_str("choir line without band.choir: the choir is on"),
         }
     }
 }
@@ -710,6 +787,7 @@ enum SingText {
     A,
     B,
     Both,
+    Choir,
 }
 
 fn parse_sing(text: &str) -> Option<SingText> {
@@ -720,6 +798,8 @@ fn parse_sing(text: &str) -> Option<SingText> {
         Some(SingText::B)
     } else if t.eq_ignore_ascii_case("both") {
         Some(SingText::Both)
+    } else if t.eq_ignore_ascii_case("choir") {
+        Some(SingText::Choir)
     } else {
         None
     }
@@ -750,6 +830,7 @@ fn resolve_sing(
                 SingText::A
             }
             Some(SingText::A) => SingText::A,
+            Some(SingText::Choir) => SingText::Choir,
             Some(_) if !is_duet => {
                 rep.push(Repair::PartWithoutDuet { section, line });
                 SingText::A
@@ -854,6 +935,15 @@ impl Chords<'_> {
             self.overflow = true;
         }
         id
+    }
+
+    /// `id` moved up `semis` semitones; `id` itself when the result does not parse.
+    fn transposed(&mut self, id: ChordId, semis: i32, flats: bool) -> ChordId {
+        let sym = transpose_symbol(&self.table.get(id).symbol, semis, flats);
+        match Chord::parse(&sym) {
+            Ok(c) => self.intern(c).unwrap_or(id),
+            Err(_) => id,
+        }
     }
 
     /// Chord to use where none is given: the previous one, else the tonic triad.
@@ -963,13 +1053,28 @@ impl Chords<'_> {
 /// Syllables of one lyric text. Returns an empty list when there are none.
 /// Each non-empty part with no letter or digit, and each word made only of
 /// hyphens, is recorded as `Repair::DroppedSyllable`.
-fn syllables(text: &str, section: usize, line: usize, rep: &mut Vec<Repair>) -> Vec<Syllable> {
+///
+/// With `melisma` (schema 2), a part may end in `~` or `~N`: the syllable is
+/// sung over N notes (2 for a bare `~`), clamped to 2..=`MELISMA_MAX_NOTES`
+/// with `Repair::ClampedMelisma`.
+fn syllables(
+    text: &str,
+    melisma: bool,
+    section: usize,
+    line: usize,
+    rep: &mut Vec<Repair>,
+) -> Vec<Syllable> {
     let mut out = Vec::new();
     let mut word: u16 = 0;
     for w in text.split_whitespace() {
         let start = out.len();
         let mut reported = false;
         for part in w.split('-') {
+            let (part, notes) = if melisma {
+                split_melisma(part, section, line, rep)
+            } else {
+                (part, 1)
+            };
             if !part.chars().any(char::is_alphanumeric) {
                 if !part.is_empty() {
                     rep.push(Repair::DroppedSyllable {
@@ -988,6 +1093,7 @@ fn syllables(text: &str, section: usize, line: usize, rep: &mut Vec<Repair>) -> 
                 word_start: out.len() == start,
                 word_end: false,
                 phones: Vec::new(),
+                notes,
             });
         }
         if out.len() > start {
@@ -1007,6 +1113,38 @@ fn syllables(text: &str, section: usize, line: usize, rep: &mut Vec<Repair>) -> 
         default_stress(&mut out);
     }
     out
+}
+
+/// Splits a trailing melisma mark (`~` or `~N`) off a syllable part: the
+/// part without it, and the note count (1 when there is no mark).
+fn split_melisma<'a>(
+    part: &'a str,
+    section: usize,
+    line: usize,
+    rep: &mut Vec<Repair>,
+) -> (&'a str, u8) {
+    let Some(pos) = part.rfind('~') else {
+        return (part, 1);
+    };
+    let tail = &part[pos + 1..];
+    if !tail.chars().all(|c| c.is_ascii_digit()) {
+        return (part, 1);
+    }
+    let asked: u64 = if tail.is_empty() {
+        2
+    } else {
+        tail.parse().unwrap_or(u64::MAX)
+    };
+    let notes = asked.clamp(2, MELISMA_MAX_NOTES as u64) as u8;
+    if asked != notes as u64 {
+        rep.push(Repair::ClampedMelisma {
+            section,
+            line,
+            text: part[pos..].to_string(),
+            to: notes,
+        });
+    }
+    (&part[..pos], notes)
 }
 
 /// Stress for a line written without '*': the first syllable of every
@@ -1084,9 +1222,165 @@ fn assign_phones(
     }
 }
 
+/// Whether the document uses any version-2 field.
+fn uses_v2(w: &WireSong) -> bool {
+    let choir = |t: &Option<String>| {
+        t.as_deref()
+            .is_some_and(|t| parse_sing(t) == Some(SingText::Choir))
+    };
+    w.rubato.is_some()
+        || w.sections.iter().flatten().any(|s| {
+            s.key.is_some()
+                || s.rubato.is_some()
+                || s.voicing.is_some()
+                || choir(&s.sing)
+                || s.lines.iter().flatten().any(|l| {
+                    l.voicing.is_some()
+                        || choir(&l.sing)
+                        || [&l.syl, &l.lyric, &l.text]
+                            .into_iter()
+                            .flatten()
+                            .any(|t| t.contains('~'))
+                })
+        })
+}
+
+/// Settles the document's schema version and removes the version-2 fields
+/// of a document that declares version 1. Absent: version 1, or 2 when a
+/// version-2 field is used (`SchemaVersionInferred`). A `~` in a version-1
+/// lyric stays part of the syllable's text, as before.
+fn resolve_version(w: &mut WireSong, rep: &mut Vec<Repair>) -> Result<u32, SongError> {
+    let declared = match w.schema_version {
+        Some(v) if v.is_finite() && v >= 1.0 => Some(v.round() as i64),
+        Some(_) => {
+            rep.push(Repair::DefaultedField {
+                field: "schema_version",
+            });
+            None
+        }
+        None => None,
+    };
+    let version = match declared {
+        Some(v) if v > SCHEMA_LATEST as i64 => return Err(SongError::UnsupportedSchema(v)),
+        Some(v) => v as u32,
+        None if uses_v2(w) => {
+            rep.push(Repair::SchemaVersionInferred);
+            SCHEMA_V2
+        }
+        None => SCHEMA_V1,
+    };
+    if version >= SCHEMA_V2 {
+        return Ok(version);
+    }
+    let mut needs = |field: &'static str, section: Option<usize>, line: Option<usize>| {
+        rep.push(Repair::FieldNeedsSchema {
+            field,
+            needs: SCHEMA_V2,
+            section,
+            line,
+        });
+    };
+    if w.rubato.take().is_some() {
+        needs("rubato", None, None);
+    }
+    let is_choir = |t: &Option<String>| {
+        t.as_deref()
+            .is_some_and(|t| parse_sing(t) == Some(SingText::Choir))
+    };
+    for (si, s) in w.sections.iter_mut().enumerate() {
+        let Some(s) = s else { continue };
+        if s.key.take().is_some() {
+            needs("key", Some(si), None);
+        }
+        if s.rubato.take().is_some() {
+            needs("rubato", Some(si), None);
+        }
+        if s.voicing.take().is_some() {
+            needs("voicing", Some(si), None);
+        }
+        if is_choir(&s.sing) {
+            s.sing = None;
+            needs("sing: choir", Some(si), None);
+        }
+        for (li, l) in s.lines.iter_mut().enumerate() {
+            let Some(l) = l else { continue };
+            if l.voicing.take().is_some() {
+                needs("voicing", Some(si), Some(li));
+            }
+            if is_choir(&l.sing) {
+                l.sing = None;
+                needs("sing: choir", Some(si), Some(li));
+            }
+        }
+    }
+    Ok(version)
+}
+
+/// A section's `key` text: the tonic, and a mode from its suffix (the
+/// running mode when there is none). Unusable text is ignored with a
+/// `DefaultedField`.
+fn parse_section_key(
+    text: Option<String>,
+    run: (Pc, Mode),
+    rep: &mut Vec<Repair>,
+) -> Option<(Pc, Mode)> {
+    let text = text?;
+    let t = text.trim();
+    let Some((pc, n)) = Pc::parse_prefix(t) else {
+        rep.push(Repair::DefaultedField {
+            field: "sections.key",
+        });
+        return None;
+    };
+    let rest = t[n..].trim();
+    if rest.is_empty() {
+        return Some((pc, run.1));
+    }
+    match mode_from_key_suffix(rest) {
+        Some(m) => Some((pc, m)),
+        None => {
+            rep.push(Repair::DefaultedField {
+                field: "sections.key",
+            });
+            Some((pc, run.1))
+        }
+    }
+}
+
+/// `body` with every chord moved up `semis` semitones, spelled for `flats`.
+fn transposed_body(body: &SectionBody, semis: i32, flats: bool, ch: &mut Chords) -> SectionBody {
+    let mut bar = |b: &BarChords| -> BarChords {
+        let ids: Vec<ChordId> = b
+            .as_slice()
+            .iter()
+            .map(|&id| ch.transposed(id, semis, flats))
+            .collect();
+        match ids[..] {
+            [a] => BarChords::one(a),
+            [a, b] => BarChords::two(a, b),
+            _ => *b,
+        }
+    };
+    match body {
+        SectionBody::Sung(lines) => SectionBody::Sung(
+            lines
+                .iter()
+                .map(|l| Line {
+                    bars: l.bars.iter().map(&mut bar).collect(),
+                    ..l.clone()
+                })
+                .collect(),
+        ),
+        SectionBody::Instrumental(bars) => {
+            SectionBody::Instrumental(bars.iter().map(&mut bar).collect())
+        }
+    }
+}
+
 /// Validates a wire song. See the module doc for the rules.
-pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
+pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
     let mut rep = Vec::new();
+    let version = resolve_version(&mut w, &mut rep)?;
 
     let title = match w.title.filter(|s| !s.trim().is_empty()) {
         Some(t) => truncate_chars(t, TITLE_MAX_CHARS, "title", &mut rep),
@@ -1152,8 +1446,10 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
     );
     let voice = pick(w.voice.as_deref(), Voice::Baritone, "voice", &mut rep);
 
+    let rubato = resolve_named(w.rubato.take(), Rubato::Steady, "rubato", &mut rep);
+
     let d = Band::default();
-    let band = match w.band {
+    let mut band = match w.band {
         Some(b) => Band {
             drums: pick(b.drums.as_deref(), d.drums, "band.drums", &mut rep),
             bass: flag(b.bass, d.bass, "band.bass", &mut rep),
@@ -1196,6 +1492,10 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
     };
     let mut sections: Vec<Section> = Vec::new();
     let mut last_sung: HashMap<SectionKind, usize> = HashMap::new();
+    // The key in force after each pushed section, and the running key.
+    let mut eff_keys: Vec<(Pc, Mode)> = Vec::new();
+    let mut run_key = (key, mode);
+    let mut choir_line = false;
 
     for (si, ws) in w.sections.into_iter().enumerate() {
         let Some(ws) = ws else {
@@ -1212,19 +1512,47 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             });
         }
 
+        let target_key = parse_section_key(ws.key, run_key, ch.rep).unwrap_or(run_key);
+        let key_change = (target_key != run_key).then_some(KeyChange {
+            tonic: target_key.0,
+            mode: target_key.1,
+        });
+        let sec_rubato = ws.rubato.and_then(|t| match t.parse::<Rubato>() {
+            Ok(r) => Some(r),
+            Err(_) => {
+                ch.rep.push(Repair::DefaultedField {
+                    field: "sections.rubato",
+                });
+                None
+            }
+        });
+
         if ws.same == Some(true) {
             match last_sung
                 .get(&kind)
                 .and_then(|&i| Some((i, u16::try_from(i).ok()?)))
             {
                 Some((i, src)) => {
-                    let body = sections[i].body.clone();
+                    // A repeat sounds in the running key: its chords move by
+                    // the interval between the source's key and that key.
+                    let semis = target_key.0.get() as i32 - eff_keys[i].0.get() as i32;
+                    let body = if semis.rem_euclid(12) == 0 {
+                        sections[i].body.clone()
+                    } else {
+                        let flats = target_key.1.prefers_flats(target_key.0);
+                        transposed_body(&sections[i].body.clone(), semis, flats, &mut ch)
+                    };
+                    let inherited = sections[i].rubato;
                     sections.push(Section {
                         kind,
                         role: SectionRole::Plain,
                         body,
                         repeat_of: Some(src),
+                        key_change,
+                        rubato: sec_rubato.or(inherited),
                     });
+                    eff_keys.push(target_key);
+                    run_key = target_key;
                     continue;
                 }
                 None => ch.rep.push(Repair::MissingRepeatSource { section: si }),
@@ -1237,6 +1565,8 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         let sing_default = resolve_sing(ws.sing, is_duet, si, None, ch.rep);
         let lead_default = resolve_named(ws.lead, SingerId::A, "lines.lead", ch.rep);
         let blend_default = resolve_named(ws.blend, Blend::Harmony, "lines.blend", ch.rep);
+        let voicing_default =
+            resolve_named(ws.voicing, ChoirVoicing::Unison, "lines.voicing", ch.rep);
 
         let mut lines = Vec::new();
         for (li, wl) in ws.lines.into_iter().enumerate() {
@@ -1253,7 +1583,7 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                 .find(|s| !s.trim().is_empty());
             let mut syls = text
                 .as_deref()
-                .map(|t| syllables(t, si, li, ch.rep))
+                .map(|t| syllables(t, version >= SCHEMA_V2, si, li, ch.rep))
                 .unwrap_or_default();
             if syls.is_empty() {
                 ch.rep.push(Repair::DroppedLine {
@@ -1278,18 +1608,35 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             let blend_present = wl.blend.is_some();
             let lead_text = wl.lead.flatten();
             let blend_text = wl.blend.flatten();
+            let voicing_present = wl.voicing.is_some();
+            let voicing_text = wl.voicing;
             let part = match sing_sel {
+                SingText::Choir => {
+                    ignore_if_present(lead_present, "lead", si, li, ch.rep);
+                    ignore_if_present(blend_present, "blend", si, li, ch.rep);
+                    choir_line = true;
+                    let v = match voicing_text {
+                        Some(t) => {
+                            resolve_named(Some(t), ChoirVoicing::Unison, "lines.voicing", ch.rep)
+                        }
+                        None => voicing_default,
+                    };
+                    Part::Choir(v)
+                }
                 SingText::A => {
+                    ignore_if_present(voicing_present, "voicing", si, li, ch.rep);
                     ignore_if_present(lead_present, "lead", si, li, ch.rep);
                     ignore_if_present(blend_present, "blend", si, li, ch.rep);
                     Part::Solo(SingerId::A)
                 }
                 SingText::B => {
+                    ignore_if_present(voicing_present, "voicing", si, li, ch.rep);
                     ignore_if_present(lead_present, "lead", si, li, ch.rep);
                     ignore_if_present(blend_present, "blend", si, li, ch.rep);
                     Part::Solo(SingerId::B)
                 }
                 SingText::Both => {
+                    ignore_if_present(voicing_present, "voicing", si, li, ch.rep);
                     let melody = match lead_text {
                         Some(t) => resolve_named(Some(t), SingerId::A, "lines.lead", ch.rep),
                         None => lead_default,
@@ -1315,7 +1662,11 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                 role: SectionRole::Plain,
                 body: SectionBody::Sung(lines),
                 repeat_of: None,
+                key_change,
+                rubato: sec_rubato,
             });
+            eff_keys.push(target_key);
+            run_key = target_key;
             continue;
         }
         let entries = ws.chords.unwrap_or_default();
@@ -1337,7 +1688,11 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             role: SectionRole::Plain,
             body: SectionBody::Instrumental(bars),
             repeat_of: None,
+            key_change,
+            rubato: sec_rubato,
         });
+        eff_keys.push(target_key);
+        run_key = target_key;
     }
 
     let (parsed, overflow, chords) = (ch.parsed, ch.overflow, ch.table);
@@ -1359,7 +1714,13 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         duet
     };
 
+    if choir_line && !band.choir {
+        band.choir = true;
+        rep.push(Repair::ChoirEnabled);
+    }
+
     let song = Song {
+        schema_version: version,
         title,
         note,
         key,
@@ -1373,6 +1734,7 @@ pub fn normalize(w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
         style: None,
         phrasing,
         duet,
+        rubato,
         sections,
         chords,
     };
@@ -1411,6 +1773,19 @@ pub fn to_wire(song: &Song) -> Value {
     for s in &song.sections {
         let mut o = serde_json::Map::new();
         o.insert("type".into(), Value::String(s.kind.as_str().into()));
+        if let Some(k) = s.key_change {
+            o.insert(
+                "key".into(),
+                Value::String(format!(
+                    "{} {}",
+                    k.tonic.name(k.mode.prefers_flats(k.tonic)),
+                    k.mode
+                )),
+            );
+        }
+        if let Some(r) = s.rubato {
+            o.insert("rubato".into(), Value::String(r.as_str().into()));
+        }
         if s.repeat_of.is_some() {
             o.insert("same".into(), Value::Bool(true));
         } else {
@@ -1430,6 +1805,9 @@ pub fn to_wire(song: &Song) -> Value {
                                     syl.push('*');
                                 }
                                 syl.push_str(&x.text);
+                                if x.notes > 1 {
+                                    syl.push_str(&format!("~{}", x.notes));
+                                }
                                 for (k, p) in x.phones.iter().enumerate() {
                                     if k > 0 {
                                         ph.push(' ');
@@ -1445,6 +1823,15 @@ pub fn to_wire(song: &Song) -> Value {
                                 match l.part {
                                     Part::Solo(id) => {
                                         o.insert("sing".into(), Value::String(id.as_str().into()));
+                                    }
+                                    Part::Choir(v) => {
+                                        o.insert("sing".into(), Value::String("choir".into()));
+                                        if v != ChoirVoicing::Unison {
+                                            o.insert(
+                                                "voicing".into(),
+                                                Value::String(v.as_str().into()),
+                                            );
+                                        }
                                     }
                                     Part::Both { melody, blend } => {
                                         o.insert("sing".into(), Value::String("both".into()));
@@ -1497,6 +1884,12 @@ pub fn to_wire(song: &Song) -> Value {
         "sections": sections,
     });
     let o = top.as_object_mut().expect("object literal");
+    if song.schema_version >= SCHEMA_V2 {
+        o.insert("schema_version".into(), Value::from(song.schema_version));
+        if song.rubato != Rubato::Steady {
+            o.insert("rubato".into(), Value::String(song.rubato.as_str().into()));
+        }
+    }
     if let Some(p) = song.phrasing {
         o.insert("phrasing".into(), phrasing_to_wire(p));
     }

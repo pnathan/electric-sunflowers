@@ -95,13 +95,28 @@ fn validate(schema: &Value, v: &Value, path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The demo (written before schema versions: version 1) against the
+/// version-1 schema.
 #[test]
-fn schema_round_trip() {
-    let sch = schema::json_schema();
-    let v = demo();
+fn schema_round_trip_v1() {
+    schema_round_trip(schema::json_schema_v1(), demo(), 1);
+}
+
+/// The same song declared version 2 against the version-2 schema (the
+/// latest, `json_schema()`).
+#[test]
+fn schema_round_trip_v2() {
+    let mut v = demo();
+    v["schema_version"] = Value::from(2);
+    assert_eq!(schema::json_schema(), schema::json_schema_v2());
+    schema_round_trip(schema::json_schema(), v, 2);
+}
+
+fn schema_round_trip(sch: Value, v: Value, version: u32) {
     validate(&sch, &v, "demo").unwrap();
 
     let (s, _) = normalize_value(&v).unwrap();
+    assert_eq!(s.schema_version, version);
     let w = to_wire(&s);
     validate(&sch, &w, "to_wire").unwrap();
     let (s2, r2) = normalize_value(&w).unwrap();

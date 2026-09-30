@@ -70,6 +70,17 @@ rust_test(
 )
 
 rust_test(
+    name = "choir_test",
+    timeout = "long",
+    srcs = ["tests/choir.rs"],
+    edition = "2021",
+    deps = [":engine"] + ENGINE_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
     name = "duet_test",
     srcs = ["tests/duet.rs"],
     edition = "2021",

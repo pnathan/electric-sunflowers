@@ -24,7 +24,7 @@ use compose::melody::LeadNote;
 use compose::theory::local_scale;
 use compose::timeline::Timeline;
 use sfcore::random::{Rng, Tag};
-use song::{Pc, PcSet, Song};
+use song::{Pc, PcSet};
 
 /// One note of a counter-line or a fill.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -153,12 +153,10 @@ pub fn fills(
     lo: i32,
     hi: i32,
     filter: impl Fn(&Sec) -> bool,
-    song: &Song,
     seed: u64,
     tag: Tag,
 ) -> Vec<LineNote> {
     let mut notes: Vec<LineNote> = Vec::new();
-    let tonic = song.key.transpose(form.transpose);
     let bpb = form.bpb();
     let sub = form.sub() as f64;
 
@@ -191,7 +189,7 @@ pub fn fills(
         }
         let mut r = Rng::event(seed, tag, k as u64);
         let ch_end = tl.chord_at(form, w1 + 0.3);
-        let sc = local_scale(tonic, song.mode, tl.chord_at(form, w0 + 0.01));
+        let sc = local_scale(sec.key.0, sec.key.1, tl.chord_at(form, w0 + 0.01));
         let run: Vec<i32> = (lo..=hi).filter(|&m| sc.contains(Pc::new(m))).collect();
         if run.is_empty() {
             continue;
@@ -221,4 +219,45 @@ pub fn fills(
         }
     }
     notes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use sfcore::random::tag;
+
+    /// Fills follow the key of the section they sit in: a verse in C major,
+    /// then one in E major, over diatonic chords, so every fill note lies in
+    /// its own section's major scale.
+    #[test]
+    fn fills_use_the_scale_of_their_section() {
+        let v = json!({
+            "schema_version":2,"key":"C","mode":"major","meter":"4/4","tempo":90,
+            "sections":[
+                {"type":"verse","lines":[{"syl":"*walk the *line","chords":["C","G","C","G"]}]},
+                {"type":"verse","key":"E","lines":[{"syl":"*walk the *line","chords":["E","B","E","B"]}]}
+            ]
+        });
+        let s = song::normalize_value(&v).unwrap().0;
+        let p = compose::prepare::prepare(&s, 5, None);
+        let (form, tl) = (&p.form, &p.timeline);
+        let starts: Vec<f64> = form
+            .sections
+            .iter()
+            .map(|x| tl.to_time(x.beats(&form.meter).start))
+            .collect();
+        let mut seen = [0usize; 2];
+        for seed in 0..6u64 {
+            let fl = fills(form, tl, 59, 79, |_| true, seed, tag("test.fill"));
+            for n in &fl {
+                let si = usize::from(n.t0 >= starts[1] - 1e-6);
+                let (tonic, mode) = form.sections[si].key;
+                let scale = mode.scale().transpose(tonic.get() as i32);
+                assert!(scale.contains(Pc::new(n.midi)), "seed {seed}: {}", n.midi);
+                seen[si] += 1;
+            }
+        }
+        assert!(seen[0] > 0 && seen[1] > 0, "{seen:?}");
+    }
 }
