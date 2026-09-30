@@ -37,8 +37,8 @@ pub enum ConsClass {
 pub enum Locus {
     /// Fixed F1-F3 locus in Hz.
     At([f64; 3]),
-    /// Velar: F1 250 Hz (times F1 scale), F2 1.1 times the vowel's F2 up to
-    /// 2300 Hz, F3 the vowel's.
+    /// Velar: F1 250 Hz (times F1 scale), F2 and F3 merged high (see
+    /// `articulation::Scale::locus`).
     Velar,
 }
 
@@ -210,8 +210,8 @@ pub const CONSONANTS: [Option<Consonant>; Phoneme::COUNT] = {
             0.02,
         )
     });
-    t[P::K as usize] = Some(stop(false, 2300.0, 1500.0, Locus::Velar, 0.05));
-    t[P::G as usize] = Some(stop(true, 2300.0, 1500.0, Locus::Velar, 0.04));
+    t[P::K as usize] = Some(stop(false, 1800.0, 700.0, Locus::Velar, 0.05));
+    t[P::G as usize] = Some(stop(true, 1800.0, 700.0, Locus::Velar, 0.04));
     t[P::Ch as usize] = Some(aff(false, 3200.0, 2000.0, postalveolar, 0.04, 0.07, 0.55));
     t[P::Jh as usize] = Some(aff(true, 3000.0, 2000.0, postalveolar, 0.035, 0.055, 0.35));
     t
