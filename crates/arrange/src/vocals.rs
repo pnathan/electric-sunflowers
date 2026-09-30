@@ -24,11 +24,14 @@
 //!   glide, no scoop, no breaths. Pan: -0.5, -0.2, 0.25, 0.55 per part,
 //!   singers spread 0.35 apart, within +-0.9.
 
+use std::collections::BTreeMap;
+
 use compose::melody::LeadNote;
 use compose::prepare::{harmony_line, vocal_notes, Prepared, VocalNote as ComposedNote};
+use compose::theory::local_scale;
 use sfcore::random::{tag, Rng, Tag};
 use song::events::{SingStyle, Singer, VocalNote};
-use song::{Part, Phoneme, Phrasing, SectionKind, SingerId, Song, Voice};
+use song::{ChoirVoicing, Part, Pc, Phoneme, Phrasing, SectionKind, SingerId, Song, Voice};
 
 use crate::choir;
 
@@ -46,6 +49,138 @@ const CHOIR_SPREAD: f64 = 0.35;
 const CHOIR_VOWEL: Phoneme = Phoneme::Aa;
 /// A gap longer than this between choir notes separates phrases, seconds.
 const CHOIR_PHRASE_GAP: f64 = 0.1;
+
+/// An interval the harmony can sing against the melody. Each names the
+/// semitone distances tried, nearest to the classical size first: a chord
+/// tone at one of them wins, then a tone of the chord's local scale, else
+/// the first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HarmonyInterval {
+    ThirdAbove,
+    ThirdBelow,
+    SixthAbove,
+    SixthBelow,
+    FifthAbove,
+    FifthBelow,
+}
+
+impl HarmonyInterval {
+    pub const ALL: [HarmonyInterval; 6] = [
+        HarmonyInterval::ThirdAbove,
+        HarmonyInterval::ThirdBelow,
+        HarmonyInterval::SixthAbove,
+        HarmonyInterval::SixthBelow,
+        HarmonyInterval::FifthAbove,
+        HarmonyInterval::FifthBelow,
+    ];
+
+    /// The name the arranger edits use.
+    pub fn name(self) -> &'static str {
+        match self {
+            HarmonyInterval::ThirdAbove => "third_above",
+            HarmonyInterval::ThirdBelow => "third_below",
+            HarmonyInterval::SixthAbove => "sixth_above",
+            HarmonyInterval::SixthBelow => "sixth_below",
+            HarmonyInterval::FifthAbove => "fifth_above",
+            HarmonyInterval::FifthBelow => "fifth_below",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<HarmonyInterval> {
+        let s = s.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+        HarmonyInterval::ALL.into_iter().find(|i| i.name() == s)
+    }
+
+    fn up(self) -> bool {
+        matches!(
+            self,
+            HarmonyInterval::ThirdAbove | HarmonyInterval::SixthAbove | HarmonyInterval::FifthAbove
+        )
+    }
+
+    fn distances(self) -> [i32; 2] {
+        match self {
+            HarmonyInterval::ThirdAbove | HarmonyInterval::ThirdBelow => [4, 3],
+            HarmonyInterval::SixthAbove | HarmonyInterval::SixthBelow => [9, 8],
+            HarmonyInterval::FifthAbove | HarmonyInterval::FifthBelow => [7, 6],
+        }
+    }
+}
+
+/// `lead` with every note moved by `interval` to a chord tone of its chord
+/// (else a tone of the chord's local scale, else the first distance), grace
+/// notes dropped: the counterpart of `compose::prepare::harmony_line` for an
+/// explicit interval.
+pub fn harmony_interval(
+    lead: &[LeadNote],
+    form: &compose::form::Form,
+    tl: &compose::timeline::Timeline,
+    interval: HarmonyInterval,
+) -> Vec<LeadNote> {
+    lead.iter()
+        .map(|n| {
+            let ch = tl.chord_at(form, n.beat + 0.01);
+            let (tonic, mode) = form.sections[form.lines[n.line_idx].sec].key;
+            let sc = local_scale(tonic, mode, ch);
+            let sign = if interval.up() { 1 } else { -1 };
+            let cand = interval.distances().map(|d| n.midi + sign * d);
+            let pick = cand
+                .iter()
+                .find(|&&m| ch.tones.contains(Pc::new(m)))
+                .or_else(|| cand.iter().find(|&&m| sc.contains(Pc::new(m))))
+                .unwrap_or(&cand[0]);
+            let mut nn = n.clone();
+            nn.midi = *pick;
+            nn.grace = None;
+            nn
+        })
+        .collect()
+}
+
+/// What the choir sings in a section (an arranger override).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChoirMode {
+    /// Nothing.
+    Off,
+    /// The /aa/ pad over the chords.
+    Pad,
+    /// The section's words, in this voicing.
+    Words(ChoirVoicing),
+}
+
+/// The harmony in a section (an arranger override).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SectionHarmony {
+    pub on: bool,
+    /// `None`: the rule-based interval (`harmony_line`).
+    pub interval: Option<HarmonyInterval>,
+}
+
+/// Section-level changes to the vocals, keyed by an index of
+/// `Form::sections`. A section not listed keeps the rule-based choice.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Overrides {
+    pub harmony: BTreeMap<usize, SectionHarmony>,
+    pub doubles: BTreeMap<usize, bool>,
+    pub choir: BTreeMap<usize, ChoirMode>,
+}
+
+impl Overrides {
+    pub fn is_empty(&self) -> bool {
+        self.harmony.is_empty() && self.doubles.is_empty() && self.choir.is_empty()
+    }
+
+    /// The choir words of the overrides, for `choir::line_notes_with`.
+    pub fn choir_words(&self) -> BTreeMap<usize, Option<ChoirVoicing>> {
+        self.choir
+            .iter()
+            .map(|(&s, m)| match m {
+                ChoirMode::Words(k) => (s, Some(*k)),
+                ChoirMode::Off | ChoirMode::Pad => (s, None),
+            })
+            .collect()
+    }
+}
 
 /// Every singer of a song.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -153,9 +288,11 @@ fn double_takes(voice: Voice, phrasing: Phrasing, notes: &[VocalNote]) -> [Singe
     ]
 }
 
-/// Every singer of the song.
-pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
+/// Every singer of the song. `overrides` `None` is the rule-based plan.
+pub fn plan(song: &Song, prepared: &Prepared, seed: u64, overrides: Option<&Overrides>) -> Vocals {
     let p = prepared;
+    let no = Overrides::default();
+    let ov = overrides.unwrap_or(&no);
     let form = &p.form;
     let lead_notes = &p.comp.lead;
     let second = &p.comp.second;
@@ -192,38 +329,47 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
 
     // Harmony: only solo lines (never a shared `Both` line), so a duet's
     // harmony never doubles up on a line the two leads already share.
+    // An override turns a section's harmony on or off (the rule is: lifted
+    // sections) and may name its interval.
+    let harmony_here = |n: &LeadNote| match ov.harmony.get(&form.lines[n.line_idx].sec) {
+        Some(h) => h.on,
+        None => n.lift,
+    };
+    let interval_of = |n: &LeadNote| {
+        ov.harmony
+            .get(&form.lines[n.line_idx].sec)
+            .and_then(|h| h.interval)
+    };
     let lifted_solo: Vec<&LeadNote> = lead_notes
         .iter()
-        .filter(|n| n.lift && matches!(form.lines[n.line_idx].part, Part::Solo(_)))
+        .filter(|n| harmony_here(n) && matches!(form.lines[n.line_idx].part, Part::Solo(_)))
         .collect();
     let mut hl: Vec<LeadNote> = Vec::new();
-    let lifted_a: Vec<LeadNote> = lifted_solo
-        .iter()
-        .filter(|n| n.singer == SingerId::A)
-        .map(|&n| n.clone())
-        .collect();
-    if !lifted_a.is_empty() {
-        hl.extend(harmony_line(
-            &lifted_a,
-            form,
-            &p.timeline,
-            p.voice != Voice::Soprano,
-        ));
-    }
-    if let Some(vb) = p.voice_b {
-        let lifted_b: Vec<LeadNote> = lifted_solo
+    let harmonise = |singer: SingerId, voice: Voice, hl: &mut Vec<LeadNote>| {
+        let mine: Vec<LeadNote> = lifted_solo
             .iter()
-            .filter(|n| n.singer == SingerId::B)
+            .filter(|n| n.singer == singer)
             .map(|&n| n.clone())
             .collect();
-        if !lifted_b.is_empty() {
+        // Notes with a named interval, then the rule-based rest.
+        let (named, rest): (Vec<LeadNote>, Vec<LeadNote>) =
+            mine.into_iter().partition(|n| interval_of(n).is_some());
+        if !rest.is_empty() {
             hl.extend(harmony_line(
-                &lifted_b,
+                &rest,
                 form,
                 &p.timeline,
-                vb != Voice::Soprano,
+                voice != Voice::Soprano,
             ));
         }
+        for n in named {
+            let iv = interval_of(&n).expect("partitioned on it");
+            hl.extend(harmony_interval(&[n], form, &p.timeline, iv));
+        }
+    };
+    harmonise(SingerId::A, p.voice, &mut hl);
+    if let Some(vb) = p.voice_b {
+        harmonise(SingerId::B, vb, &mut hl);
     }
     hl.sort_by(|a, b| a.t0.partial_cmp(&b.t0).expect("finite t0"));
     let median = {
@@ -250,13 +396,14 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
 
     // Doubles: each singer's own melody notes (not a shared line's second
     // voice) in repeated lifted sections; A's two takes first, then B's.
+    let doubled = |n: &LeadNote| match ov.doubles.get(&form.lines[n.line_idx].sec) {
+        Some(on) => *on,
+        None => n.lift && sec_of(n).is_repeat_lift(),
+    };
     let repeated_a: Vec<LeadNote> = lead_notes
         .iter()
         .filter(|n| {
-            n.singer == SingerId::A
-                && n.lift
-                && sec_of(n).is_repeat_lift()
-                && !form.lines[n.line_idx].part.is_choir()
+            n.singer == SingerId::A && doubled(n) && !form.lines[n.line_idx].part.is_choir()
         })
         .cloned()
         .collect();
@@ -266,10 +413,7 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
         let repeated_b: Vec<LeadNote> = lead_notes
             .iter()
             .filter(|n| {
-                n.singer == SingerId::B
-                    && n.lift
-                    && sec_of(n).is_repeat_lift()
-                    && !form.lines[n.line_idx].part.is_choir()
+                n.singer == SingerId::B && doubled(n) && !form.lines[n.line_idx].part.is_choir()
             })
             .cloned()
             .collect();
@@ -281,16 +425,28 @@ pub fn plan(song: &Song, prepared: &Prepared, seed: u64) -> Vocals {
         lead_b,
         harmony,
         doubles,
-        choir: choir_singers(p, seed),
+        choir: choir_singers(p, seed, overrides),
     }
 }
 
-/// The choir singers (see the module docs).
-pub fn choir_singers(p: &Prepared, seed: u64) -> [Vec<Singer>; 4] {
+/// The choir singers (see the module docs). `overrides` `None` is the
+/// rule-based choir; with overrides a section's mode replaces the rule
+/// (`Off` and `Words` silence its /aa/ pad, `Pad` sings it even where the
+/// rules would not, `Words` sings the section's lead words).
+pub fn choir_singers(p: &Prepared, seed: u64, overrides: Option<&Overrides>) -> [Vec<Singer>; 4] {
     let form = &p.form;
     let tl = &p.timeline;
-    let vs = choir::voicings_clear(form, tl, choir::sings_here);
-    let words = choir::line_notes(p);
+    let no = Overrides::default();
+    let ov = overrides.unwrap_or(&no);
+    let vs = choir::voicings_clear(form, tl, |s| {
+        let idx = form.sections.iter().position(|x| std::ptr::eq(x, s));
+        match idx.and_then(|i| ov.choir.get(&i)) {
+            Some(ChoirMode::Pad) => true,
+            Some(_) => false,
+            None => choir::sings_here(s),
+        }
+    });
+    let words = choir::line_notes_with(p, &ov.choir_words());
     let mut parts: [Vec<Singer>; 4] = Default::default();
     if vs.is_empty() && words.is_empty() {
         return parts;

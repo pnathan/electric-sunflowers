@@ -65,6 +65,6 @@ pub fn arrange(song: &Song, prepared: &Prepared, seed: u64) -> Arrangement {
         drums: drums::plan(song.band.drums, form, tl, seed),
         violin: violin::plan(song, prepared, seed),
         harmony_guitar: harmony_guitar::plan(song, prepared, seed),
-        vocals: vocals::plan(song, prepared, seed),
+        vocals: vocals::plan(song, prepared, seed, None),
     }
 }

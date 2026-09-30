@@ -10,6 +10,8 @@
 //! the best cost strictly wins, in ascending search order. The first
 //! voicing leads from C3 G3 C4 G4.
 
+use std::collections::BTreeMap;
+
 use compose::form::{Form, Sec};
 use compose::melody::LeadNote;
 use compose::prepare::Prepared;
@@ -217,10 +219,23 @@ fn highest_at_or_below(pcs: PcSet, limit: i32) -> i32 {
 ///   (strictly ascending); the bass takes the chord's bass pitch class the
 ///   same way.
 pub fn line_notes(p: &Prepared) -> Vec<LineNote> {
+    line_notes_with(p, &BTreeMap::new())
+}
+
+/// `line_notes`, with the arranger's choir words: `words` maps a section (an
+/// index of `Form::sections`) to `Some(kind)`, every lead note of the
+/// section sung by the choir in that voicing (the lead sings it too), or to
+/// `None`, the section's notes left out. A section not in `words` is as
+/// `line_notes` has it (only the writer's choir lines). With an empty map
+/// this is exactly `line_notes`.
+pub fn line_notes_with(p: &Prepared, words: &BTreeMap<usize, Option<Voicing>>) -> Vec<LineNote> {
     let form = &p.form;
-    let of = |n: &LeadNote| match form.lines[n.line_idx].part {
-        Part::Choir(v) => Some(v),
-        _ => None,
+    let of = |n: &LeadNote| match words.get(&form.lines[n.line_idx].sec) {
+        Some(k) => *k,
+        None => match form.lines[n.line_idx].part {
+            Part::Choir(v) => Some(v),
+            _ => None,
+        },
     };
     let tunes = |kind: Voicing| -> Vec<i32> {
         p.comp

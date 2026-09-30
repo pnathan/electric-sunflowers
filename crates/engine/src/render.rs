@@ -180,10 +180,10 @@ pub struct Performance {
 /// Sample spans of the choir's word lines, one per line: from the line's
 /// first note to its last. Empty when the song has no choir line, so the
 /// ducker keys on the leads alone.
-fn choir_line_spans(p: &Prepared) -> Vec<(usize, usize)> {
+pub(crate) fn choir_line_spans(p: &Prepared, words: &[usize]) -> Vec<(usize, usize)> {
     let mut spans: Vec<(usize, usize)> = Vec::new();
     for (li, l) in p.form.lines.iter().enumerate() {
-        if !l.part.is_choir() {
+        if !l.part.is_choir() && !words.contains(&l.sec) {
             continue;
         }
         let mut it = p.comp.lead.iter().filter(|n| n.line_idx == li);
@@ -235,7 +235,7 @@ pub fn arrange_song(song: &Song, seed: u64, voice: VoiceChoice) -> (Prepared, Pe
         version: PERFORMANCE_VERSION,
         seed,
         end: prepared.timeline.end,
-        choir_key: choir_line_spans(&prepared),
+        choir_key: choir_line_spans(&prepared, &[]),
         band: song.band,
         arrangement,
     };

@@ -1170,7 +1170,7 @@ fn arranger_pass(
     extra_note: Option<&str>,
     out: &Path,
 ) -> Result<ArrangerRun> {
-    let (prepared, mut perf) =
+    let (mut prepared, mut perf) =
         engine::arrange_song(song, seed, engine::VoiceChoice { a: voice, b: None });
     let view = engine::arranger::view(song, &prepared, &perf);
     let req = songwriter::arranger::ArrangeRequest {
@@ -1194,7 +1194,7 @@ fn arranger_pass(
         .with_context(|| format!("saving the arranger's reply to {}", raw_path.display()))?;
     let edits = engine::arranger::ArrangerEdits::from_value(&got.raw)
         .map_err(|e| anyhow!("arranger: {e}"))?;
-    let applied = engine::arranger::apply(&prepared, &mut perf, &edits);
+    let applied = engine::arranger::apply(song, &mut prepared, &mut perf, &edits);
     for r in &applied.repairs {
         eprintln!("sunflower: warning: arranger: {r}");
     }
