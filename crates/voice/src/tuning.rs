@@ -20,12 +20,13 @@ pub const BURST_GAIN: f64 = 0.8;
 /// Frication band-pass output gain, added after the tract.
 pub const FRICATION_GAIN: f64 = 2.2;
 
-/// High-frequency voiced branch: the glottal source, high-passed (4th order,
-/// corner `HF_BRANCH_HZ`) and added after the cascade at `HF_BRANCH_GAIN`
-/// (0 turns it off). The cascade's F4, F5 and high resonances fall about
-/// 45 dB between 3.2 and 5 kHz, where real voices' harmonics keep falling at
-/// 8 to 11 dB per octave (issue 22); this carries the source's own harmonics
-/// above the corner and does not touch the valleys below it.
+/// High-frequency voiced bed (issue 22): white noise shaped by the glottal
+/// flow, high-passed (4th order, corner `HF_BRANCH_HZ`) and added after the
+/// cascade at `HF_BRANCH_GAIN` (0 turns it off). The cascade leaves vowels
+/// dark above 4 kHz, so every noise consonant stands out as a spike (median
+/// rise over its surroundings 30 dB; real singers 14 dB). A bed of voiced hiss
+/// fills the gap. A high-passed copy of the source pulse did the same but
+/// sounded buzzy.
 pub const HF_BRANCH_HZ: f64 = 3800.0;
 pub const HF_BRANCH_GAIN: f64 = 0.0;
 

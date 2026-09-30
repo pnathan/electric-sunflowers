@@ -341,7 +341,8 @@ impl VoiceSynth {
                 let a = av + dav * t;
                 let nz = asp[j] as f64;
                 let n1 = lp.tick(nz) * 1.9;
-                vh[j] = pulse * a;
+                // HF bed: noise shaped by the glottal flow (voiced hiss, not buzz).
+                vh[j] = nz * a * (0.15 + 0.85 * flow);
                 exc[j] = pulse * a
                     + (nz * (ah + dah * t) * 0.9 * ASPIRATION_GAIN
                         + n1 * breath * a * (0.18 + 0.9 * flow))

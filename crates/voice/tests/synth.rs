@@ -389,7 +389,7 @@ fn demo_lead_render_is_bit_identical_at_default_phrasing() {
     let bytes: Vec<u8> = out.iter().flat_map(|x| x.to_le_bytes()).collect();
     assert_eq!(
         fnv1a(&bytes),
-        0x08a630ed57eeb7de,
+        0xba40aa4f92013f26,
         "demo lead render changed at the default phrasing"
     );
 }
