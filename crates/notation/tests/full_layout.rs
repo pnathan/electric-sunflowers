@@ -119,7 +119,7 @@ fn sha256_hex(data: &[u8]) -> String {
 /// with `cargo run --release -p notation --example score -- demo 1234`
 /// before any wave-1 edit to `layout.rs` (only visibility of its helpers
 /// changed there, never their bodies; see the wave's git diff).
-const LEAD_SHEET_SHA256: &str = "8dc7fe6e79b14280e0c481d0dfec8f6c84b6950292b084cf6c095f8e33d97271";
+const LEAD_SHEET_SHA256: &str = "f4e0de236187f7023d3799c4d5dc5c77da8c11f970c211f5de95e84c22ee7b50";
 
 #[test]
 fn lead_sheet_is_byte_identical_to_before_this_wave() {

@@ -171,9 +171,9 @@ pub(crate) struct Measure {
     /// Whether the choir sings this bar's line (`Part::Choir`): the system
     /// is labelled "Choir".
     pub choir: bool,
-    /// Melody-staff clef (treble 8vb for bass, baritone, tenor): singer A's
-    /// clef outside a duet, or an instrumental bar's.
-    pub clef8: bool,
+    /// Melody-staff clef: singer A's clef outside a duet, or an instrumental
+    /// bar's.
+    pub clef: Clef,
     /// Whether this bar's line is shared (`Part::Both`): a second staff is
     /// drawn. Always false outside a duet.
     pub shared: bool,
@@ -181,7 +181,7 @@ pub(crate) struct Measure {
     /// empty otherwise.
     pub second: Vec<Event>,
     /// The second staff's clef, valid only when `shared`.
-    pub second_clef8: bool,
+    pub second_clef: Clef,
     /// Whether the melody staff is the higher of the two (drawn on top),
     /// valid only when `shared`.
     pub melody_on_top: bool,
@@ -210,9 +210,44 @@ pub struct Score {
     pub(crate) voice_b: Option<Voice>,
 }
 
-/// Whether `v` is written an octave down (treble 8vb).
-fn clef8_of(v: Voice) -> bool {
-    matches!(v, Voice::Bass | Voice::Baritone | Voice::Tenor)
+/// A lead-sheet clef. `NoteEv::step` is always a treble-frame staff
+/// position (C4 = 28, top line F5 = 38); a bass-clef note's step is shifted
+/// up by `step_shift` so that the drawing code is clef-blind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Clef {
+    Treble,
+    /// Treble clef with an octave-down 8, sounding as written.
+    Treble8vb,
+    /// F clef at concert pitch.
+    Bass,
+}
+
+impl Clef {
+    /// Semitones added to a sounding pitch to get the written pitch.
+    pub(crate) fn written_semitones(self) -> i32 {
+        match self {
+            Clef::Treble8vb => 12,
+            _ => 0,
+        }
+    }
+
+    /// Diatonic steps added to a spelled step to put it in the treble frame.
+    pub(crate) fn step_shift(self) -> i32 {
+        match self {
+            Clef::Bass => 12,
+            _ => 0,
+        }
+    }
+}
+
+/// The clef a voice is written in: bass on the bass (F) clef, baritone and
+/// tenor on treble 8vb, alto and soprano on treble.
+fn clef_of(v: Voice) -> Clef {
+    match v {
+        Voice::Bass => Clef::Bass,
+        Voice::Baritone | Voice::Tenor => Clef::Treble8vb,
+        _ => Clef::Treble,
+    }
 }
 
 /// Buckets `notes` (`Comp::lead` for the melody staff, `Comp::second` for
@@ -349,16 +384,16 @@ fn events_of(notes: Vec<(i64, i64, NoteEv)>, from_u: i64, bar_u: i64, grid: &Gri
 fn spell_events(
     events: &mut [Event],
     notes: &[LeadNote],
-    written: i32,
+    clef: Clef,
     fifths: i32,
     key_alt: &[i32; 7],
 ) {
     let mut state: Vec<(i32, i32)> = Vec::new();
     for ev in events.iter_mut() {
         let Some(ne) = ev.note.as_mut() else { continue };
-        let m = notes.get(ne.note).map_or(60, |x| x.midi) + written;
+        let m = notes.get(ne.note).map_or(60, |x| x.midi) + clef.written_semitones();
         let (l, a, step) = spell(m, fifths, key_alt);
-        ne.step = step;
+        ne.step = step + clef.step_shift();
         let cur = state
             .iter()
             .find(|x| x.0 == step)
@@ -610,27 +645,21 @@ impl Score {
             let singer = line.map(|l| l.part.melody());
             let other = line.and_then(|l| l.part.other());
             let m_voice = singer.map_or(voice_a, voice_of);
-            let m_clef8 = clef8_of(m_voice);
+            let m_clef = clef_of(m_voice);
             let shared = other.is_some();
-            let (second_clef8, melody_on_top) = match other {
+            let (second_clef, melody_on_top) = match other {
                 Some((os, _)) => {
                     let o_voice = voice_of(os);
                     (
-                        clef8_of(o_voice),
+                        clef_of(o_voice),
                         m_voice.range().centre() >= o_voice.range().centre(),
                     )
                 }
-                None => (false, false),
+                None => (Clef::Treble, false),
             };
 
             let mut events = events_of(notes, from_u, bar_u, &grid);
-            spell_events(
-                &mut events,
-                lead,
-                if m_clef8 { 12 } else { 0 },
-                sec_fifths,
-                &sec_alt,
-            );
+            spell_events(&mut events, lead, m_clef, sec_fifths, &sec_alt);
 
             let from_u2 = if bar < 0 {
                 notes2.first().map_or(0, |x| x.0)
@@ -643,13 +672,7 @@ impl Score {
                 Vec::new()
             };
             if shared {
-                spell_events(
-                    &mut second,
-                    second_notes,
-                    if second_clef8 { 12 } else { 0 },
-                    sec_fifths,
-                    &sec_alt,
-                );
+                spell_events(&mut second, second_notes, second_clef, sec_fifths, &sec_alt);
             }
 
             let sounding =
@@ -670,10 +693,10 @@ impl Score {
                 section_end: false,
                 singer,
                 choir: line.is_some_and(|l| l.part.is_choir()),
-                clef8: m_clef8,
+                clef: m_clef,
                 shared,
                 second,
-                second_clef8,
+                second_clef,
                 melody_on_top,
                 t0: tl.to_time(b0),
                 t1: tl.to_time(b1),
@@ -772,6 +795,68 @@ mod tests {
             }
             assert!(starts.iter().all(|&k| k == 1), "seed {seed}");
         }
+    }
+
+    /// Ledger lines a treble-frame step needs.
+    fn ledgers(step: i32) -> i32 {
+        (if step <= 28 { (28 - step) / 2 + 1 } else { 0 })
+            + (if step >= 40 { (step - 40) / 2 + 1 } else { 0 })
+    }
+
+    /// A bass singer is written at concert pitch on the F clef: every
+    /// note's step, read as a bass-staff position, names the sounding pitch
+    /// class and octave, and needs fewer ledger lines than treble 8vb did.
+    #[test]
+    fn bass_notes_sit_on_the_f_clef() {
+        let song = engine::demo_song();
+        let (mut bass_l, mut old_l, mut n_notes) = (0, 0, 0);
+        for seed in 0..6u64 {
+            let prep = compose::prepare::prepare(song, seed, Some(Voice::Bass));
+            let sc = Score::new(song, &prep);
+            for m in &sc.measures {
+                assert_eq!(m.clef, Clef::Bass);
+                for e in &m.events {
+                    let Some(n) = &e.note else { continue };
+                    let midi = prep.comp.lead[n.note].midi;
+                    // Bass staff position: A3 (top line) = 26, C4 = 28.
+                    let p = n.step - 12;
+                    let nat =
+                        60 + 12 * (p - 28).div_euclid(7) + NAT[(p - 28).rem_euclid(7) as usize];
+                    assert!((midi - nat).abs() <= 1, "midi {midi} drawn as {nat}");
+                    if midi == 50 {
+                        assert_eq!(n.step, 34, "D3 is the middle line");
+                    }
+                    bass_l += ledgers(n.step);
+                    old_l += ledgers(n.step - 5); // where treble 8vb put it
+                    n_notes += 1;
+                }
+            }
+        }
+        assert!(n_notes > 100);
+        assert!(
+            bass_l < old_l,
+            "{bass_l} ledger lines vs {old_l} on treble 8vb"
+        );
+    }
+
+    #[test]
+    fn clefs_by_voice() {
+        assert_eq!(clef_of(Voice::Bass), Clef::Bass);
+        assert_eq!(clef_of(Voice::Baritone), Clef::Treble8vb);
+        assert_eq!(clef_of(Voice::Tenor), Clef::Treble8vb);
+        assert_eq!(clef_of(Voice::Alto), Clef::Treble);
+        assert_eq!(clef_of(Voice::Soprano), Clef::Treble);
+        assert_eq!(
+            (
+                Clef::Treble8vb.written_semitones(),
+                Clef::Treble8vb.step_shift()
+            ),
+            (12, 0)
+        );
+        assert_eq!(
+            (Clef::Bass.written_semitones(), Clef::Bass.step_shift()),
+            (0, 12)
+        );
     }
 
     #[test]
