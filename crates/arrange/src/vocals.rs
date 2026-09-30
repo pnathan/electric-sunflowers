@@ -48,7 +48,7 @@ const CHOIR_VOWEL: Phoneme = Phoneme::Aa;
 const CHOIR_PHRASE_GAP: f64 = 0.1;
 
 /// Every singer of a song.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Vocals {
     pub lead: Singer,
     /// Singer B of a duet; `None` in a solo song.

@@ -40,7 +40,7 @@ pub use harmony_guitar::HarmonyGuitar;
 pub use vocals::Vocals;
 
 /// Every part of a song as note events.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Arrangement {
     /// Accompaniment guitar, one list per string (0 = low E), each sorted by onset.
     pub guitar: [Vec<StringNote>; 6],

@@ -65,6 +65,13 @@ macro_rules! named_enum {
                 s.serialize_str(self.as_str())
             }
         }
+
+        impl<'de> ::serde::Deserialize<'de> for $name {
+            fn deserialize<D: ::serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+                let s = <String as ::serde::Deserialize>::deserialize(d)?;
+                s.parse().map_err(::serde::de::Error::custom)
+            }
+        }
     };
 }
 

@@ -7,7 +7,7 @@
 use crate::chord::{ChordId, ChordTable};
 use crate::phoneme::Phoneme;
 use crate::pitch::{Pc, PcSet};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 named_enum! {
     /// Scale mode of the song. Church-mode names; minor is natural minor (Aeolian).
@@ -237,7 +237,7 @@ impl Voice {
 }
 
 /// Which band parts play. The guitar and the lead voice always play.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Band {
     pub drums: DrumKit,
@@ -292,7 +292,7 @@ named_enum! {
 /// A singer's articulation: how notes are delivered and how phrases end.
 /// `Default` is Flowing + Released, today's articulation exactly, so a song
 /// without a `phrasing` field renders unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Phrasing {
     pub delivery: Delivery,
     pub endings: Endings,

@@ -339,6 +339,25 @@ Each model: algorithm, source, parameters that set the sound. Values are the cur
 - Counter-line: greedy first-species-style choice (current costs). Fills: descending scalar runs.
 - Shared helpers: `PcSet::tones_in(lo, hi)`, `fold_octave`, `Sec::beats`, `Sec::is_repeat_lift`, `Timeline::len_samples`.
 
+## 8a. Writer, arranger, player
+
+Three parts, joined by two files.
+
+- Writer: Claude. Its output is the song JSON (section 7). Every writing decision is in it.
+- Arranger: `compose::prepare` then `arrange::arrange`, run by `engine::arrange_song(song, seed, VoiceChoice)`. It turns the song into note events in seconds and makes every random draw of the arrangement. It renders no audio.
+- Player: `engine::play(&Performance, &dyn Progress)`: the instruments, the voice and the channel strips, giving `Stems`; `engine::mix` then mixes them. It reads nothing but the performance and makes no writing or arranging decision. `render_with` is `arrange_song` followed by `play`, with the same output as before the split.
+
+The file between arranger and player is the performance (`sunflower arrange`, `sunflower play`; by convention `x.arrangement.json`). One JSON object, `engine::Performance`, version 1 (`engine::PERFORMANCE_VERSION`):
+
+- `version`: 1. `play` in the CLI refuses any other value. A change to a field here, or to an event type of `song::events`, raises the version.
+- `seed`: the song seed; it keys every player stream.
+- `end`: timeline end in seconds; the stem length is `len_samples(end)`.
+- `choir_key`: sample spans `[start, end]` of the choir's word lines, for the ducker; empty without choir lines.
+- `band`: the song's band switches. The mixer gates stems with them; the player ignores them.
+- `arrangement`: `arrange::Arrangement`: `guitar` (six lists of `StringNote`), `bass`, `harp` (`PluckNote`), `drums` (`DrumHit`, or null without a kit), `violin` (`BowNote`), `harmony_guitar` (`lead`, `arp`) and `vocals` (`lead`, `lead_b`, `harmony`, `doubles`, `choir`; each `Singer` with `voice`, `style`, `notes`, `pan`, `offset`).
+
+Field names are the snake_case names of the structs; enums are spelled as in the song JSON (`"baritone"`, `"phrasing": {"delivery": "flowing", ...}`), phonemes as lower-case ARPAbet, and a drum kind as a string (`"Kick"`) or a one-key object (`{"Swish": {"dur": 0.4}}`). Times are `f64` seconds and levels `f32`. The file round-trips exactly: `serde_json` has `float_roundtrip` on, so `f32` and `f64` survive the text, and a test plays a parsed performance and compares every stem sample with a direct render.
+
 ## 9. Testing without the JS
 
 Unit tests state physics or mathematics, not reference dumps:
