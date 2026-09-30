@@ -125,3 +125,11 @@ rust_binary(
         normal_dev = True,
     ),
 )
+
+# Single harp notes through the engine's harp chain, for tools/harp_compare.py.
+rust_binary(
+    name = "harpnotes",
+    srcs = ["examples/harpnotes.rs"],
+    edition = "2021",
+    deps = [":engine"] + ENGINE_LOCAL_DEPS + all_crate_deps(normal = True),
+)

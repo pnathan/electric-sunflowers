@@ -14,7 +14,9 @@ use song::Voice;
 
 fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let target = args.first().ok_or("usage: score <song.json|demo> [seed] [voice]")?;
+    let target = args
+        .first()
+        .ok_or("usage: score <song.json|demo> [seed] [voice]")?;
     let seed: u64 = match args.get(1) {
         Some(s) => s.parse().map_err(|e| format!("seed {s}: {e}"))?,
         None => 1234,
@@ -27,7 +29,8 @@ fn run() -> Result<(), String> {
         engine::demo_song().clone()
     } else {
         let text = std::fs::read_to_string(target).map_err(|e| format!("{target}: {e}"))?;
-        let raw: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{target}: {e}"))?;
+        let raw: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("{target}: {e}"))?;
         let (song, repairs) = song::normalize_value(&raw).map_err(|e| format!("{target}: {e}"))?;
         for r in &repairs {
             eprintln!("repair: {r}");
@@ -46,7 +49,8 @@ fn run() -> Result<(), String> {
     let size = tree.size().to_int_size();
     let mut pm = tiny_skia::Pixmap::new(size.width(), size.height()).ok_or("empty page")?;
     resvg::render(&tree, tiny_skia::Transform::default(), &mut pm.as_mut());
-    pm.save_png("score.png").map_err(|e| format!("score.png: {e}"))?;
+    pm.save_png("score.png")
+        .map_err(|e| format!("score.png: {e}"))?;
     eprintln!(
         "wrote score.svg and score.png ({}x{} px, {} notes, {} systems)",
         size.width(),

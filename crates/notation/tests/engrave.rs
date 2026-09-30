@@ -281,3 +281,208 @@ fn each_system_draws_its_sections_signature() {
         assert_eq!(svg.matches("(Key: ").count(), 2, "seed {seed}");
     }
 }
+
+// ---------------------------------------------------------------------
+// Bass clef and multi-bar rests on the lead sheet (issue #10).
+// ---------------------------------------------------------------------
+
+/// A one-verse song in `key`, with an intro of the given chords.
+fn intro_song(key: &str, intro: &[&str]) -> Song {
+    let chords = intro
+        .iter()
+        .map(|c| format!("\"{c}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let intro_sec = if intro.is_empty() {
+        String::new()
+    } else {
+        format!(r#"{{"type":"intro","chords":[{chords}]}},"#)
+    };
+    song_of(&format!(
+        r#"{{"schema_version":2,"title":"Rests","key":"{key}","mode":"major","meter":"4/4","tempo":100,
+           "sections":[{intro_sec}{{"type":"verse","lines":[{{"syl":"*one *two *three *four","chords":["{key}","{key}","{key}","{key}"]}}]}}]}}"#
+    ))
+}
+
+fn svg_of(song: &Song, seed: u64, voice: Voice) -> String {
+    let prep = prepare(song, seed, Some(voice));
+    engrave(&Score::new(song, &prep))
+}
+
+fn count(svg: &str, pat: &str) -> usize {
+    svg.matches(pat).count()
+}
+
+/// Horizontal ledger lines: a 1.28 px stroke with equal y ends.
+fn ledger_lines(svg: &str) -> usize {
+    svg.split("<line ")
+        .skip(1)
+        .filter(|l| {
+            let attr = |k: &str| {
+                let i = l.find(&format!("{k}=\"")).unwrap() + k.len() + 2;
+                l[i..i + l[i..].find('"').unwrap()].to_string()
+            };
+            attr("stroke-width") == "1.28" && attr("y1") == attr("y2")
+        })
+        .count()
+}
+
+/// y of every `href="#g-<name>"` use's translate, in document order.
+fn glyph_ys(svg: &str, name: &str) -> Vec<String> {
+    let pat = format!("href=\"#g-{name}\" transform=\"translate(");
+    svg.split(&pat)
+        .skip(1)
+        .map(|r| {
+            let t = &r[..r.find(')').unwrap()];
+            t.split(',').nth(1).unwrap().to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn bass_voice_draws_the_f_clef_only() {
+    let song = intro_song("C", &[]);
+    let svg = svg_of(&song, 3, Voice::Bass);
+    render(&svg);
+    assert!(count(&svg, r#"class="fclef""#) >= 1);
+    assert_eq!(count(&svg, "#g-gClef"), 0, "no G clef for a bass singer");
+    // The clef is on the F line: second line from the top (y = 8 px).
+    let i = svg.find(r#"class="fclef""#).unwrap();
+    assert!(svg[i..].contains("<path"));
+}
+
+#[test]
+fn other_voices_keep_their_clefs() {
+    let song = intro_song("C", &[]);
+    for v in [Voice::Baritone, Voice::Tenor] {
+        let svg = svg_of(&song, 3, v);
+        assert!(count(&svg, "#g-gClef8vb") >= 1, "{v:?}");
+        assert_eq!(count(&svg, r#"class="fclef""#), 0, "{v:?}");
+    }
+    for v in [Voice::Alto, Voice::Soprano] {
+        let svg = svg_of(&song, 3, v);
+        assert!(count(&svg, "#g-gClef\"") >= 1, "{v:?}");
+        assert_eq!(count(&svg, "#g-gClef8vb"), 0, "{v:?}");
+        assert_eq!(count(&svg, r#"class="fclef""#), 0, "{v:?}");
+    }
+}
+
+/// Written at concert pitch, the bass part needs fewer ledger lines than
+/// the same song on the treble-8vb staff a baritone uses.
+#[test]
+fn bass_staff_needs_few_ledger_lines() {
+    let song = engine::demo_song();
+    let bass = ledger_lines(&svg_of(song, 1234, Voice::Bass));
+    let bari = ledger_lines(&svg_of(song, 1234, Voice::Baritone));
+    assert!(bass <= bari, "bass {bass} vs baritone {bari}");
+}
+
+/// The signature glyph heights of the first system (drawn before any note).
+fn signature_ys(svg: &str, name: &str) -> Vec<f64> {
+    let end = svg.find(r#"<g class="note""#).unwrap();
+    glyph_ys(&svg[..end], name)
+        .iter()
+        .map(|y| y.parse().unwrap())
+        .collect()
+}
+
+#[test]
+fn key_signature_sits_lower_on_a_bass_staff() {
+    // Top-line-relative y of each accidental, in signature order.
+    let sharps_bass = [8.0, 20.0, 4.0, 16.0, 28.0, 12.0, 24.0];
+    let sharps_treble = [0.0, 12.0, -4.0, 8.0, 20.0, 4.0, 16.0];
+    let flats_bass = [24.0, 12.0, 28.0, 16.0, 32.0, 20.0, 36.0];
+    let flats_treble = [16.0, 4.0, 20.0, 8.0, 24.0, 12.0, 28.0];
+    let song = intro_song("D", &[]);
+    let mut checked = 0;
+    for seed in 0..8u64 {
+        for (v, sh, fl) in [
+            (Voice::Bass, &sharps_bass, &flats_bass),
+            (Voice::Baritone, &sharps_treble, &flats_treble),
+        ] {
+            let svg = svg_of(&song, seed, v);
+            let s = signature_ys(&svg, "accidentalSharp");
+            let f = signature_ys(&svg, "accidentalFlat");
+            assert_eq!(s, sh[..s.len()], "{v:?} seed {seed} sharps");
+            assert_eq!(f, fl[..f.len()], "{v:?} seed {seed} flats");
+            checked += s.len() + f.len();
+        }
+    }
+    assert!(checked > 0, "no key signature was drawn");
+}
+
+#[test]
+fn multi_bar_rest_is_one_bar_with_a_count() {
+    let song = intro_song("C", &["C", "G", "Am", "F", "C", "G", "F", "C"]);
+    let svg = svg_of(&song, 5, Voice::Baritone);
+    render(&svg);
+    assert_eq!(count(&svg, r#"class="multirest""#), 1);
+    assert_eq!(count(&svg, r#"class="multirest-count""#), 1);
+    assert!(svg.contains(r#"data-bars="8""#));
+    assert!(svg.contains(r#"font-weight="bold" text-anchor="middle">8</text>"#));
+    // No per-bar whole rests for the eight bars.
+    assert_eq!(count(&svg, "#g-restWhole"), 0);
+    // Every chord of the run is printed, in order, before the verse's.
+    let chords: Vec<&str> = svg
+        .split(r#"class="chord""#)
+        .skip(1)
+        .map(|r| {
+            let a = r.find('>').unwrap() + 1;
+            &r[a..a + r[a..].find('<').unwrap()]
+        })
+        .collect();
+    // The voice sets the key; the pattern is what matters.
+    let i: Vec<usize> = [0, 1, 2, 3, 4, 5, 6, 7]
+        .iter()
+        .map(|&k| chords[..8].iter().position(|c| c == &chords[k]).unwrap())
+        .collect();
+    assert_eq!(i, [0, 1, 2, 3, 0, 1, 3, 0], "{:?}", &chords[..8]);
+}
+
+/// The rect width of the first multi-bar rest.
+fn multirest_width(svg: &str) -> f64 {
+    let i = svg.find(r#"class="multirest""#).unwrap();
+    let r = &svg[i..];
+    let w = &r[r.find(" width=\"").unwrap() + 8..];
+    w[..w.find('"').unwrap()].parse().unwrap()
+}
+
+#[test]
+fn multi_bar_rest_width_does_not_depend_on_length() {
+    let two = svg_of(&intro_song("C", &["C", "G"]), 5, Voice::Baritone);
+    let eight = svg_of(
+        &intro_song("C", &["C", "G", "Am", "F", "C", "G", "F", "C"]),
+        5,
+        Voice::Baritone,
+    );
+    assert!(two.contains(r#"data-bars="2""#));
+    let (a, b) = (multirest_width(&two), multirest_width(&eight));
+    assert!((a - b).abs() < 1e-6, "{a} vs {b}");
+}
+
+#[test]
+fn a_single_rest_bar_is_a_whole_rest() {
+    let song = intro_song("C", &["C"]);
+    let svg = svg_of(&song, 5, Voice::Baritone);
+    assert_eq!(count(&svg, r#"class="multirest""#), 0);
+    assert_eq!(count(&svg, "#g-restWhole"), 1);
+}
+
+#[test]
+fn boxes_cover_the_multi_bar_rest() {
+    let song = intro_song("C", &["C", "G", "Am", "F", "C", "G", "F", "C"]);
+    let prep = prepare(&song, 5, None);
+    let score = Score::new(&song, &prep);
+    let sys = system_boxes(&score);
+    // The intro is the first system and spans its eight bars (100 bpm 4/4).
+    assert!(
+        (sys[0].1 - sys[0].0 - 8.0 * 4.0 * 0.6).abs() < 1e-3,
+        "{:?}",
+        sys[0]
+    );
+    assert!(sys[0].4 > 0.0 && sys[0].2 + sys[0].4 <= score.width + 1e-6);
+    // The verse follows without a gap.
+    assert!((sys[1].0 - sys[0].1).abs() < 1e-3);
+    let first_note = note_boxes(&score)[0].0;
+    assert!(first_note >= sys[0].1 - 1e-6);
+}

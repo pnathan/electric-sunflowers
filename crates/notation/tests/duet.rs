@@ -140,7 +140,7 @@ fn sha256_hex(data: &[u8]) -> String {
 
 /// Same expected digest `full_layout.rs` checks the wave-1 lead sheet
 /// against: the wave-3 duet staves must not touch a solo song's bytes.
-const LEAD_SHEET_SHA256: &str = "8dc7fe6e79b14280e0c481d0dfec8f6c84b6950292b084cf6c095f8e33d97271";
+const LEAD_SHEET_SHA256: &str = "f4e0de236187f7023d3799c4d5dc5c77da8c11f970c211f5de95e84c22ee7b50";
 
 #[test]
 fn solo_lead_sheet_is_unchanged() {
@@ -287,4 +287,31 @@ fn duet_fixture_engraves_over_several_seeds() {
             );
         }
     }
+}
+
+/// A duet with a bass singer: A draws the F clef, B (alto) the G clef, and
+/// a shared system carries one of each.
+#[test]
+fn duet_with_a_bass_singer_draws_both_clefs() {
+    let mut raw: serde_json::Value =
+        serde_json::from_str(include_str!("../../compose/tests/songs/duet.json"))
+            .expect("duet.json is JSON");
+    raw["voice"] = serde_json::json!("bass");
+    let (song, _) = song::normalize_value(&raw).expect("normalises");
+    assert!(song.is_duet());
+    let prep = prepare_voices(&song, 3, VoiceChoice::default());
+    let svg = engrave(&Score::new(&song, &prep));
+    parses(&svg);
+    assert!(svg.contains("A (Bass)"));
+    assert_eq!(svg.matches("#g-gClef8vb").count(), 0);
+    let mut shared = 0;
+    for sys in svg.split(r#"<g class="system""#).skip(1) {
+        let f = sys.matches(r#"class="fclef""#).count();
+        let g = sys.matches("#g-gClef\"").count();
+        if sys.contains(">melody<") {
+            shared += 1;
+            assert_eq!((f, g), (1, 1), "shared system: one staff each");
+        }
+    }
+    assert!(shared > 0);
 }

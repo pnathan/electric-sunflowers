@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 
 use crate::drawn;
 use crate::glyphs::{self, Glyph};
-use crate::score::{Event, Measure, NoteEv, Score};
+use crate::score::{Clef, Event, Measure, NoteEv, Score};
 use song::SingerId;
 
 /// Staff space in px.
@@ -178,6 +178,69 @@ pub(crate) fn measure_w(m: &Measure) -> (f64, Vec<(f64, f64)>) {
     (PAD_L + ew.iter().map(|x| x.1).sum::<f64>() + PAD_R, ew)
 }
 
+/// Draws `clef` on a staff whose top line is at y `top`.
+fn draw_clef(out: &mut String, clef: Clef, x: f64, top: f64) {
+    match clef {
+        Clef::Treble => glyph(out, &glyphs::G_CLEF, x, top + 3.0 * SP, 1.0),
+        Clef::Treble8vb => glyph(out, &glyphs::G_CLEF8VB, x, top + 3.0 * SP, 1.0),
+        // The F line is the second from the top: step 36 in the shifted frame.
+        Clef::Bass => {
+            out.push_str(r#"<g class="fclef">"#);
+            drawn::f_clef(out, x, top + y_of(36), 1.0);
+            out.push_str("</g>");
+        }
+    }
+}
+
+/// Key-signature accidental steps (treble frame) for `clef`.
+fn key_steps(clef: Clef, fifths: i32) -> ([i32; 7], &'static Glyph) {
+    let (mut steps, acc) = if fifths > 0 {
+        ([38, 35, 39, 36, 33, 37, 34], &glyphs::ACCIDENTAL_SHARP)
+    } else {
+        ([34, 37, 33, 36, 32, 35, 31], &glyphs::ACCIDENTAL_FLAT)
+    };
+    if clef == Clef::Bass {
+        steps.iter_mut().for_each(|x| *x -= 2);
+    }
+    (steps, acc)
+}
+
+/// Multi-bar rests: for each measure, `Some((start, n))` when it lies in a
+/// run of `n >= 2` consecutive bars (from measure `start`) that are entirely
+/// rest, in one section with one key, and with no section label inside.
+fn rest_runs(ms: &[Measure]) -> Vec<Option<(usize, usize)>> {
+    let eligible = |m: &Measure| {
+        m.empty
+            && m.bar >= 0
+            && m.from_u == 0
+            && !m.shared
+            && m.second.iter().all(|e| e.note.is_none())
+    };
+    let mut out = vec![None; ms.len()];
+    let mut i = 0;
+    while i < ms.len() {
+        if !eligible(&ms[i]) {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        while j < ms.len()
+            && eligible(&ms[j])
+            && ms[j].chunk == ms[i].chunk
+            && ms[j].sec == ms[i].sec
+            && ms[j].fifths == ms[i].fifths
+            && ms[j].label.is_none()
+        {
+            j += 1;
+        }
+        if j - i >= 2 {
+            out[i..j].fill(Some((i, j - i)));
+        }
+        i = j;
+    }
+    out
+}
+
 /// A placed note (one event of a system).
 struct Pn<'a> {
     ev: &'a Event,
@@ -224,7 +287,34 @@ pub(crate) fn layout(score: &Score) -> Page {
     let width = score.width;
     let grid = score.grid;
     let ms = &score.measures;
-    let nat: Vec<(f64, Vec<(f64, f64)>)> = ms.iter().map(measure_w).collect();
+    let mut nat: Vec<(f64, Vec<(f64, f64)>)> = ms.iter().map(measure_w).collect();
+    // A multi-bar rest is one wide measure of about two normal ones, shared
+    // equally by its bars whatever their number.
+    let runs = rest_runs(ms);
+    if runs.iter().any(Option::is_some) {
+        let sung: Vec<f64> = ms
+            .iter()
+            .zip(&nat)
+            .filter(|(m, _)| !m.empty)
+            .map(|(_, n)| n.0)
+            .collect();
+        let normal = if sung.is_empty() {
+            7.0 * SP
+        } else {
+            sung.iter().sum::<f64>() / sung.len() as f64
+        };
+        let run_w = (2.0 * normal).max(14.0 * SP);
+        for (k, r) in runs.iter().enumerate() {
+            if let Some((_, n)) = r {
+                nat[k].0 = run_w / *n as f64;
+            }
+        }
+    }
+    // First measure after the run (or just the next one) from measure `j`.
+    let unit_end = |j: usize| match runs[j] {
+        Some((st, n)) => st + n,
+        None => j + 1,
+    };
 
     // Systems: each chunk starts one; wrap when a chunk is too wide.
     let mut systems: Vec<(usize, usize, bool)> = Vec::new(); // (first, end, wrapped)
@@ -233,9 +323,14 @@ pub(crate) fn layout(score: &Score) -> Page {
         let avail = width - 2.0 * MARGIN - head_w(ms[i].fifths, systems.is_empty());
         let mut j = i;
         let mut w = 0.0;
-        while j < ms.len() && ms[j].chunk == ms[i].chunk && (j == i || w + nat[j].0 <= avail) {
-            w += nat[j].0;
-            j += 1;
+        while j < ms.len() && ms[j].chunk == ms[i].chunk {
+            let e = unit_end(j);
+            let cost: f64 = nat[j..e].iter().map(|x| x.0).sum();
+            if j != i && w + cost > avail {
+                break;
+            }
+            w += cost;
+            j = e;
         }
         let wrapped = j < ms.len() && ms[j].chunk == ms[i].chunk;
         systems.push((i, j, wrapped));
@@ -477,29 +572,15 @@ pub(crate) fn layout(score: &Score) -> Page {
                 0.13 * SP,
             );
         }
-        let clef8 = if swap_staves {
-            ms[first].second_clef8
+        let clef = if swap_staves {
+            ms[first].second_clef
         } else {
-            ms[first].clef8
+            ms[first].clef
         };
-        glyph(
-            &mut s,
-            if clef8 {
-                &glyphs::G_CLEF8VB
-            } else {
-                &glyphs::G_CLEF
-            },
-            MARGIN + 0.5 * SP,
-            3.0 * SP,
-            1.0,
-        );
+        draw_clef(&mut s, clef, MARGIN + 0.5 * SP, 0.0);
         let mut hx = MARGIN + 3.6 * SP;
         let fifths = ms[first].fifths;
-        let (steps, acc) = if fifths > 0 {
-            ([38, 35, 39, 36, 33, 37, 34], &glyphs::ACCIDENTAL_SHARP)
-        } else {
-            ([34, 37, 33, 36, 32, 35, 31], &glyphs::ACCIDENTAL_FLAT)
-        };
+        let (steps, acc) = key_steps(clef, fifths);
         for &st in steps.iter().take(fifths.unsigned_abs().min(7) as usize) {
             glyph(&mut s, acc, hx, y_of(st), 1.0);
             hx += 1.05 * SP;
@@ -609,7 +690,35 @@ pub(crate) fn layout(score: &Score) -> Page {
                     chord_text(name)
                 );
             }
-            if m.empty {
+            if let Some(n) = runs[gi].filter(|r| r.0 == gi).map(|r| r.1) {
+                // One multi-bar rest: a thick bar with serifs on the middle
+                // line, the bar count in bold above it.
+                let span: f64 = mx[k..k + n].iter().map(|x| x.1).sum();
+                let (xa, xb) = (x0 + 1.5 * SP, x0 + span - 1.5 * SP);
+                let _ = write!(
+                    s,
+                    r##"<g class="multirest" data-bars="{n}"><rect x="{xa:.2}" y="{:.2}" width="{:.2}" height="{:.2}" fill="#111"/>"##,
+                    2.0 * SP - 0.4 * SP,
+                    xb - xa,
+                    0.8 * SP
+                );
+                for xs in [xa, xb] {
+                    line(
+                        &mut s,
+                        xs,
+                        2.0 * SP - 1.06 * SP,
+                        xs,
+                        2.0 * SP + 1.06 * SP,
+                        0.13 * SP,
+                    );
+                }
+                let _ = write!(
+                    s,
+                    r#"<text class="multirest-count" x="{:.1}" y="{:.1}" font-size="14" font-weight="bold" text-anchor="middle">{n}</text></g>"#,
+                    (xa + xb) * 0.5,
+                    -0.6 * SP
+                );
+            } else if m.empty && runs[gi].is_none() {
                 glyph(
                     &mut s,
                     &glyphs::REST_WHOLE,
@@ -619,7 +728,9 @@ pub(crate) fn layout(score: &Score) -> Page {
                 );
             }
             let bx = x0 + mw;
-            if gi == last_measure {
+            if runs[gi].is_some_and(|(st, n)| gi + 1 < st + n) {
+                // Inside a multi-bar rest: no bar line.
+            } else if gi == last_measure {
                 line(
                     &mut s,
                     bx - 0.75 * SP,
@@ -898,21 +1009,11 @@ pub(crate) fn layout(score: &Score) -> Page {
                 );
             }
             let clef2 = if swap_staves {
-                ms[first].clef8
+                ms[first].clef
             } else {
-                ms[first].second_clef8
+                ms[first].second_clef
             };
-            glyph(
-                &mut s,
-                if clef2 {
-                    &glyphs::G_CLEF8VB
-                } else {
-                    &glyphs::G_CLEF
-                },
-                MARGIN + 0.5 * SP,
-                y2 + 3.0 * SP,
-                1.0,
-            );
+            draw_clef(&mut s, clef2, MARGIN + 0.5 * SP, y2);
             drawn::bracket(&mut s, MARGIN - 0.3 * SP, 0.0, y2 + 4.0 * SP, 1.0);
             let melody_label_y = if swap_staves {
                 y2 - 0.3 * SP

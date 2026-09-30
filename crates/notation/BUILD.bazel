@@ -1,5 +1,5 @@
 load("@crates//:defs.bzl", "all_crate_deps")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -89,6 +89,20 @@ rust_test(
     edition = "2021",
     deps = [
         ":notation",
+    ] + NOTATION_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+# Engraves a song to score.svg and score.png (examples/score.rs).
+rust_binary(
+    name = "score",
+    srcs = ["examples/score.rs"],
+    edition = "2021",
+    deps = [
+        ":notation",
+        "//crates/engine",
     ] + NOTATION_LOCAL_DEPS + all_crate_deps(
         normal = True,
         normal_dev = True,
