@@ -452,8 +452,18 @@ fn pick_answering_model(per_model: &[ModelUsage], requested: &str) -> Option<Str
 /// fields are all optional: a missing or non-numeric one never fails the
 /// parse, it just reads as `None`.
 fn parse_cli_envelope(stdout: &str, requested_model: &str) -> Result<Reply, ClaudeError> {
-    let v: Value =
+    let parsed: Value =
         serde_json::from_str(stdout).map_err(|e| ClaudeError::Parse(format!("{e}: {stdout}")))?;
+    // Newer CLI versions print the whole event stream as an array; the
+    // envelope is its last `"type": "result"` element.
+    let v = match &parsed {
+        Value::Array(events) => events
+            .iter()
+            .rev()
+            .find(|e| e.get("type").and_then(Value::as_str) == Some("result"))
+            .unwrap_or(&parsed),
+        _ => &parsed,
+    };
     let text = v
         .get("result")
         .and_then(Value::as_str)
@@ -520,7 +530,7 @@ fn parse_cli_envelope(stdout: &str, requested_model: &str) -> Result<Reply, Clau
         usage,
         per_model,
         cost_usd: v.get("total_cost_usd").and_then(Value::as_f64),
-        duration_ms: get_u64(&v, "duration_ms"),
+        duration_ms: get_u64(v, "duration_ms"),
     })
 }
 
@@ -898,6 +908,21 @@ mod tests {
         assert_eq!(r.per_model[0].model, "claude-haiku-4-5"); // sorted by id
         assert_eq!(r.per_model[1].model, "claude-opus-5-5");
         assert_eq!(r.per_model[1].cost_usd, Some(0.40));
+    }
+
+    #[test]
+    fn cli_envelope_may_be_an_event_array() {
+        let stdout = r#"[{"type":"system","subtype":"init"},
+            {"type":"assistant","message":{}},
+            {"type":"result","subtype":"success","is_error":false,"result":"{\"a\":1}",
+             "stop_reason":"tool_use","usage":{"input_tokens":2,"output_tokens":9}}]"#;
+        let r = parse_cli_envelope(stdout, "claude-opus-5-5").unwrap();
+        assert_eq!(r.text, "{\"a\":1}");
+        assert_eq!(r.usage.output_tokens, Some(9));
+        assert!(matches!(
+            parse_cli_envelope(r#"[{"type":"system"}]"#, "m"),
+            Err(ClaudeError::Parse(_))
+        ));
     }
 
     #[test]
