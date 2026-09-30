@@ -389,6 +389,7 @@ fn render_writes_the_sidecars() {
     )
     .unwrap();
     assert_eq!(side["seed"], 7);
+    assert_eq!(side["version"], 2);
     assert_eq!(side["voice"], "tenor");
     assert!(side["model"].is_null());
     assert_eq!(
@@ -412,6 +413,7 @@ fn render_writes_the_sidecars() {
     let sheet: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.path().join("tune.sheet.json")).unwrap())
             .unwrap();
+    assert_eq!(sheet["version"], 2);
     assert_eq!(sheet["title"], "Test Tune");
     assert_eq!(sheet["seed"], 7);
     assert_eq!(sheet["voice"], "tenor");

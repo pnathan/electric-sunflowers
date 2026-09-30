@@ -393,3 +393,28 @@ fn fixed_duet_does_not_also_say_sung_by_one_voice() {
     );
     assert!(p.contains("It will be sung by a tenor."));
 }
+
+#[test]
+fn prompt_asks_for_schema_2_and_describes_its_fields() {
+    let dir = style_direction(Some(StyleId::Gospel), &mut rng(4));
+    let p = song_prompt("a shout", None, &dir, "celebratory", 2026);
+    assert!(p.contains("{\"schema_version\":2,\"title\":"));
+    for f in [
+        "\"sing\":\"choir\"",
+        "\"voicing\":\"unison\"",
+        "\"~N\"",
+        "\"key\":\"<tonic>\"",
+        "\"rubato\":\"steady|light|free\"",
+    ] {
+        assert!(p.contains(f), "{f}");
+    }
+    assert!(p.is_ascii());
+    // The schema sent to Claude is version 2 and requires the version.
+    let sch = song::schema::json_schema();
+    assert_eq!(sch["properties"]["schema_version"]["enum"][0], 2);
+    assert!(sch["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v == "schema_version"));
+}

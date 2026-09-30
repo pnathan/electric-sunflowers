@@ -11,11 +11,21 @@ use serde_json::Value;
 
 use crate::usage::Generation;
 
+/// The sidecar format version `RenderSidecar::write` stamps. Version 1
+/// (no `version` key) is what earlier builds wrote; version 2 records the
+/// song schema's arrival and changes no field. A reader ignores unknown
+/// fields, so version 1 readers still read version 2.
+pub const SIDECAR_VERSION: u32 = 2;
+
 /// The `<stem>.render.json` sidecar. Every field is optional: a song
 /// without the new fields (a solo song rendered before this feature)
 /// still reads and writes one. Unknown JSON fields are ignored.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RenderSidecar {
+    /// Format version; `write` sets `SIDECAR_VERSION`. Absent reads as
+    /// `None` (version 1).
+    #[serde(default)]
+    pub version: Option<u32>,
     #[serde(default)]
     pub seed: Option<u64>,
     /// Singer A as rendered.
@@ -65,6 +75,10 @@ impl RenderSidecar {
     fn from_value(v: &Value) -> RenderSidecar {
         let s = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
         RenderSidecar {
+            version: v
+                .get("version")
+                .and_then(Value::as_u64)
+                .and_then(|n| u32::try_from(n).ok()),
             seed: v.get("seed").and_then(Value::as_u64),
             voice: s("voice"),
             voice_b: s("voice_b"),
@@ -90,6 +104,7 @@ impl RenderSidecar {
     /// how the song was written.
     pub fn write(&self, path: &Path) -> Result<(), String> {
         let mut out = self.clone();
+        out.version = Some(SIDECAR_VERSION);
         if out.generation.is_none() {
             if let Ok(prev) = RenderSidecar::read(path) {
                 if prev.generation.is_some() && prev.song_json == out.song_json {
@@ -144,6 +159,7 @@ mod tests {
     #[test]
     fn round_trips_through_json() {
         let side = RenderSidecar {
+            version: Some(SIDECAR_VERSION),
             seed: Some(7),
             voice: Some("baritone".into()),
             voice_b: Some("alto".into()),
@@ -162,6 +178,16 @@ mod tests {
         side.write(&path).unwrap();
         let back = RenderSidecar::read(&path).unwrap();
         assert_eq!(back, side);
+    }
+
+    #[test]
+    fn write_stamps_the_version() {
+        let path = tmp_path("stamped.render.json");
+        RenderSidecar::default().write(&path).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["version"], SIDECAR_VERSION);
+        assert_eq!(RenderSidecar::read(&path).unwrap().version, Some(2));
     }
 
     #[test]
@@ -184,6 +210,7 @@ mod tests {
         assert_eq!(side.audio.as_deref(), Some("/tmp/x.ogg"));
         assert_eq!(side.sheet.as_deref(), Some("/tmp/x.sheet.json"));
         assert_eq!(side.created.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert_eq!(side.version, None, "no version key reads as version 1");
         assert_eq!(side.voice_b, None);
         assert_eq!(side.generation, None);
         assert_eq!(side.mix, None);
@@ -209,6 +236,7 @@ mod tests {
     fn keeps_the_previous_generation_on_a_rewrite_for_the_same_song() {
         let path = tmp_path("keep-generation.render.json");
         let first = RenderSidecar {
+            version: None,
             seed: Some(1),
             song_json: Some("/tmp/song.json".into()),
             model: Some("claude-opus-5-5".into()),
@@ -219,6 +247,7 @@ mod tests {
 
         // A re-render (new seed, a mix change) with no generation of its own.
         let second = RenderSidecar {
+            version: None,
             seed: Some(2),
             song_json: Some("/tmp/song.json".into()),
             ..RenderSidecar::default()

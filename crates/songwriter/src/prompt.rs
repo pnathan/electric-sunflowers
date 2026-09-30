@@ -137,6 +137,12 @@ PHRASING
 - Endings: held (anthems, final lines), released (most), clipped (patter).
 - This style usually sings {delivery}, endings {endings}.
 
+CHOIR, MELISMA, KEY AND TIMING (all optional; use each only where the song wants it)
+- A choir can sing words. Mark a line, or a whole section, "sing":"choir": the choir sings it in place of the lead, as the answer in a call and response, a crew's refrain, a gospel response. "voicing":"unison" (every voice on the tune, a crew; the default) or "block" (four-part harmony). It suits shanties, work songs, gospel, revival and hollers; it does not suit a private confession. When you use it, set "choir" true in the band.
+- A melisma holds one syllable over 2 to 4 notes: write "~" or "~N" after the syllable, as in "*glo~3-ry". Use it sparingly, on an open vowel at a phrase end or on the hook, in hymn, gospel and ballad; never in patter.
+- A change of key lifts a late chorus: give a section "key":"<tonic>" (for example "A" or "E minor"); its chords are written in that key, and a {{"type":"chorus","same":true,"key":"A"}} repeats the earlier chorus moved to it. At most two changes, usually a step or a third up.
+- "rubato":"steady|light|free" at top level (a section may set its own): steady for dances and anything with a pulse, light for ballads and airs, free for a slow air or a hymn verse.
+
 EMOTIONAL REGISTER
 - Match the feeling the prompt asks for exactly. A happy prompt gets a happy song, a funny prompt a funny one; do not darken it, do not add a twist of loss.
 - If the prompt leaves the feeling open, write it as: {reg}.
@@ -172,8 +178,8 @@ ENCODING (strict; the singer is a machine that reads this literally)
 
 When the song is a duet, add "duet" at top level for singer B: {{"voice":"<baritone|tenor|alto|soprano>","phrasing":{{"delivery":"<...>","endings":"<...>"}}}} (its "phrasing" is optional; omitted, it follows the song's). Then mark any section or line that is not "A" throughout with "sing":"A|B|both" (default "A"), the shared line's melody with "lead":"A|B" (default "A") and the other singer's interval with "blend":"harmony|octave" (default "harmony"), for example a shared chorus: {{"type":"chorus","sing":"both","lead":"B","blend":"harmony","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord>","<chord>"]}}]}}.
 
-Reply with ONLY one JSON object, no prose, no code fence, in exactly this form:
-{{"title":"<title>","note":"<liner note>","key":"<tonic, e.g. A or Eb>","mode":"<major|minor|dorian|mixolydian>","meter":"<4/4|3/4|6/8>","tempo":<bpm>,"guitar":"<strum|fingerpick|travis|arpeggio>","voice":"<baritone|tenor|alto|soprano>","phrasing":{{"delivery":"<legato|flowing|parlando|detached>","endings":"<held|released|clipped>"}},
+Reply with ONLY one JSON object, no prose, no code fence, in exactly this form ("schema_version" is always 2):
+{{"schema_version":2,"title":"<title>","note":"<liner note>","key":"<tonic, e.g. A or Eb>","mode":"<major|minor|dorian|mixolydian>","meter":"<4/4|3/4|6/8>","tempo":<bpm>,"guitar":"<strum|fingerpick|travis|arpeggio>","voice":"<baritone|tenor|alto|soprano>","phrasing":{{"delivery":"<legato|flowing|parlando|detached>","endings":"<held|released|clipped>"}},
 "band":{{"drums":"<none|brushes|soft|full>","bass":<bool>,"harmonyGuitar":<bool>,"harp":<bool>,"violin":<bool>,"choir":<bool>,"harmonies":<bool>,"doubles":<bool>}},
 "sections":[
 {{"type":"intro","chords":["<chord>","<chord>","<chord>","<chord>"]}},

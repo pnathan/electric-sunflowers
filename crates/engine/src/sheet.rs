@@ -16,9 +16,17 @@ use song::{Meter, Mode, Part, SectionKind, SingerId, Song, Voice};
 /// Tolerance in beats when matching a chord onset to a note.
 const EPS: f64 = 1e-6;
 
+/// The `<stem>.sheet.json` format version. Version 1 (no `version` key) is
+/// what earlier builds wrote; version 2 adds `version`, and per-section
+/// `key`, `rubato` and the choir's lines as later steps of the schema-2
+/// work define them. A reader ignores unknown fields.
+pub const SHEET_VERSION: u32 = 2;
+
 /// A song as sung and played: header fields and sections.
 #[derive(Clone, Debug, Serialize)]
 pub struct SongSheet {
+    /// `SHEET_VERSION`.
+    pub version: u32,
     pub title: String,
     /// Liner note.
     pub note: String,
@@ -289,6 +297,7 @@ pub fn sheet_from(song: &Song, seed: u64, p: &Prepared) -> SongSheet {
     }
 
     SongSheet {
+        version: SHEET_VERSION,
         title: song.title.clone(),
         note: song.note.clone(),
         style: song.style.clone(),
