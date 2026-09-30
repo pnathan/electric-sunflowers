@@ -34,6 +34,7 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
+use dsp::biquad::{Biquad, BiquadCoeffs};
 use dsp::onepole::OnePole;
 use dsp::stochastic::RandomWalk;
 use sfcore::math::mtof;
@@ -47,7 +48,9 @@ use crate::glottal::GlottalSource;
 use crate::params::{voice_params, VoiceParams};
 use crate::phrasing::PhrasingParams;
 use crate::tract::{Formants, Tract, MAX_HIGH};
-use crate::tuning::{ASPIRATION_GAIN, BREATH_LP_HZ, TILT_SCALE};
+use crate::tuning::{
+    ASPIRATION_GAIN, BREATH_LP_HZ, BW_SCALE, HF_BRANCH_GAIN, HF_BRANCH_HZ, TILT_SCALE,
+};
 
 const SOURCE: Tag = tag("voice.source");
 const NOISE: Tag = tag("voice.noise");
@@ -165,6 +168,8 @@ pub struct VoiceSynth {
     formant_rng: Rng,
     wobble: [RandomWalk; 2],
     breath_lp: OnePole,
+    /// The high-frequency voiced branch's 4th-order high-pass (`tuning::HF_BRANCH_*`).
+    hf: [Biquad; 2],
     breath: f64,
     /// Per-frame noise buffers.
     asp: [f32; HOP],
@@ -194,6 +199,10 @@ impl VoiceSynth {
                 RandomWalk::bounded(0.02, 0.97, 0.01, 0.025),
             ],
             breath_lp: OnePole::from_hz(BREATH_LP_HZ, SR_F),
+            hf: [
+                Biquad::new(BiquadCoeffs::highpass(SR_F, HF_BRANCH_HZ, 0.5412)),
+                Biquad::new(BiquadCoeffs::highpass(SR_F, HF_BRANCH_HZ, 1.3066)),
+            ],
             breath: p.breath,
             asp: [0.0; HOP],
             fric: [0.0; HOP],
@@ -205,6 +214,8 @@ impl VoiceSynth {
         self.source.reset();
         self.tract.reset();
         self.breath_lp.reset();
+        self.hf[0].reset();
+        self.hf[1].reset();
     }
 
     /// Formants of frame `m` (fundamental `f0` Hz) with the current wobble.
@@ -217,9 +228,9 @@ impl VoiceSynth {
                 ctl.f3[m] as f64 * (1.0 + self.wobble[1].w),
             ],
             bw: [
-                60.0 + self.breath * 80.0 + nas * 50.0 + ctl.b1x[m] as f64 * B1X_GAIN,
-                90.0 + nas * 170.0,
-                130.0 + nas * 220.0,
+                (60.0 + self.breath * 80.0 + nas * 50.0 + ctl.b1x[m] as f64 * B1X_GAIN) * BW_SCALE,
+                (90.0 + nas * 170.0) * BW_SCALE,
+                (130.0 + nas * 220.0) * BW_SCALE,
             ],
         }
     }
@@ -317,6 +328,7 @@ impl VoiceSynth {
         let breath = self.breath;
         let mut lp = self.breath_lp;
         let mut exc = [0.0f64; HOP];
+        let mut vh = [0.0f64; HOP];
         let mut fin = [0.0f64; HOP];
         let (asp, fric) = (&self.asp, &self.fric);
         self.source.run(
@@ -329,6 +341,7 @@ impl VoiceSynth {
                 let a = av + dav * t;
                 let nz = asp[j] as f64;
                 let n1 = lp.tick(nz) * 1.9;
+                vh[j] = pulse * a;
                 exc[j] = pulse * a
                     + (nz * (ah + dah * t) * 0.9 * ASPIRATION_GAIN
                         + n1 * breath * a * (0.18 + 0.9 * flow))
@@ -340,9 +353,18 @@ impl VoiceSynth {
         );
         self.breath_lp = lp;
         self.tract.cascade_block(&mut exc[..n]);
+        if HF_BRANCH_GAIN != 0.0 {
+            for j in 0..n {
+                let x = self.hf[0].tick(vh[j]);
+                let y = self.hf[1].tick(x);
+                exc[j] += y * HF_BRANCH_GAIN;
+            }
+        }
         self.tract
             .finish_block::<FRIC>(&exc[..n], &fin[..n], &mut out[..n]);
         self.tract.flush_denormals();
+        self.hf[0].flush_denormals();
+        self.hf[1].flush_denormals();
     }
 }
 

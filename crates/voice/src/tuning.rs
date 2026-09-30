@@ -20,6 +20,29 @@ pub const BURST_GAIN: f64 = 0.8;
 /// Frication band-pass output gain, added after the tract.
 pub const FRICATION_GAIN: f64 = 2.2;
 
+/// High-frequency voiced branch: the glottal source, high-passed (4th order,
+/// corner `HF_BRANCH_HZ`) and added after the cascade at `HF_BRANCH_GAIN`
+/// (0 turns it off). The cascade's F4, F5 and high resonances fall about
+/// 45 dB between 3.2 and 5 kHz, where real voices' harmonics keep falling at
+/// 8 to 11 dB per octave (issue 22); this carries the source's own harmonics
+/// above the corner and does not touch the valleys below it.
+pub const HF_BRANCH_HZ: f64 = 3800.0;
+pub const HF_BRANCH_GAIN: f64 = 0.0;
+
+/// Scale on the F1-F3 bandwidths (1 is the preset: 60 + 80 breath, 90, 130
+/// Hz). Wider formants fill the valleys between harmonics; real voices show
+/// valleys 3 to 6 dB shallower than the engine's (issue 22).
+pub const BW_SCALE: f64 = 1.0;
+
+/// Vibrato variation, per note (issue 22): the rate varies by
+/// +-`VIB_RATE_VAR` and the depth by +-`VIB_DEPTH_VAR` (fractions, drawn
+/// from the note's onset time, so a render stays deterministic), and the
+/// slow rate wobble gets a second, incommensurate sine of
+/// `VIB_WOBBLE2` (fraction of the rate). All 0 is today's steady vibrato.
+pub const VIB_RATE_VAR: f64 = 0.0;
+pub const VIB_DEPTH_VAR: f64 = 0.0;
+pub const VIB_WOBBLE2: f64 = 0.0;
+
 /// High shelf after the cascade: +16 dB at 5.2 kHz, Q 0.7 (CLAUDE.md, "Voice"). It
 /// replaced a parallel high-frequency branch, which filled the vowels'
 /// spectral valleys.
