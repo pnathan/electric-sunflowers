@@ -20,7 +20,7 @@
 //! `schema_version` is `SongError::UnsupportedSchema`.
 
 use crate::model::{
-    Blend, ChoirVoicing, Delivery, DrumKit, Endings, GuitarPattern, Meter, Mode, Rubato,
+    Blend, ChoirVoicing, Delivery, DrumKit, Endings, Energy, GuitarPattern, Meter, Mode, Rubato,
     SectionKind, SingerId, Voice, SCHEMA_V1, SCHEMA_V2, SCHEMA_V3,
 };
 use serde_json::{json, Value};
@@ -114,6 +114,7 @@ fn section_schema(version: u32) -> Value {
     }
     if version >= SCHEMA_V3 {
         v["properties"]["tune"] = json!({"type": "string", "description": SECTION_TUNE});
+        v["properties"]["energy"] = json!({"type": "string", "enum": Energy::NAMES, "description": "How hard the band plays this section. Absent: the engine builds up like a ballad (quiet intro, low first verse, choruses lifted)."});
     }
     v
 }

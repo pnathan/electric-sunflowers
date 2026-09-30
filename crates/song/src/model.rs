@@ -331,6 +331,18 @@ named_enum! {
 }
 
 named_enum! {
+    /// How hard the band plays a section (schema 3): the writer's choice of
+    /// the section's arrangement intensity. Without it the engine's own
+    /// build-up applies (`compose::form`).
+    pub enum Energy ("energy") {
+        Quiet = "quiet",
+        Low = "low",
+        Mid = "mid",
+        High = "high",
+    }
+}
+
+named_enum! {
     /// How the choir sings a choir line (schema 2): all voices on the tune
     /// (a crew, a shanty chorus) or four-part block harmony (a gospel
     /// response).
@@ -591,6 +603,9 @@ pub struct Section {
     /// (`song::tune`, break tunes); `None` leaves the line to the engine.
     /// Always `None` in a sung section.
     pub break_tune: Option<Vec<crate::tune::BreakNote>>,
+    /// Schema 3: the writer's energy for this section; `None` leaves the
+    /// intensity to the engine's build-up rules.
+    pub energy: Option<Energy>,
 }
 
 impl Section {

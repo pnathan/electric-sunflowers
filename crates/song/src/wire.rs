@@ -50,10 +50,10 @@ use crate::chord::transpose_symbol;
 use crate::chord::{parse_detail, Chord, ChordId, ChordTable};
 use crate::g2p::g2p;
 use crate::model::{
-    Band, BarChords, Blend, BreakLead, ChoirVoicing, Delivery, Duet, Endings, GuitarPattern,
-    KeyChange, Line, Meter, Mode, Part, Phrasing, Rubato, Section, SectionBody, SectionKind,
-    SectionRole, SingerId, Song, Syllable, Voice, MELISMA_MAX_NOTES, SCHEMA_LATEST, SCHEMA_V1,
-    SCHEMA_V2, SCHEMA_V3,
+    Band, BarChords, Blend, BreakLead, ChoirVoicing, Delivery, Duet, Endings, Energy,
+    GuitarPattern, KeyChange, Line, Meter, Mode, Part, Phrasing, Rubato, Section, SectionBody,
+    SectionKind, SectionRole, SingerId, Song, Syllable, Voice, MELISMA_MAX_NOTES, SCHEMA_LATEST,
+    SCHEMA_V1, SCHEMA_V2, SCHEMA_V3,
 };
 use crate::phoneme::Phoneme;
 use crate::pitch::Pc;
@@ -187,6 +187,10 @@ pub struct WireSection {
     /// Schema 2: this section's rubato.
     #[serde(deserialize_with = "loose_str")]
     pub rubato: Option<String>,
+    /// Schema 3: how hard the band plays this section (`quiet`, `low`,
+    /// `mid`, `high`).
+    #[serde(deserialize_with = "loose_str")]
+    pub energy: Option<String>,
     /// Schema 3: the name of a song tune this section's lines follow.
     #[serde(deserialize_with = "loose_str")]
     pub tune: Option<String>,
@@ -1413,10 +1417,11 @@ fn uses_v2(w: &WireSong) -> bool {
 /// Whether the document uses any version-3 field.
 fn uses_v3(w: &WireSong) -> bool {
     w.tunes.is_some()
-        || w.sections
-            .iter()
-            .flatten()
-            .any(|s| s.tune.is_some() || s.lines.iter().flatten().any(|l| l.tune.is_some()))
+        || w.sections.iter().flatten().any(|s| {
+            s.tune.is_some()
+                || s.energy.is_some()
+                || s.lines.iter().flatten().any(|l| l.tune.is_some())
+        })
 }
 
 /// Settles the document's schema version and removes the fields of newer
@@ -1461,6 +1466,14 @@ fn resolve_version(w: &mut WireSong, rep: &mut Vec<Repair>) -> Result<u32, SongE
             if s.tune.take().is_some() {
                 rep.push(Repair::FieldNeedsSchema {
                     field: "tune",
+                    needs: SCHEMA_V3,
+                    section: Some(si),
+                    line: None,
+                });
+            }
+            if s.energy.take().is_some() {
+                rep.push(Repair::FieldNeedsSchema {
+                    field: "energy",
                     needs: SCHEMA_V3,
                     section: Some(si),
                     line: None,
@@ -1741,6 +1754,16 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             }
         });
 
+        let sec_energy = ws.energy.and_then(|t| match t.trim().parse::<Energy>() {
+            Ok(e) => Some(e),
+            Err(_) => {
+                ch.rep.push(Repair::DefaultedField {
+                    field: "sections.energy",
+                });
+                None
+            }
+        });
+
         if ws.same == Some(true) {
             let inst_src = (version >= SCHEMA_V3 && ws.lines.is_empty() && ws.chords.is_none())
                 .then(|| last_inst.get(&kind).copied())
@@ -1762,6 +1785,7 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                     };
                     let inherited = sections[i].rubato;
                     let break_tune = sections[i].break_tune.clone();
+                    let inherited_energy = sections[i].energy;
                     sections.push(Section {
                         kind,
                         role: SectionRole::Plain,
@@ -1770,6 +1794,7 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                         key_change,
                         rubato: sec_rubato.or(inherited),
                         break_tune,
+                        energy: sec_energy.or(inherited_energy),
                     });
                     eff_keys.push(target_key);
                     run_key = target_key;
@@ -1924,6 +1949,7 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
                 key_change,
                 rubato: sec_rubato,
                 break_tune: None,
+                energy: sec_energy,
             });
             eff_keys.push(target_key);
             run_key = target_key;
@@ -1956,6 +1982,7 @@ pub fn normalize(mut w: WireSong) -> Result<(Song, Vec<Repair>), SongError> {
             key_change,
             rubato: sec_rubato,
             break_tune,
+            energy: sec_energy,
         });
         eff_keys.push(target_key);
         run_key = target_key;
@@ -2133,6 +2160,9 @@ pub fn to_wire(song: &Song) -> Value {
         }
         if let Some(r) = s.rubato {
             o.insert("rubato".into(), Value::String(r.as_str().into()));
+        }
+        if let Some(e) = s.energy {
+            o.insert("energy".into(), Value::String(e.as_str().into()));
         }
         if s.repeat_of.is_some() {
             o.insert("same".into(), Value::Bool(true));

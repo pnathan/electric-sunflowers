@@ -442,3 +442,79 @@ fn a_break_tune_needs_schema_three() {
         }
     )));
 }
+
+// ---------------------------------------------------------------- energy
+
+fn with_energy(version3: bool, energies: [Option<&str>; 3]) -> Value {
+    let mut secs = vec![
+        json!({"type": "intro", "chords": ["C", "G"]}),
+        verse(json!([{"syl": "*one *two", "chords": ["C"]}])),
+        json!({"type": "chorus", "lines": [{"syl": "*three *four", "chords": ["F"]}]}),
+    ];
+    for (s, e) in secs.iter_mut().zip(energies) {
+        if let Some(e) = e {
+            s["energy"] = json!(e);
+        }
+    }
+    song(version3, json!(secs), json!({}))
+}
+
+#[test]
+fn a_section_energy_is_read_and_round_trips() {
+    use song::Energy;
+    let (s, r) = read(&with_energy(true, [Some("high"), None, Some("quiet")]));
+    assert!(r.is_empty(), "{r:?}");
+    let e: Vec<_> = s.sections.iter().map(|x| x.energy).collect();
+    assert_eq!(e, [Some(Energy::High), None, Some(Energy::Quiet)]);
+    let (back, r) = read(&to_wire(&s));
+    assert!(r.is_empty(), "{r:?}");
+    assert_eq!(back, s);
+}
+
+#[test]
+fn a_bad_energy_is_repaired_and_a_same_section_inherits() {
+    let (s, r) = read(&with_energy(true, [Some("loud"), None, None]));
+    assert!(s.sections[0].energy.is_none());
+    assert_eq!(
+        r,
+        vec![Repair::DefaultedField {
+            field: "sections.energy"
+        }]
+    );
+    let v = song(
+        true,
+        json!([
+            verse(json!([{"syl": "*one *two", "chords": ["C"]}])),
+            {"type": "chorus", "energy": "mid", "lines": [{"syl": "*three *four", "chords": ["F"]}]},
+            {"type": "chorus", "same": true},
+            {"type": "chorus", "same": true, "energy": "high"}
+        ]),
+        json!({}),
+    );
+    let (s, _) = read(&v);
+    use song::Energy;
+    assert_eq!(s.sections[2].energy, Some(Energy::Mid));
+    assert_eq!(s.sections[3].energy, Some(Energy::High));
+}
+
+#[test]
+fn energy_needs_schema_three() {
+    let mut v = with_energy(true, [Some("high"), None, None]);
+    v["schema_version"] = json!(2);
+    let (s, r) = read(&v);
+    assert!(s.sections[0].energy.is_none());
+    assert!(r.iter().any(|x| matches!(
+        x,
+        Repair::FieldNeedsSchema {
+            field: "energy",
+            needs: 3,
+            ..
+        }
+    )));
+    // Without a version the field makes the document version 3.
+    let mut v = with_energy(false, [Some("high"), None, None]);
+    v.as_object_mut().unwrap().remove("schema_version");
+    let (s, r) = read(&v);
+    assert_eq!(s.schema_version, 3);
+    assert!(r.contains(&Repair::SchemaVersionInferred(3)));
+}

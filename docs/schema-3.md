@@ -6,7 +6,7 @@ Claude may sketch the lead melody in movable-do solfege, reuse a tune across sec
 
 | Version | Adds |
 |---|---|
-| 3 | `tune` (line and section, sung or instrumental); `tunes` (song). |
+| 3 | `tune` (line and section, sung or instrumental); `tunes` (song); `energy` (section). |
 
 `song::wire::resolve_version`: a document without `schema_version` that uses a version-3 field is read as 3 with `Repair::SchemaVersionInferred(3)`. In a document that declares 1 or 2, each version-3 field is dropped with `Repair::FieldNeedsSchema { needs: 3 }`. Greater than 3 is `SongError::UnsupportedSchema`. `song::schema`: `json_schema_v3`, now the latest (`json_schema()`, requires `schema_version: 3`); `json_schema_for(3)`.
 
@@ -66,7 +66,13 @@ Playing. `InstNote::written` is true for these notes. The violin plays them at v
 
 The JSON schema sent to Claude describes the field in `tune` (section): the same property serves sung sections (a name) and instrumental ones. The prompt teaches the notation and asks for a tune in every instrumental section, in the style's `break_tune` phrase (`songwriter::styles::Style::break_tune`: for example "a reel in running eighths or a jig in 6/8, with sixteenth cuts, bars in AABB repeats"; it changes no random draw).
 
-## 7. Example
+## 7. Energy
+
+A section may carry `"energy": "quiet" | "low" | "mid" | "high"`. It sets the section's arrangement intensity (`compose::form::Intensity`, which drives the drums (hats from mid), the guitar's strum density, the choir and the harp) directly, in place of the engine's build-up rules (intro quiet, first verse low, interlude and bridge low, later verses and first chorus mid, later choruses high). The lift bookkeeping (which sections are lifted, for the choir pad and the key change) does not change. Absent: the rules apply, so a song of version 1 or 2, and a version-3 song with no `energy`, renders as before. A `same: true` section takes its source's energy unless it gives its own. A value that is not one of the four records `Repair::DefaultedField { field: "sections.energy" }` and the rules apply. In a document that declares version 1 or 2 the field is dropped with `FieldNeedsSchema`. `to_wire` writes it back.
+
+The prompt tells the writer that the curve is its decision: a stomp-along dance song runs mid or high from the first bar and does not build like a ballad. Each style's `drive` phrase (`songwriter::styles::Style::drive`) is quoted there, with the matching lyric density (about one syllable per eighth note in a dance); it changes no random draw.
+
+## 8. Example
 
 ```json
 {"schema_version": 3, "title": "Old Tune", "key": "G", "mode": "major",

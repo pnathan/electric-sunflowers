@@ -153,6 +153,10 @@ BREAK TUNES (schema 3)
 - The tune repeats from its start to fill the section, so write a phrase or two (a dance tune's A and B parts) and let the engine repeat it; a tune longer than the section is cut. Fit the tune's harmonic rhythm to the section's chords: a chord entry is one bar, and the notes of each bar should belong with that bar's chord.
 - The engine moves the whole tune by octaves to fit the fiddle (E4 to D6), so write it within about two octaves. Example, two bars of 4/4 over "G", "D": "d8 d8 r8 m8 s4 m4 | r8 m8 r8 d8 t,4 s,4". Example, one bar of 6/8 over "G": "d8 m8 s8 l8 s8 m8". Several sections may share a tune: put it once in top-level "tunes" and give the section its name.
 
+ENERGY (schema 3)
+- Give every section "energy":"quiet|low|mid|high": how hard the band plays it (quiet: a few instruments, soft; high: the whole band, full drums, hard strumming). You decide the curve; the engine adds none. Without it the engine builds like a ballad (quiet intro, low first verse, lifted choruses), which is wrong for a dance. A stomp-along dance song runs mid or high from the first bar, intro included, and does not build like a ballad; a ballad may build from quiet. Keep the lyrics in step: a high-energy verse is packed, about one syllable per eighth note, with short words on the beat; a quiet one has room for long notes.
+- This style: {drive}.
+
 EMOTIONAL REGISTER
 - Match the feeling the prompt asks for exactly. A happy prompt gets a happy song, a funny prompt a funny one; do not darken it, do not add a twist of loss.
 - If the prompt leaves the feeling open, write it as: {reg}.
@@ -193,9 +197,9 @@ Reply with ONLY one JSON object, no prose, no code fence, in exactly this form (
 "band":{{"drums":"<none|brushes|soft|full>","bass":<bool>,"harmonyGuitar":<bool>,"harp":<bool>,"violin":<bool>,"choir":<bool>,"harmonies":<bool>,"doubles":<bool>}},
 "tunes":[{{"name":"<name>","lines":["<solfege>","<solfege>"]}}],
 "sections":[
-{{"type":"intro","tune":"<break tune: solfege with lengths>","chords":["<chord>","<chord>","<chord>","<chord>"]}},
-{{"type":"verse","tune":"<tune name, if shared>","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord>","<chord>"]}}]}},
-{{"type":"chorus","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord> <chord>","<chord>"],"tune":"<solfege, one token per note>"}}]}},
+{{"type":"intro","energy":"<quiet|low|mid|high>","tune":"<break tune: solfege with lengths>","chords":["<chord>","<chord>","<chord>","<chord>"]}},
+{{"type":"verse","energy":"<quiet|low|mid|high>","tune":"<tune name, if shared>","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord>","<chord>"]}}]}},
+{{"type":"chorus","energy":"<quiet|low|mid|high>","lines":[{{"syl":"<syllables>","ph":"<arpabet>","chords":["<chord> <chord>","<chord>"],"tune":"<solfege, one token per note>"}}]}},
 {{"type":"chorus","same":true}},
 {{"type":"outro","tune":"<break tune>","chords":["<chord>","<chord>","<chord>"]}}]}}
 Angle-bracketed items are placeholders; replace every one with a real value (numbers and booleans unquoted)."#,
@@ -206,6 +210,7 @@ Angle-bracketed items are placeholders; replace every one with a real value (num
         label = dir.label,
         idiom = dir.idiom,
         break_tune = dir.break_tune,
+        drive = dir.drive,
         world_line = world_line,
         mode = dir.mode,
         meter = dir.meter,
