@@ -40,3 +40,5 @@ cloud2	8e0ddc71	pass	3	1.40	3.02	664	5.61	523	yes
 merge3	619c44c4	pass	3	1.15	3.38	626	6.89	524	yes
 energy	3fb52375+dirty	pass	3	1.58	4.36	665	8.06	524	yes
 final	1c0830d6	pass	3	1.75	3.23	655	5.83	524	yes
+loci	3b83e674	pass	3	1.37	3.80	627	7.06	524	yes
+loci-baseline	3b83e674	pass	3	1.33	3.53	627	6.94	524	yes
