@@ -46,7 +46,8 @@ use compose::melody::LeadNote;
 use compose::prepare::Prepared;
 use compose::timeline::Timeline;
 use serde_json::{json, Map, Value};
-use song::events::{BowNote, DrumHit, DrumKind, PluckNote};
+use sfcore::math::db_to_gain;
+use song::events::{BowNote, DrumHit, DrumKind, Expr, PluckNote, Shape};
 use song::{ChoirVoicing, DrumKit, Song, MELISMA_MAX_NOTES};
 
 use crate::mixset::{DUCK_DB_MAX, DUCK_DB_MIN, GAIN_DB_MAX, GAIN_DB_MIN};
@@ -66,7 +67,7 @@ const DEFAULT_VEL: f64 = 0.7;
 /// The parts edited as notes over a bar range, by the names the edits use.
 pub const PARTS: [&str; 5] = ["drums", "bass", "violin", "harmony_guitar", "harp"];
 /// Every name an edit's `part` may take.
-pub const EDIT_PARTS: [&str; 10] = [
+pub const EDIT_PARTS: [&str; 11] = [
     "drums",
     "bass",
     "violin",
@@ -77,7 +78,10 @@ pub const EDIT_PARTS: [&str; 10] = [
     "harmony",
     "doubles",
     "choir",
+    "expression",
 ];
+/// The note shapes of an expression mark (`docs/expression.md`).
+pub const SHAPES: [&str; 4] = ["flat", "swell", "fade", "accent"];
 /// The choir modes of a choir edit.
 pub const CHOIR_MODES: [&str; 4] = ["off", "pad", "unison", "block"];
 /// Drum kind names, as `song::events::DrumKind` spells them.
@@ -154,6 +158,7 @@ enum Target {
     Guitar,
     Lead,
     Sections(SectionPart),
+    Expression,
 }
 
 impl Target {
@@ -167,6 +172,7 @@ impl Target {
             "harmony" => Some(Target::Sections(SectionPart::Harmony)),
             "doubles" => Some(Target::Sections(SectionPart::Doubles)),
             "choir" => Some(Target::Sections(SectionPart::Choir)),
+            "expression" => Some(Target::Expression),
             _ => None,
         }
     }
@@ -519,10 +525,11 @@ fn round2(x: f64) -> f64 {
 
 /// The JSON schema of the model's reply (closed objects throughout, usable
 /// as `--json-schema` and as `output_config.format.schema`). An edit is one
-/// of eight kinds (`anyOf`), each a closed object: notes over a bar range
+/// of nine kinds (`anyOf`), each a closed object: notes over a bar range
 /// for the drums, the harp and the pitched parts, strokes over a bar range
 /// for the guitar, the lead's notes over a bar range, and per-section
-/// switches for the harmony, the doubles and the choir.
+/// switches for the harmony, the doubles and the choir, and expression
+/// marks on lead syllables.
 pub fn edit_schema() -> Value {
     let pitched = json!({
         "type": "object",
@@ -605,6 +612,23 @@ pub fn edit_schema() -> Value {
         "description": "Section numbers as the view lists them (s0, s1, ...), written as integers.",
         "items": {"type": "integer"}
     });
+    let mark = json!({
+        "type": "object",
+        "description": "Expression marks on one lead syllable (#N in the view). Every field but syllable is optional; leave out what does not change. shift_ms: onset earlier (negative, push) or later (positive, drag), -60 to 60. dyn_db: level, -9 to 6. scoop_cents: start this far below (positive) or above (negative) the note, -400 to 400, reaching it over scoop_ms (20 to 250, default 80). fall_cents: leave the note toward this offset (negative falls), -1200 to 400, over the last fall_ms (30 to 400, default 120). vibrato: depth scale 0 to 2; 0 sings it straight, any value above 0 also puts vibrato on a short note. shape: flat, swell (grows toward the end), fade (lets go over the second half) or accent (hits the onset).",
+        "properties": {
+            "syllable": {"type": "integer"},
+            "shift_ms": {"type": "number"},
+            "dyn_db": {"type": "number"},
+            "scoop_cents": {"type": "number"},
+            "scoop_ms": {"type": "number"},
+            "fall_cents": {"type": "number"},
+            "fall_ms": {"type": "number"},
+            "vibrato": {"type": "number"},
+            "shape": {"type": "string", "enum": SHAPES}
+        },
+        "required": ["syllable"],
+        "additionalProperties": false
+    });
     let intervals: Vec<&str> = HarmonyInterval::ALL.iter().map(|i| i.name()).collect();
     let edit_kinds = vec![
         ranged(
@@ -669,6 +693,16 @@ pub fn edit_schema() -> Value {
                 "mode": {"type": "string", "enum": CHOIR_MODES}
             },
             "required": ["part", "sections", "mode"],
+            "additionalProperties": false
+        }),
+        json!({
+            "type": "object",
+            "description": "Marks how the lead sings chosen syllables: timing against the beat, level, scoops, falls, vibrato and note shape. Mark sparingly, on the words that carry the line; unmarked syllables keep the rule-based performance.",
+            "properties": {
+                "part": {"type": "string", "enum": ["expression"]},
+                "marks": {"type": "array", "items": mark}
+            },
+            "required": ["part", "marks"],
             "additionalProperties": false
         }),
     ];
@@ -1009,6 +1043,7 @@ pub fn apply(
     let mut guitar_ov: BTreeMap<usize, Vec<GuitarStroke>> = BTreeMap::new();
     let mut vocal_ov = Overrides::default();
     let mut lead_changed = false;
+    let mut marks: Vec<Mark> = Vec::new();
 
     for (ei, e) in edits.edits.iter().enumerate() {
         let Some(o) = e.as_object() else {
@@ -1024,6 +1059,12 @@ pub fn apply(
             ));
             continue;
         };
+        if target == Target::Expression {
+            if read_marks(o, ei, &mut marks, &mut out.repairs) {
+                out.applied += 1;
+            }
+            continue;
+        }
         if let Target::Sections(kind) = target {
             if section_edit(
                 kind,
@@ -1049,7 +1090,7 @@ pub fn apply(
                 lead_changed |= ok;
                 ok
             }
-            Target::Sections(_) => false,
+            Target::Sections(_) | Target::Expression => false,
         };
         if applied {
             out.applied += 1;
@@ -1090,10 +1131,170 @@ pub fn apply(
         perf.choir_key = crate::render::choir_line_spans(prepared, &words);
     }
 
+    if !marks.is_empty() {
+        apply_marks(prepared, perf, &marks, &mut out.repairs);
+    }
+
     if let Some(m) = &edits.mix {
         out.mix = read_mix(m, &mut out.repairs);
     }
     out
+}
+
+/// One lead syllable's expression marks after validation, in the units the
+/// events use (seconds, semitones, linear gain).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Mark {
+    syllable: usize,
+    shift: f64,
+    gain: f32,
+    expr: Expr,
+}
+
+/// `o[k]` clamped to `lo..=hi`, with a repair when it was outside.
+fn clamped(
+    o: &Map<String, Value>,
+    k: &str,
+    (lo, hi): (f64, f64),
+    tag: &str,
+    rep: &mut Vec<String>,
+) -> Option<f64> {
+    let v = get_f64(o, k)?;
+    let c = v.clamp(lo, hi);
+    if c != v {
+        rep.push(format!("{tag}: {k} {v} clamped to {c}"));
+    }
+    Some(c)
+}
+
+/// Reads an expression edit's marks into `marks`. Returns whether any
+/// mark survived.
+fn read_marks(
+    o: &Map<String, Value>,
+    ei: usize,
+    marks: &mut Vec<Mark>,
+    rep: &mut Vec<String>,
+) -> bool {
+    let Some(items) = o.get("marks").and_then(Value::as_array) else {
+        rep.push(format!("edit {ei}: expression without marks, dropped"));
+        return false;
+    };
+    let before = marks.len();
+    for (mi, m) in items.iter().enumerate() {
+        let tag = format!("edit {ei} mark {mi}");
+        let Some(m) = m.as_object() else {
+            rep.push(format!("{tag}: not an object, dropped"));
+            continue;
+        };
+        let Some(syllable) = get_int(m, "syllable").filter(|&n| n >= 0) else {
+            rep.push(format!("{tag}: no syllable number, dropped"));
+            continue;
+        };
+        let mut mk = Mark {
+            syllable: syllable as usize,
+            gain: 1.0,
+            ..Mark::default()
+        };
+        if let Some(v) = clamped(m, "shift_ms", (-60.0, 60.0), &tag, rep) {
+            mk.shift = v / 1000.0;
+        }
+        if let Some(v) = clamped(m, "dyn_db", (-9.0, 6.0), &tag, rep) {
+            mk.gain = db_to_gain(v) as f32;
+        }
+        if let Some(c) = clamped(m, "scoop_cents", (-400.0, 400.0), &tag, rep) {
+            let ms = clamped(m, "scoop_ms", (20.0, 250.0), &tag, rep).unwrap_or(80.0);
+            if c != 0.0 {
+                mk.expr.scoop = Some(((c / 100.0) as f32, (ms / 1000.0) as f32));
+            }
+        }
+        if let Some(c) = clamped(m, "fall_cents", (-1200.0, 400.0), &tag, rep) {
+            let ms = clamped(m, "fall_ms", (30.0, 400.0), &tag, rep).unwrap_or(120.0);
+            if c != 0.0 {
+                mk.expr.fall = Some(((c / 100.0) as f32, (ms / 1000.0) as f32));
+            }
+        }
+        if let Some(v) = clamped(m, "vibrato", (0.0, 2.0), &tag, rep) {
+            mk.expr.vibrato = Some(v as f32);
+        }
+        if let Some(sh) = m.get("shape").and_then(Value::as_str) {
+            mk.expr.shape = match sh.trim().to_ascii_lowercase().as_str() {
+                "flat" => Shape::Flat,
+                "swell" => Shape::Swell,
+                "fade" => Shape::Fade,
+                "accent" => Shape::Accent,
+                other => {
+                    rep.push(format!("{tag}: shape {other:?} unknown, flat"));
+                    Shape::Flat
+                }
+            };
+        }
+        marks.push(mk);
+    }
+    marks.len() > before
+}
+
+/// Shortest length a note keeps when the next onset is pushed into it, s.
+const PUSH_KEEP: f64 = 0.05;
+
+/// Applies `marks` to the singers who sing the marked syllables (the lead
+/// and, in a duet, singer B): onset shift, level and the voice's marks
+/// (`docs/expression.md`). Notes are found by their composed onset.
+fn apply_marks(prepared: &Prepared, perf: &mut Performance, marks: &[Mark], rep: &mut Vec<String>) {
+    let idx = lead_index(prepared);
+    let vocals = &mut perf.arrangement.vocals;
+    for mk in marks {
+        let Some(&(first, count)) = idx.groups.get(mk.syllable) else {
+            rep.push(format!(
+                "expression: syllable #{} is not in the song ({} syllables), dropped",
+                mk.syllable,
+                idx.groups.len()
+            ));
+            continue;
+        };
+        let mut found = false;
+        for j in 0..count {
+            let t = prepared.comp.lead[first + j].t0;
+            let singers = std::iter::once(&mut vocals.lead).chain(vocals.lead_b.as_mut());
+            for singer in singers {
+                let notes = &mut singer.notes;
+                let Some(k) = notes.iter().position(|n| (n.t0 - t).abs() < 1e-6) else {
+                    continue;
+                };
+                found = true;
+                let n = &mut notes[k];
+                n.amp *= mk.gain;
+                n.expr.vibrato = mk.expr.vibrato.or(n.expr.vibrato);
+                if mk.expr.shape != Shape::Flat {
+                    n.expr.shape = mk.expr.shape;
+                }
+                if j == 0 {
+                    n.expr.scoop = mk.expr.scoop.or(n.expr.scoop);
+                }
+                if j + 1 == count {
+                    n.expr.fall = mk.expr.fall.or(n.expr.fall);
+                }
+                if j == 0 && mk.shift != 0.0 {
+                    let lo = if k > 0 {
+                        notes[k - 1].t0 + PUSH_KEEP
+                    } else {
+                        0.0
+                    };
+                    let hi = notes[k].t1 - PUSH_KEEP;
+                    let t0 = (notes[k].t0 + mk.shift).clamp(lo.min(hi), hi);
+                    notes[k].t0 = t0;
+                    if k > 0 && notes[k - 1].t1 > t0 {
+                        notes[k - 1].t1 = t0;
+                    }
+                }
+            }
+        }
+        if !found {
+            rep.push(format!(
+                "expression: syllable #{} has no sung note, dropped",
+                mk.syllable
+            ));
+        }
+    }
 }
 
 /// Applies a note edit (drums, bass, harp, violin, harmony guitar) to
@@ -2098,7 +2299,7 @@ mod tests {
         let kinds = s["properties"]["edits"]["items"]["anyOf"]
             .as_array()
             .unwrap();
-        assert_eq!(kinds.len(), 8);
+        assert_eq!(kinds.len(), 9);
         let mut parts: Vec<String> = Vec::new();
         for k in kinds {
             assert_eq!(k["additionalProperties"], false);
@@ -2113,7 +2314,7 @@ mod tests {
             for r in k["required"].as_array().unwrap() {
                 assert!(k["properties"].get(r.as_str().unwrap()).is_some());
             }
-            for key in ["notes", "strokes"] {
+            for key in ["notes", "strokes", "marks"] {
                 if let Some(arr) = k["properties"].get(key) {
                     assert_eq!(arr["items"]["additionalProperties"], false);
                 }
@@ -2816,5 +3017,69 @@ mod tests {
         let text = serde_json::to_string(&perf).unwrap();
         let back: Performance = serde_json::from_str(&text).unwrap();
         assert_eq!(back, perf);
+    }
+
+    #[test]
+    fn expression_marks_reach_the_lead_notes() {
+        let (s, mut p, mut perf) = full_arranged();
+        let idx = lead_index(&p);
+        let (first, count) = idx.groups[5];
+        let t = p.comp.lead[first].t0;
+        let t_last = p.comp.lead[first + count - 1].t0;
+        let before = perf.arrangement.vocals.lead.notes.clone();
+        let k = before.iter().position(|n| (n.t0 - t).abs() < 1e-6).unwrap();
+        let a = run(
+            &s,
+            &mut p,
+            &mut perf,
+            json!({"edits": [{"part": "expression", "marks": [
+                {"syllable": 5, "shift_ms": -30, "dyn_db": 6, "scoop_cents": 150,
+                 "fall_cents": -300, "vibrato": 1.5, "shape": "swell"},
+                {"syllable": 99999, "vibrato": 0},
+                {"syllable": 6, "shift_ms": 500}
+            ]}], "summary": ""}),
+        );
+        assert_eq!(a.applied, 1);
+        assert!(
+            a.repairs.iter().any(|r| r.contains("#99999")),
+            "{:?}",
+            a.repairs
+        );
+        assert!(
+            a.repairs.iter().any(|r| r.contains("clamped to 60")),
+            "{:?}",
+            a.repairs
+        );
+        let notes = &perf.arrangement.vocals.lead.notes;
+        let n = &notes[k];
+        assert!(
+            (n.t0 - (before[k].t0 - 0.03)).abs() < 1e-9,
+            "{} {}",
+            n.t0,
+            before[k].t0
+        );
+        assert!((n.amp / before[k].amp - 2.0).abs() < 0.01);
+        assert_eq!(n.expr.scoop, Some((1.5, 0.08)));
+        assert_eq!(n.expr.vibrato, Some(1.5));
+        assert_eq!(n.expr.shape, Shape::Swell);
+        if k > 0 {
+            assert!(notes[k - 1].t1 <= n.t0 + 1e-12);
+        }
+        let last = notes
+            .iter()
+            .position(|x| (x.t0 - t_last).abs() < 1e-6)
+            .unwrap_or(k);
+        assert_eq!(notes[last].expr.fall, Some((-3.0, 0.12)));
+        // The arrangement file keeps the marks.
+        let text = serde_json::to_string(&perf).unwrap();
+        let back: Performance = serde_json::from_str(&text).unwrap();
+        assert_eq!(back, perf);
+    }
+
+    #[test]
+    fn unmarked_notes_serialise_without_expr() {
+        let (_, _, perf) = full_arranged();
+        let text = serde_json::to_string(&perf).unwrap();
+        assert!(!text.contains("\"expr\""));
     }
 }

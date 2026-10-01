@@ -134,6 +134,11 @@ fn solo_arrangement_is_unchanged() {
     // The melisma flag `legato` is `false` on every note of this song; the
     // checksum is of the arrangement as it was before the field existed.
     let stable = stable.replace(", legato: false", "");
+    // Likewise the neutral expression marks (`VocalNote::expr`).
+    let stable = stable.replace(
+        ", expr: Expr { scoop: None, fall: None, vibrato: None, shape: Flat }",
+        "",
+    );
     let h = fnv1a(stable.as_bytes());
     assert_eq!(
         h, 0x6c1999626d93ac0f,

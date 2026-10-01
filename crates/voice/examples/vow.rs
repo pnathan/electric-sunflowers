@@ -62,6 +62,7 @@ fn main() {
             phrase_end: false,
             grace: None,
             legato: false,
+            expr: Default::default(),
         });
         t += 1.6;
     }

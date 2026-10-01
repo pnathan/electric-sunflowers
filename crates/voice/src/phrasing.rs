@@ -156,6 +156,7 @@ mod tests {
             phrase_end,
             grace: None,
             legato: false,
+            expr: Default::default(),
         }
     }
 

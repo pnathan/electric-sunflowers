@@ -210,6 +210,7 @@ fn event(n: &ComposedNote, offset: f64) -> VocalNote {
         phrase_end: n.phrase_end,
         grace: n.grace.map(|g| g as f32),
         legato: n.cont,
+        expr: Default::default(),
     }
 }
 
@@ -506,6 +507,7 @@ pub fn choir_singers(p: &Prepared, seed: u64, overrides: Option<&Overrides>) -> 
                     phrase_end: false,
                     grace: None,
                     legato: false,
+                    expr: Default::default(),
                 });
             }
             if !words.is_empty() {

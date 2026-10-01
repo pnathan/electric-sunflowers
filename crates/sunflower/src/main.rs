@@ -825,9 +825,9 @@ fn cmd_play(
         .with_context(|| format!("reading the arrangement from {}", path.display()))?;
     let perf: engine::Performance = serde_json::from_str(&text)
         .with_context(|| format!("parsing the arrangement in {}", path.display()))?;
-    if perf.version != engine::PERFORMANCE_VERSION {
+    if perf.version == 0 || perf.version > engine::PERFORMANCE_VERSION {
         bail!(
-            "{} is performance version {}; this build plays version {}",
+            "{} is performance version {}; this build plays versions 1 to {}",
             path.display(),
             perf.version,
             engine::PERFORMANCE_VERSION

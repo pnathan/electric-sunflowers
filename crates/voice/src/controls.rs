@@ -40,7 +40,7 @@ use dsp::stochastic::RandomWalk;
 use sfcore::math::{one_pole_coeff_tau, smoothstep};
 use sfcore::random::Rng;
 use sfcore::{HOP, SR_F};
-use song::events::VocalNote;
+use song::events::{Shape, VocalNote};
 
 use crate::articulation::{plan_syllables, syllables, Segment, Span, Syllable};
 use crate::params::VoiceParams;
@@ -260,7 +260,7 @@ pub fn rasterise(plan: &[(Span, Segment)], w: Window, out: &mut ControlTracks, b
 pub fn shape_dynamics(av: &mut [f32], notes: &[VocalNote], w: Window, ph: &PhrasingParams) {
     for (k, n) in notes.iter().enumerate() {
         let dur = n.t1 - n.t0;
-        if dur <= 0.5 && !n.phrase_end {
+        if dur <= 0.5 && !n.phrase_end && n.expr.shape == Shape::Flat {
             continue;
         }
         // Notes of one melisma hold one level: no swell between them.
@@ -278,8 +278,26 @@ pub fn shape_dynamics(av: &mut [f32], notes: &[VocalNote], w: Window, ph: &Phras
             if n.phrase_end {
                 e *= 1.0 - ph.fade_depth * smoothstep(ph.fade_from, 1.0, x);
             }
+            e *= shape_gain(n.expr.shape, x);
             av[i] = (av[i] as f64 * e) as f32;
         }
+    }
+}
+
+/// The gain of a marked note shape at `x` (0 at the onset, 1 at the end);
+/// exactly 1 for `Shape::Flat` (`docs/expression.md`).
+fn shape_gain(shape: Shape, x: f64) -> f64 {
+    match shape {
+        Shape::Flat => 1.0,
+        Shape::Swell => {
+            if x < 0.7 {
+                0.8 + 0.3 * smoothstep(0.0, 0.7, x)
+            } else {
+                1.1 - 0.1 * smoothstep(0.7, 1.0, x)
+            }
+        }
+        Shape::Fade => 1.0 - 0.45 * smoothstep(0.5, 1.0, x),
+        Shape::Accent => 1.0 + 0.3 * (1.0 - smoothstep(0.0, 0.3, x)),
     }
 }
 
@@ -308,8 +326,26 @@ pub fn pitch_track(
             None => Window::frame(n.t1) + Window::frame(LAST_HOLD),
         };
         m[w.clip(start, end)].fill(n.midi);
-        if n.phrase_start && settings.scoop {
+        if let Some((depth, time)) = n.expr.scoop {
+            // A marked scoop: a ramp from the offset at the onset to the note.
+            let len = Window::frame(time as f64).max(1);
+            let r = w.clip(start, i0 + len);
+            for i in r {
+                let x = ((w.abs(i) - i0) as f32 / len as f32).clamp(0.0, 1.0);
+                m[i] = n.midi - depth * (1.0 - x);
+            }
+        } else if n.phrase_start && settings.scoop {
             m[w.clip(start, i0 + Window::frame(SCOOP_TIME).max(0))].fill(n.midi - SCOOP_DEPTH);
+        }
+        if let Some((offset, time)) = n.expr.fall {
+            // A marked fall: a ramp over the note's last `time` seconds,
+            // finished before the next syllable's onset takes the pitch.
+            let i1 = Window::frame(n.t1).min(end);
+            let len = Window::frame(time as f64).clamp(1, (i1 - i0).max(1));
+            for i in w.clip(i1 - len, i1) {
+                let x = ((w.abs(i) - (i1 - len)) as f32 / len as f32).clamp(0.0, 1.0);
+                m[i] = n.midi + offset * x;
+            }
         }
         if let Some(grace) = n.grace {
             let g = Window::frame(GRACE_TIME.min((n.t1 - n.t0) * GRACE_SHARE)).max(0);
@@ -373,14 +409,23 @@ impl Vibrato {
         rk.clear();
         rk.resize(midi.len(), 1.0);
         for n in notes {
-            if n.t1 - n.t0 < VIBRATO_MIN_NOTE {
+            let dur = n.t1 - n.t0;
+            let marked = n.expr.vibrato;
+            if marked == Some(0.0) || (dur < VIBRATO_MIN_NOTE && marked.is_none()) {
                 continue;
             }
-            let a = Window::frame(n.t0 + VIBRATO_DELAY);
+            // A marked short note gets a delay and rise in proportion.
+            let (delay, rise) = if dur < VIBRATO_MIN_NOTE {
+                (0.25 * dur, 0.4 * dur)
+            } else {
+                (VIBRATO_DELAY, VIBRATO_RISE)
+            };
+            let a = Window::frame(n.t0 + delay);
             // Each note's own rate and depth, from its onset time.
             let r = 1.0 + VIB_RATE_VAR * unit_hash(n.t0, 1);
             let v = 1.0 + VIB_DEPTH_VAR * unit_hash(n.t0, 2);
             let d = self.depth
+                * marked.unwrap_or(1.0) as f64
                 * v
                 * if n.phrase_end {
                     VIBRATO_PHRASE_END
@@ -388,8 +433,7 @@ impl Vibrato {
                     1.0
                 };
             for i in w.clip(a.max(0), Window::frame(n.t1)) {
-                env[i] =
-                    (d * smoothstep(0.0, VIBRATO_RISE * FRAME_RATE, (w.abs(i) - a) as f64)) as f32;
+                env[i] = (d * smoothstep(0.0, rise * FRAME_RATE, (w.abs(i) - a) as f64)) as f32;
                 rk[i] = r as f32;
             }
         }
@@ -599,6 +643,7 @@ mod tests {
             phrase_end: false,
             grace: None,
             legato: false,
+            expr: Default::default(),
         }
     }
 
@@ -834,5 +879,59 @@ mod tests {
         add_drift(&mut m, &mut drift_walk(), &mut Rng::from_seed(3), 0.0);
         assert!(m.iter().all(|&x| (x - 60.0).abs() <= 0.1201));
         assert!(m.iter().any(|&x| (x - 60.0).abs() > 0.01));
+    }
+
+    /// A marked scoop starts below the note and a marked fall ends below
+    /// it; an unmarked song's pitch track is unchanged by `Expr::default`.
+    #[test]
+    fn marked_scoop_and_fall_bend_the_pitch() {
+        let mut notes = song();
+        let settings = VoiceSettings::default();
+        let p = voice_params(Voice::Baritone);
+        let track = |notes: &[VocalNote]| {
+            let syl = syllables(notes, &p, &settings.phrasing);
+            let mut m = vec![0.0; frames_for(notes)];
+            pitch_track(
+                notes,
+                &syl,
+                0..notes.len(),
+                &settings,
+                Window::song(m.len()),
+                &mut m,
+            );
+            m
+        };
+        let plain = track(&notes);
+        let k = notes
+            .iter()
+            .position(|n| n.t1 - n.t0 >= 0.4 && n.grace.is_none() && !n.phrase_start)
+            .unwrap();
+        notes[k].expr.scoop = Some((2.0, 0.1));
+        notes[k].expr.fall = Some((-5.0, 0.15));
+        let marked = track(&notes);
+        let n = &notes[k];
+        let on = frame(n.t0 + 0.02);
+        assert!(marked[on] < n.midi - 0.8, "scoop {}", marked[on]);
+        assert!((plain[on] - n.midi).abs() < 0.3);
+        let syl = syllables(&notes, &p, &settings.phrasing);
+        let end = frame(n.t1).min(frame(syl[k + 1].onset_start)) - 1;
+        assert!(
+            marked[end] < n.midi - 1.5,
+            "fall {} on {}",
+            marked[end],
+            n.midi
+        );
+        let mid = frame(0.5 * (n.t0 + n.t1));
+        assert!((marked[mid] - n.midi).abs() < 0.05);
+    }
+
+    #[test]
+    fn flat_shape_is_unity() {
+        for i in 0..=100 {
+            assert_eq!(shape_gain(Shape::Flat, i as f64 / 100.0), 1.0);
+        }
+        assert!(shape_gain(Shape::Accent, 0.0) > 1.25);
+        assert!(shape_gain(Shape::Fade, 1.0) < 0.6);
+        assert!(shape_gain(Shape::Swell, 0.7) > 1.09);
     }
 }

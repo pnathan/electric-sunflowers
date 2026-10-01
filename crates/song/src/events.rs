@@ -88,6 +88,57 @@ pub struct VocalNote {
     /// through, with no onset, no breath and no new attack; only the pitch
     /// moves. `false` for every ordinary syllable.
     pub legato: bool,
+    /// Expression marks from the arranger pass (`docs/expression.md`);
+    /// neutral, and absent from JSON, unless Claude marked the syllable.
+    #[serde(default, skip_serializing_if = "Expr::is_neutral")]
+    pub expr: Expr,
+}
+
+/// A note shape across its length (`Expr::shape`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Shape {
+    #[default]
+    Flat,
+    /// Rises to 1.1 at 70% of the note, then back to 1.
+    Swell,
+    /// Falls to 0.55 over the second half.
+    Fade,
+    /// 1.3 at the onset, back to 1 by 30%.
+    Accent,
+}
+
+/// Expression marks the voice reads (`docs/expression.md`). Timing and
+/// level marks are applied to `t0` and `amp` by the arranger and are not
+/// stored here. Every field neutral renders exactly as an unmarked note.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Expr {
+    /// Scoop into the note: (semitones below the note, negative above;
+    /// seconds to reach it). Replaces the default phrase-initial scoop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scoop: Option<(f32, f32)>,
+    /// Fall off the note: (semitones of offset reached at the note's end;
+    /// seconds before the end where it starts).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fall: Option<(f32, f32)>,
+    /// Vibrato depth scale; 0 removes it, any value above 0 also allows it
+    /// on short notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vibrato: Option<f32>,
+    #[serde(default, skip_serializing_if = "Shape::is_flat")]
+    pub shape: Shape,
+}
+
+impl Shape {
+    pub fn is_flat(&self) -> bool {
+        *self == Shape::Flat
+    }
+}
+
+impl Expr {
+    pub fn is_neutral(&self) -> bool {
+        *self == Expr::default()
+    }
 }
 
 /// Per-singer performance settings: how one singer departs from the voice

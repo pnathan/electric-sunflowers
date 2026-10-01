@@ -183,6 +183,7 @@ fn note(t0: f64, t1: f64, midi: f32, phones: Vec<Phoneme>) -> VocalNote {
         phrase_end: true,
         grace: None,
         legato: false,
+        expr: Default::default(),
     }
 }
 
@@ -291,6 +292,7 @@ fn short_gap_keeps_the_sounding_note() {
         phrase_end: false,
         grace: None,
         legato: false,
+        expr: Default::default(),
     };
     let mut notes = vec![
         n(0.5, 1.5, 50.0),
@@ -348,6 +350,7 @@ fn demo_lead_notes(seed: u64) -> (Voice, Vec<VocalNote>) {
             phrase_end: n.phrase_end,
             grace: n.grace.map(|g| g as f32),
             legato: false,
+            expr: Default::default(),
         })
         .collect();
     (p.voice, notes)

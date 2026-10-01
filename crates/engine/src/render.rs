@@ -163,12 +163,14 @@ impl VecJoint {
     }
 }
 
-/// The version of the `Performance` file format.
-pub const PERFORMANCE_VERSION: u32 = 1;
+/// The version of the `Performance` file format. Version 2 adds the lead's
+/// expression marks (`VocalNote::expr`, `docs/expression.md`); a version 1
+/// file has none and reads unchanged.
+pub const PERFORMANCE_VERSION: u32 = 2;
 
 /// Everything the player reads: the arranger's output, in a form that
-/// serialises to JSON and back exactly. Version 1; a change to any field
-/// or to an event type raises `PERFORMANCE_VERSION`.
+/// serialises to JSON and back exactly. A change to any field or to an
+/// event type raises `PERFORMANCE_VERSION`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Performance {
     pub version: u32,
