@@ -1,5 +1,6 @@
-//! Song rendering (design section 3.7): compose (`compose::prepare`),
-//! arrange (`arrange::arrange`), then one `rayon::scope` of tasks (14 in a
+//! Song rendering (design section 3.7): the arranger (`arrange_song`:
+//! `compose::prepare`, then `arrange::arrange`, giving a `Performance`), then
+//! the player (`play`): one `rayon::scope` of tasks (14 in a
 //! solo song; a duet adds a lead B task and two more doubles takes):
 //!
 //! - voice: lead; lead B (a duet only); harmony; doubles takes (2 in a solo
@@ -21,10 +22,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
+use arrange::Arrangement;
 use compose::prepare::{prepare_voices, Prepared, VoiceChoice};
+use serde::{Deserialize, Serialize};
 use sfcore::time::len_samples;
 use song::events::Singer;
-use song::{Song, Voice};
+use song::{Band, Song, Voice};
 
 use crate::band;
 use crate::stem::{SparseBuf, Stem};
@@ -152,13 +155,35 @@ impl VecJoint {
     }
 }
 
+/// The version of the `Performance` file format.
+pub const PERFORMANCE_VERSION: u32 = 1;
+
+/// Everything the player reads: the arranger's output, in a form that
+/// serialises to JSON and back exactly. Version 1; a change to any field
+/// or to an event type raises `PERFORMANCE_VERSION`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Performance {
+    pub version: u32,
+    /// The song seed; keys every random stream of the player.
+    pub seed: u64,
+    /// End of the timeline, seconds; sets the length of every stem.
+    pub end: f64,
+    /// Sample spans where the choir's word lines key the ducker; empty
+    /// when the song has none.
+    pub choir_key: Vec<(usize, usize)>,
+    /// Which band parts the song plays; the mixer gates stems with it.
+    /// The player does not read it.
+    pub band: Band,
+    pub arrangement: Arrangement,
+}
+
 /// Sample spans of the choir's word lines, one per line: from the line's
 /// first note to its last. Empty when the song has no choir line, so the
 /// ducker keys on the leads alone.
-fn choir_line_spans(p: &Prepared) -> Vec<(usize, usize)> {
+pub(crate) fn choir_line_spans(p: &Prepared, words: &[usize]) -> Vec<(usize, usize)> {
     let mut spans: Vec<(usize, usize)> = Vec::new();
     for (li, l) in p.form.lines.iter().enumerate() {
-        if !l.part.is_choir() {
+        if !l.part.is_choir() && !words.contains(&l.sec) {
             continue;
         }
         let mut it = p.comp.lead.iter().filter(|n| n.line_idx == li);
@@ -186,19 +211,46 @@ pub fn render(
 
 /// Renders `song` with `seed`, choosing both singers' voices (`voice.b` is
 /// ignored outside a duet; see `VoiceChoice`). The render's primary entry;
-/// `render` is a shim over this for the common one-voice case.
+/// `render` is a shim over this for the common one-voice case. Arranges
+/// (`arrange_song`), then plays the performance (`play`).
 pub fn render_with(
     song: &Song,
     seed: u64,
     voice: VoiceChoice,
     progress: &dyn Progress,
 ) -> (Prepared, Stems) {
+    let (prepared, perf) = arrange_song(song, seed, voice);
+    let stems = play(&perf, progress);
+    (prepared, stems)
+}
+
+/// The arranger: composes `song` and plans every part. Returns the
+/// composition (for the sheet and the lyrics) and the `Performance` the
+/// player reads.
+pub fn arrange_song(song: &Song, seed: u64, voice: VoiceChoice) -> (Prepared, Performance) {
     sfcore::fp::flush_denormals();
     let prepared = prepare_voices(song, seed, voice);
-    let len = len_samples(prepared.timeline.end);
-    let arr = arrange::arrange(song, &prepared, seed);
+    let arrangement = arrange::arrange(song, &prepared, seed);
+    let perf = Performance {
+        version: PERFORMANCE_VERSION,
+        seed,
+        end: prepared.timeline.end,
+        choir_key: choir_line_spans(&prepared, &[]),
+        band: song.band,
+        arrangement,
+    };
+    (prepared, perf)
+}
+
+/// The player: renders a `Performance` into processed stems. Reads nothing
+/// else; the same performance always gives the same stems.
+pub fn play(perf: &Performance, progress: &dyn Progress) -> Stems {
+    sfcore::fp::flush_denormals();
+    let seed = perf.seed;
+    let len = len_samples(perf.end);
+    let arr = &perf.arrangement;
     let v = &arr.vocals;
-    let choir_key = choir_line_spans(&prepared);
+    let choir_key = &perf.choir_key;
 
     // 6 band tasks, lead, harmony, lead B (a duet only), each doubles take,
     // each choir part: 14 in a solo song, as `TASKS` documents.
@@ -213,8 +265,7 @@ pub fn render_with(
         Joint::<4>::new(),
         AtomicUsize::new(0),
     );
-    let (store, doubles, choir, done, arr) = (&results, &doubles, &choir, &done, &arr);
-    let choir_key = &choir_key;
+    let (store, doubles, choir, done) = (&results, &doubles, &choir, &done);
     let finish = move || progress.advance(done.fetch_add(1, Ordering::Relaxed) + 1, tasks);
 
     rayon::scope(|s| {
@@ -283,5 +334,5 @@ pub fn render_with(
 
     let Store { tracks } = results;
     let tracks = tracks.into_inner().unwrap_or_else(|e| e.into_inner());
-    (prepared, Stems { len, tracks })
+    Stems { len, tracks }
 }

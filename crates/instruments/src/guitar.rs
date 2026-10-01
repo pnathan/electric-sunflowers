@@ -63,6 +63,8 @@ pub const OPEN_STRINGS: [u8; 6] = [40, 45, 50, 55, 59, 64];
 /// Stream tags.
 pub const GUITAR_NOTE: Tag = tag("guitar.note");
 pub const BASS_NOTE: Tag = tag("bass.note");
+/// Per-note stream of the bass thump's finger click.
+pub const BASS_THUMP: Tag = tag("bass.thump");
 
 /// A new note on a string ends the previous one this long after its onset.
 const RESTRIKE_S: f64 = 0.004;
@@ -292,7 +294,55 @@ pub fn render_bass(notes: &[PluckNote], seed: u64, len: usize) -> Vec<f32> {
         let n_len = n_len.min(len - start);
         sub_into(&mut out[start..start + n_len], f0, SUB_LEVEL * n.vel as f64);
     }
+    for (k, n) in notes.iter().enumerate() {
+        let Ok(start) = usize::try_from(sample_at(n.t0)) else {
+            continue;
+        };
+        let f0 = mtof(n.midi as f64);
+        if start >= len || !f0.is_finite() || !n.vel.is_finite() {
+            continue;
+        }
+        let mut rng = Rng::event(seed, BASS_THUMP, k as u64);
+        thump_into(&mut out[start..], f0, n.vel as f64, &mut rng);
+    }
     out
+}
+
+/// Thump layer: the string bass's kick at each onset. A sine at the note's
+/// pitch that falls from 1.5 f0 to f0 in 15 ms and decays with a 70 ms time
+/// constant (`THUMP_LEVEL`), plus the finger click: white noise low-passed
+/// at 1.4 kHz, decaying with a 6 ms time constant (`CLICK_LEVEL`). Both are
+/// 300 ms long at most.
+const THUMP_LEVEL: f64 = 0.7;
+const THUMP_TAU_S: f64 = 0.07;
+const THUMP_GLIDE_S: f64 = 0.015;
+const CLICK_LEVEL: f64 = 0.35;
+const CLICK_TAU_S: f64 = 0.006;
+const CLICK_LP_HZ: f64 = 1400.0;
+const THUMP_LEN_S: f64 = 0.3;
+
+fn thump_into(out: &mut [f32], f0: f64, vel: f64, rng: &mut Rng) {
+    let n = ((THUMP_LEN_S * SR_F) as usize).min(out.len());
+    let decay = (-1.0 / (THUMP_TAU_S * SR_F)).exp();
+    let click_decay = (-1.0 / (CLICK_TAU_S * SR_F)).exp();
+    let glide = (-1.0 / (THUMP_GLIDE_S * SR_F)).exp();
+    let mut lp = OnePole::from_hz(CLICK_LP_HZ, SR_F);
+    let (mut env, mut cenv, mut g, mut ph) = (THUMP_LEVEL * vel, CLICK_LEVEL * vel, 0.5, 0.0f64);
+    let fade = 64.min(n);
+    for (i, o) in out[..n].iter_mut().enumerate() {
+        let tail = if i + fade >= n {
+            (n - i) as f64 / fade as f64
+        } else {
+            1.0
+        };
+        let atk = (i as f64 / 16.0).min(1.0);
+        ph += TAU * f0 * (1.0 + g) / SR_F;
+        let x = env * ph.sin() + cenv * lp.tick(rng.bipolar());
+        *o += (x * atk * tail) as f32;
+        env *= decay;
+        cenv *= click_decay;
+        g *= glide;
+    }
 }
 
 /// Adds the sub sine over all of `out`: `sin(w (i + 1))` times the attack

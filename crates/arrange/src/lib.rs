@@ -40,7 +40,7 @@ pub use harmony_guitar::HarmonyGuitar;
 pub use vocals::Vocals;
 
 /// Every part of a song as note events.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Arrangement {
     /// Accompaniment guitar, one list per string (0 = low E), each sorted by onset.
     pub guitar: [Vec<StringNote>; 6],
@@ -65,6 +65,6 @@ pub fn arrange(song: &Song, prepared: &Prepared, seed: u64) -> Arrangement {
         drums: drums::plan(song.band.drums, form, tl, seed),
         violin: violin::plan(song, prepared, seed),
         harmony_guitar: harmony_guitar::plan(song, prepared, seed),
-        vocals: vocals::plan(song, prepared, seed),
+        vocals: vocals::plan(song, prepared, seed, None),
     }
 }

@@ -7,7 +7,7 @@
 use crate::chord::{ChordId, ChordTable};
 use crate::phoneme::Phoneme;
 use crate::pitch::{Pc, PcSet};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 named_enum! {
     /// Scale mode of the song. Church-mode names; minor is natural minor (Aeolian).
@@ -59,8 +59,11 @@ impl Mode {
 /// repair). See `song::schema` and `wire`.
 pub const SCHEMA_V1: u32 = 1;
 pub const SCHEMA_V2: u32 = 2;
+/// Version 3 adds tunes: `tune` on lines and sections, `tunes` on the song
+/// (`song::tune`).
+pub const SCHEMA_V3: u32 = 3;
 /// The newest version; what `schema::json_schema` describes and Claude writes.
-pub const SCHEMA_LATEST: u32 = SCHEMA_V2;
+pub const SCHEMA_LATEST: u32 = SCHEMA_V3;
 
 /// The most notes one syllable may carry (a melisma), including the first.
 pub const MELISMA_MAX_NOTES: u8 = 4;
@@ -237,7 +240,7 @@ impl Voice {
 }
 
 /// Which band parts play. The guitar and the lead voice always play.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Band {
     pub drums: DrumKit,
@@ -292,7 +295,7 @@ named_enum! {
 /// A singer's articulation: how notes are delivered and how phrases end.
 /// `Default` is Flowing + Released, today's articulation exactly, so a song
 /// without a `phrasing` field renders unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Phrasing {
     pub delivery: Delivery,
     pub endings: Endings,
@@ -324,6 +327,18 @@ named_enum! {
         Steady = "steady",
         Light = "light",
         Free = "free",
+    }
+}
+
+named_enum! {
+    /// How hard the band plays a section (schema 3): the writer's choice of
+    /// the section's arrangement intensity. Without it the engine's own
+    /// build-up applies (`compose::form`).
+    pub enum Energy ("energy") {
+        Quiet = "quiet",
+        Low = "low",
+        Mid = "mid",
+        High = "high",
     }
 }
 
@@ -518,6 +533,10 @@ pub struct Line {
     /// Which singer(s) carry this line. `Part::default()` (`Solo(A)`) outside
     /// a duet, always.
     pub part: Part,
+    /// Schema 3: the melody the writer sketched, one entry per sung note
+    /// (melisma notes included); `None` for no sketch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tune: Option<Vec<crate::tune::TuneNote>>,
 }
 
 impl Line {
@@ -580,6 +599,13 @@ pub struct Section {
     pub key_change: Option<KeyChange>,
     /// This section's rubato; `None` takes the song's.
     pub rubato: Option<Rubato>,
+    /// Schema 3: the written lead line of an instrumental section
+    /// (`song::tune`, break tunes); `None` leaves the line to the engine.
+    /// Always `None` in a sung section.
+    pub break_tune: Option<Vec<crate::tune::BreakNote>>,
+    /// Schema 3: the writer's energy for this section; `None` leaves the
+    /// intensity to the engine's build-up rules.
+    pub energy: Option<Energy>,
 }
 
 impl Section {
@@ -641,6 +667,10 @@ pub struct Song {
     pub duet: Option<Duet>,
     /// The song's rubato; a section may override it.
     pub rubato: Rubato,
+    /// Schema 3: the writer's free-text note to the arranger (at most 1500
+    /// characters). The rule-based arranger ignores it; the optional
+    /// arranger pass reads it.
+    pub arranging: Option<String>,
     /// At least one section is sung.
     pub sections: Vec<Section>,
     /// Every chord the song uses; `BarChords` index into it.
@@ -760,6 +790,7 @@ mod tests {
             syllables: vec![syl("hel", 0), syl("lo", 0), syl("world", 1)],
             bars: vec![],
             part: Part::default(),
+            tune: None,
         };
         assert_eq!(l.words().collect::<Vec<_>>(), vec!["hello", "world"]);
         assert_eq!(l.text(), "hel lo world");

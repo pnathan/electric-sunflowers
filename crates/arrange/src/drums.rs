@@ -4,9 +4,10 @@
 //! full, at most 1 in a bridge; bars below 1 are silent. Brushes: a swish
 //! per beat (0.95 of the beat long), taps on the backbeats, kicks from level
 //! 2. Soft and full: kicks (4/4: beats 1 and 3, plus the and of 2 at level
-//! 3), snare (rim for soft) on the backbeats, hat (shaker for soft) on every
-//! grid step from level 2, ride on every beat at level 3 (full only), a
-//! ride on the downbeat of a level-3 section. Fill: the last beat of a
+//! 3, or every beat at level 3 from 112 bpm, the dance stomp; 6/8 full:
+//! both beats, the jig's pulse), snare (rim for soft) on the backbeats,
+//! hat (shaker for soft) on every grid step from level 2, ride on every
+//! beat at level 3 (full only), a ride on the downbeat of a level-3 section. Fill: the last beat of a
 //! section before a louder one, four (three in compound time) toms from 180
 //! Hz down to 95 Hz (taps for brushes), panned left to right, rising in
 //! level; the snare leaves the fill's beat. The last bar: a kick and a long
@@ -29,6 +30,8 @@ const DRUM_TIMING: Tag = tag("drums.timing");
 const JITTER: f64 = 0.004;
 /// Last-bar swish length, seconds.
 const LAST_SWISH: f32 = 1.2;
+/// Tempo from which a level-3 bar in 4/4 stomps (kick on every beat), bpm.
+const STOMP_BPM: f64 = 112.0;
 /// Fill tom tunings, Hz.
 const FILL_HZ: [f32; 4] = [180.0, 150.0, 120.0, 95.0];
 
@@ -129,9 +132,12 @@ pub fn plan(kit: DrumKit, form: &Form, tl: &Timeline, seed: u64) -> Option<Vec<D
                 }
             }
         } else {
+            let stomp = level >= 3 && tl.beat_dur(b0) <= 60.0 / STOMP_BPM;
             let kicks: &[f64] = match meter {
+                Meter::Four4 if stomp => &[0.0, 1.0, 2.0, 3.0],
                 Meter::Four4 if level >= 3 => &[0.0, 1.5, 2.0],
                 Meter::Four4 => &[0.0, 2.0],
+                Meter::Six8 if kit == DrumKit::Full => &[0.0, 1.0],
                 Meter::Three4 | Meter::Six8 => &[0.0],
             };
             let snares: &[f64] = match meter {

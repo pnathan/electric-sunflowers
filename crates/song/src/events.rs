@@ -5,10 +5,10 @@
 
 use crate::model::{Phrasing, Voice};
 use crate::phoneme::Phoneme;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A plucked note on a free string model (bass, harp, harmony guitar).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PluckNote {
     pub t0: f64,
     /// Release (damping) time.
@@ -19,7 +19,7 @@ pub struct PluckNote {
 
 /// A note on one of the six accompaniment guitar strings. Each string holds
 /// one list; a new note on a string ends the previous one.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StringNote {
     pub t: f64,
     /// Time the string is damped.
@@ -31,7 +31,7 @@ pub struct StringNote {
 }
 
 /// A bowed violin note.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BowNote {
     pub t0: f64,
     pub t1: f64,
@@ -41,7 +41,7 @@ pub struct BowNote {
 }
 
 /// Drum voice.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum DrumKind {
     Kick,
     Snare,
@@ -61,7 +61,7 @@ pub enum DrumKind {
     Ride,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DrumHit {
     pub t: f64,
     pub kind: DrumKind,
@@ -71,7 +71,7 @@ pub struct DrumHit {
 }
 
 /// One sung note: a syllable (or a vowel for the choir) on one pitch.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct VocalNote {
     pub t0: f64,
     pub t1: f64,
@@ -92,7 +92,7 @@ pub struct VocalNote {
 
 /// Per-singer performance settings: how one singer departs from the voice
 /// type's preset. Scales are multipliers on the preset (1 = unchanged).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SingStyle {
     /// Constant pitch offset in cents.
     pub detune_cents: f32,
@@ -163,7 +163,7 @@ impl Default for SingStyle {
 }
 
 /// One singer's part: the notes and how to sing them.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Singer {
     pub voice: Voice,
     pub style: SingStyle,

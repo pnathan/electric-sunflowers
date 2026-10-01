@@ -226,7 +226,7 @@ fn every_style_has_a_duet_fit_and_a_phrasing() {
     let parlando = [Blues, Broadside, Texas, Cowboy];
     let detached = [Oldtime, Bluegrass, Cajun, Zydeco, Shanty, IrishPub];
     let held = [Gospel, Revival, Nashville, IrishAir];
-    let clipped = [Oldtime, Bluegrass, Shanty, Zydeco];
+    let clipped = [Oldtime, Bluegrass, Shanty, Zydeco, IrishPub];
     for s in &STYLES {
         let want_delivery = if legato.contains(&s.id) {
             song::Delivery::Legato
@@ -395,26 +395,88 @@ fn fixed_duet_does_not_also_say_sung_by_one_voice() {
 }
 
 #[test]
-fn prompt_asks_for_schema_2_and_describes_its_fields() {
+fn prompt_asks_for_schema_3_and_describes_its_fields() {
     let dir = style_direction(Some(StyleId::Gospel), &mut rng(4));
     let p = song_prompt("a shout", None, &dir, "celebratory", 2026);
-    assert!(p.contains("{\"schema_version\":2,\"title\":"));
+    assert!(p.contains("{\"schema_version\":3,\"title\":"));
     for f in [
         "\"sing\":\"choir\"",
         "\"voicing\":\"unison\"",
         "\"~N\"",
         "\"key\":\"<tonic>\"",
         "\"rubato\":\"steady|light|free\"",
+        "TUNES",
+        "movable-do",
+        "\"tune\":\"d d s, s\"",
+        "\"tunes\":[{\"name\"",
+        "at least every chorus line",
+        "BREAK TUNES",
+        "ENERGY (schema 3)",
+        "\"energy\":\"quiet|low|mid|high\"",
+        "\"energy\":\"<quiet|low|mid|high>\"",
+        "8 eighth, 16 sixteenth, 4 quarter, 2 half, 1 whole",
+        "z8",
+        "\"tune\":\"<break tune: solfege with lengths>\"",
+        "\"d8 d8 r8 m8 s4 m4 | r8 m8 r8 d8 t,4 s,4\"",
+        "ARRANGING NOTE (schema 3",
+        "\"arranging\":\"<arranging note>\"",
     ] {
         assert!(p.contains(f), "{f}");
     }
     assert!(p.is_ascii());
-    // The schema sent to Claude is version 2 and requires the version.
+    // The schema sent to Claude is version 3 and requires the version.
     let sch = song::schema::json_schema();
-    assert_eq!(sch["properties"]["schema_version"]["enum"][0], 2);
+    assert_eq!(sch["properties"]["schema_version"]["enum"][0], 3);
+    assert!(sch["properties"].get("tunes").is_some());
+    assert_eq!(sch["properties"]["arranging"]["type"], "string");
+    assert!(!sch["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v == "arranging"));
     assert!(sch["required"]
         .as_array()
         .unwrap()
         .iter()
         .any(|v| v == "schema_version"));
+}
+
+#[test]
+fn every_style_quotes_its_break_tune_phrase() {
+    for id in StyleId::ALL {
+        let s = id.style();
+        assert!(!s.break_tune.is_empty(), "{id}");
+        assert!(s.break_tune.is_ascii(), "{id}");
+        let dir = style_direction(Some(*id), &mut rng(5));
+        assert_eq!(dir.break_tune, s.break_tune);
+        let p = song_prompt("a tune", None, &dir, "playful", 2026);
+        assert!(
+            p.contains(&format!("in this style's manner: {}.", s.break_tune)),
+            "{id}"
+        );
+    }
+    let pub_ = StyleId::IrishPub.style().break_tune;
+    assert!(pub_.contains("reel") && pub_.contains("jig in 6/8") && pub_.contains("AABB"));
+}
+
+#[test]
+fn every_style_quotes_its_drive_phrase() {
+    for id in StyleId::ALL {
+        let s = id.style();
+        assert!(!s.drive.is_empty() && s.drive.is_ascii(), "{id}");
+        let dir = style_direction(Some(*id), &mut rng(6));
+        assert_eq!(dir.drive, s.drive);
+        let p = song_prompt("a tune", None, &dir, "playful", 2026);
+        assert!(p.contains(&format!("- This style: {}.", s.drive)), "{id}");
+    }
+    for id in [
+        StyleId::IrishPub,
+        StyleId::Oldtime,
+        StyleId::Bluegrass,
+        StyleId::Zydeco,
+        StyleId::Shanty,
+    ] {
+        assert!(id.style().drive.contains("energy mid or high from bar one"));
+    }
+    assert!(StyleId::IrishAir.style().drive.contains("build from quiet"));
 }

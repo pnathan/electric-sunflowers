@@ -6,6 +6,7 @@
 //! Validation is the caller's (`song::normalize_value`, then
 //! `Style::apply`).
 
+pub mod arranger;
 pub mod claude;
 pub mod prompt;
 pub mod schema;
@@ -103,8 +104,27 @@ pub fn write_song_with(
     creq.effort = req.effort;
     creq.json_schema = Some(schema::song_schema());
 
-    let start = Instant::now();
-    let reply = claude.complete(&creq).map_err(WriteSongError::Claude)?;
+    let (raw, generation) = call_json(claude, &creq, Instant::now())?;
+    Ok(Written {
+        raw,
+        direction,
+        register,
+        model: generation.model.clone(),
+        generation,
+    })
+}
+
+/// One call to Claude whose reply holds a JSON object: completes `creq`,
+/// reads the first JSON object in the text (tolerating a code fence or
+/// prose around it) and records the usage. `start` is when the caller began
+/// timing; `wall_ms` measures from it to the reply. The write path and the
+/// arranger pass (`arranger::arrange`) share this.
+pub(crate) fn call_json(
+    claude: &dyn Claude,
+    creq: &Request,
+    start: Instant,
+) -> Result<(serde_json::Value, Generation), WriteSongError> {
+    let reply = claude.complete(creq).map_err(WriteSongError::Claude)?;
     let wall_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     let json = extract_json_object(&reply.text)
@@ -113,7 +133,7 @@ pub fn write_song_with(
     let generation = Generation {
         transport: claude.transport(),
         requested_model: creq.model.clone(),
-        effort: req.effort.as_str().to_string(),
+        effort: creq.effort.as_str().to_string(),
         model: reply.model.clone(),
         stop_reason: reply.stop_reason.clone(),
         usage: reply.usage.clone(),
@@ -122,13 +142,7 @@ pub fn write_song_with(
         duration_ms: reply.duration_ms,
         wall_ms,
     };
-    Ok(Written {
-        raw,
-        direction,
-        register,
-        model: generation.model.clone(),
-        generation,
-    })
+    Ok((raw, generation))
 }
 
 /// A written song, not yet validated.

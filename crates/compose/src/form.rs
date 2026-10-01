@@ -6,8 +6,8 @@ use std::ops::Range;
 
 use song::chord::transpose_symbol;
 use song::{
-    BarChords, Chord, ChordId, Meter, MeterGrid, Mode, Part, Pc, Phoneme, Rubato, SectionBody,
-    SectionKind, SectionRole, Song, Syllable,
+    BarChords, Chord, ChordId, Energy, Meter, MeterGrid, Mode, Part, Pc, Phoneme, Rubato,
+    SectionBody, SectionKind, SectionRole, Song, Syllable,
 };
 
 /// A metric bar: its chord(s) plus the section and line it belongs to.
@@ -33,6 +33,9 @@ pub struct FormLine {
     pub part: Part,
     /// Syllable texts joined by single spaces.
     pub text: String,
+    /// The writer's tune for the line (schema 3), one entry per note of
+    /// `syls`.
+    pub tune: Option<Vec<song::TuneNote>>,
     /// Set by `compose_melody`; `None` until composed.
     pub pitches: Option<Vec<i32>>,
     /// Set by `compose_melody`; `None` until composed.
@@ -84,6 +87,8 @@ pub struct Sec {
     /// The key in force in this section, transposed by the form's
     /// `transpose`: the song's key until a section changes it.
     pub key: (Pc, Mode),
+    /// The writer's tune for an instrumental section (schema 3).
+    pub break_tune: Option<Vec<song::BreakNote>>,
 }
 
 impl Sec {
@@ -313,7 +318,10 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
     let per_bar = if nl != 0 { ns / nl as f64 } else { 4.0 };
     let slots = grid.slots() as f64;
     let bar_dur = grid.beats as f64 * 60.0 / song.tempo_bpm;
-    let stretch = if slots / per_bar < 1.75 && bar_dur * 4.0 <= 8.4 {
+    // From schema 3 the writer sets the density: stretch only lines that
+    // cannot fit, more than one syllable per grid slot.
+    let min_ratio = if song.schema_version >= 3 { 1.0 } else { 1.75 };
+    let stretch = if slots / per_bar < min_ratio && bar_dur * 4.0 <= 8.4 {
         2
     } else {
         1
@@ -369,6 +377,7 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
                         syls: expand_melismas(&ln.syllables),
                         part: ln.part,
                         text: ln.text(),
+                        tune: ln.tune.clone(),
                         pitches: None,
                         rh: None,
                     });
@@ -401,6 +410,7 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
                 let (tonic, mode) = song.key_at(si);
                 (tonic.transpose(transpose), mode)
             },
+            break_tune: s.break_tune.clone(),
         });
     }
 
@@ -461,11 +471,17 @@ pub fn build_form(song: &Song, transpose: i32) -> Form {
                 is_final,
             });
         }
-        s.intensity = match level {
-            0 => Intensity::Quiet,
-            1 => Intensity::Low,
-            2 => Intensity::Mid,
-            _ => Intensity::High,
+        s.intensity = match song.sections.get(j).and_then(|x| x.energy) {
+            Some(Energy::Quiet) => Intensity::Quiet,
+            Some(Energy::Low) => Intensity::Low,
+            Some(Energy::Mid) => Intensity::Mid,
+            Some(Energy::High) => Intensity::High,
+            None => match level {
+                0 => Intensity::Quiet,
+                1 => Intensity::Low,
+                2 => Intensity::Mid,
+                _ => Intensity::High,
+            },
         };
     }
 
@@ -651,5 +667,58 @@ pub(crate) mod tests {
         let s = form.bars[0].chords;
         assert_eq!(form.chord(s.first()).symbol, "Eb");
         assert_eq!(form.chord(s.last()).symbol, "Bb");
+    }
+}
+
+#[cfg(test)]
+mod energy_tests {
+    use super::tests::song_of;
+    use super::*;
+    use serde_json::json;
+
+    fn levels(energy: [Option<&str>; 4]) -> Vec<Intensity> {
+        let mut secs = vec![
+            json!({"type": "intro", "chords": ["C", "G"]}),
+            json!({"type": "verse", "lines": [{"syl": "*one *two", "chords": ["C"]}]}),
+            json!({"type": "interlude", "chords": ["C", "G"]}),
+            json!({"type": "chorus", "lines": [{"syl": "*three *four", "chords": ["F"]}]}),
+        ];
+        for (s, e) in secs.iter_mut().zip(energy) {
+            if let Some(e) = e {
+                s["energy"] = json!(e);
+            }
+        }
+        let song = song_of(json!({
+            "schema_version": 3, "key": "C", "mode": "major", "meter": "4/4",
+            "tempo": 100, "title": "t", "sections": secs
+        }));
+        build_form(&song, 0)
+            .sections
+            .iter()
+            .map(|s| s.intensity)
+            .collect()
+    }
+
+    #[test]
+    fn written_energy_sets_the_intensity_and_absence_keeps_the_rules() {
+        use Intensity::*;
+        assert_eq!(levels([None; 4]), [Quiet, Low, Low, Mid]);
+        assert_eq!(
+            levels([Some("high"), Some("mid"), Some("high"), None]),
+            [High, Mid, High, Mid]
+        );
+        let f = {
+            let song = song_of(json!({
+                "schema_version": 3, "key": "C", "tempo": 100, "title": "t",
+                "sections": [
+                    {"type": "verse", "lines": [{"syl": "*one *two", "chords": ["C"]}]},
+                    {"type": "chorus", "energy": "quiet",
+                     "lines": [{"syl": "*three *four", "chords": ["F"]}]}]
+            }));
+            build_form(&song, 0)
+        };
+        // The lift bookkeeping is unchanged by the override.
+        assert!(f.sections[1].is_lift());
+        assert_eq!(f.sections[1].intensity, Quiet);
     }
 }

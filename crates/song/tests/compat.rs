@@ -102,14 +102,22 @@ fn schema_round_trip_v1() {
     schema_round_trip(schema::json_schema_v1(), demo(), 1);
 }
 
-/// The same song declared version 2 against the version-2 schema (the
-/// latest, `json_schema()`).
+/// The same song declared version 2 against the version-2 schema.
 #[test]
 fn schema_round_trip_v2() {
     let mut v = demo();
     v["schema_version"] = Value::from(2);
-    assert_eq!(schema::json_schema(), schema::json_schema_v2());
-    schema_round_trip(schema::json_schema(), v, 2);
+    schema_round_trip(schema::json_schema_v2(), v, 2);
+}
+
+/// The same song declared version 3 against the version-3 schema (the
+/// latest, `json_schema()`).
+#[test]
+fn schema_round_trip_v3() {
+    let mut v = demo();
+    v["schema_version"] = Value::from(3);
+    assert_eq!(schema::json_schema(), schema::json_schema_v3());
+    schema_round_trip(schema::json_schema(), v, 3);
 }
 
 fn schema_round_trip(sch: Value, v: Value, version: u32) {

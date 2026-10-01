@@ -11,14 +11,17 @@
 //!   "choir"`, `voicing`) and melismas (`~N` in `syl`, described in the
 //!   `syl` description). Every version-1 song is a valid version-2 song
 //!   once `schema_version` is set to 2.
+//! - Version 3 (`json_schema_v3`): adds solfege tunes: `tune` on lines and
+//!   sections and a song `tunes` list (see `song::tune`). Every version-2
+//!   song is a valid version-3 song once `schema_version` is set to 3.
 //! - `json_schema()` is the latest, what `songwriter` asks Claude for.
 //!
 //! `wire::normalize` reads every version listed here; a newer
 //! `schema_version` is `SongError::UnsupportedSchema`.
 
 use crate::model::{
-    Blend, ChoirVoicing, Delivery, DrumKit, Endings, GuitarPattern, Meter, Mode, Rubato,
-    SectionKind, SingerId, Voice, SCHEMA_LATEST, SCHEMA_V1, SCHEMA_V2,
+    Blend, ChoirVoicing, Delivery, DrumKit, Endings, Energy, GuitarPattern, Meter, Mode, Rubato,
+    SectionKind, SingerId, Voice, SCHEMA_V1, SCHEMA_V2, SCHEMA_V3,
 };
 use serde_json::{json, Value};
 
@@ -36,6 +39,10 @@ fn sing_names(version: u32) -> Vec<&'static str> {
 const SYL_V1: &str =
     "Lyric text: words separated by spaces, syllables by hyphens, * before a stressed syllable.";
 const SYL_V2: &str = "Lyric text: words separated by spaces, syllables by hyphens, * before a stressed syllable. A syllable followed by ~ or ~N (2 to 4) is sung over that many notes (a melisma), e.g. *glo~3-ry.";
+
+const SECTION_TUNE: &str = "Sung section: the name of an entry of the song's tunes; line i of the section sings tune line i (wrapping), and a line's own tune wins. Instrumental section (intro, interlude, outro, break): the tune the lead instrument plays, or the name of an entry of the song's tunes (its lines are joined). Solfege tokens as for a line, each followed by a length: 8 eighth, 16 sixteenth, 4 quarter, 2 half, 1 whole, a trailing . dots it (d4.); z8 is an eighth rest; | is an optional bar line, and every bar must fill the meter. A quarter is one beat in 4/4 and 3/4, and 2/3 of a dotted-quarter beat in 6/8. A tune shorter than the section repeats from its start to fill it; a longer one is cut.";
+
+const TUNE_LINE: &str = "The line's melody in movable-do solfege, one token per sung note (melisma notes count), separated by spaces. Tokens: d r m f s l t, raised di ri fi si li, lowered ra me se le te; s, is an octave down, d' an octave up; . leaves the note free; - holds the note before it one more beat. do is the tonic of the section's key.";
 
 fn phrasing_schema() -> Value {
     json!({
@@ -78,6 +85,9 @@ fn line_schema(version: u32) -> Value {
     if version >= SCHEMA_V2 {
         v["properties"]["voicing"] = json!({"type": "string", "enum": ChoirVoicing::NAMES});
     }
+    if version >= SCHEMA_V3 {
+        v["properties"]["tune"] = json!({"type": "string", "description": TUNE_LINE});
+    }
     v
 }
 
@@ -101,6 +111,10 @@ fn section_schema(version: u32) -> Value {
         p["voicing"] = json!({"type": "string", "enum": ChoirVoicing::NAMES});
         p["key"] = json!({"type": "string", "description": "The key from this section on, e.g. \"E\" or \"A minor\"; the chords of the section are written in it. With same: true the copied chords move to it."});
         p["rubato"] = json!({"type": "string", "enum": Rubato::NAMES});
+    }
+    if version >= SCHEMA_V3 {
+        v["properties"]["tune"] = json!({"type": "string", "description": SECTION_TUNE});
+        v["properties"]["energy"] = json!({"type": "string", "enum": Energy::NAMES, "description": "How hard the band plays this section. Absent: the engine builds up like a ballad (quiet intro, low first verse, choruses lifted)."});
     }
     v
 }
@@ -128,13 +142,40 @@ pub fn json_schema_for(version: u32) -> Option<Value> {
     match version {
         SCHEMA_V1 => Some(json_schema_v1()),
         SCHEMA_V2 => Some(json_schema_v2()),
+        SCHEMA_V3 => Some(json_schema_v3()),
         _ => None,
     }
 }
 
 /// The newest song reply schema (`SCHEMA_LATEST`).
 pub fn json_schema() -> Value {
-    json_schema_v2()
+    json_schema_v3()
+}
+
+/// Version 3: version 2 plus `tunes` (a list of `{name, lines}`; the parser
+/// also reads an object of name to lines) and the `tune` fields of sections
+/// and lines.
+pub fn json_schema_v3() -> Value {
+    let mut v = build(SCHEMA_V3);
+    v["properties"]["schema_version"] = json!({"type": "integer", "enum": [SCHEMA_V3]});
+    v["properties"]["rubato"] = json!({"type": "string", "enum": Rubato::NAMES});
+    v["properties"]["arranging"] = json!({"type": "string", "description": "A short note to the arranger in plain words: the feel and groove, what each instrument should do, where the energy peaks. No fixed vocabulary."});
+    v["properties"]["tunes"] = json!({
+        "type": "array",
+        "description": "Named tunes: for verses that share a melody, each has tune lines in the notation of a line's tune; for instrumental sections, a break tune (solfege with lengths; the lines are joined). A section names one with its tune field.",
+        "items": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "lines": {"type": "array", "items": {"type": "string"}}
+            },
+            "required": ["name", "lines"],
+            "additionalProperties": false
+        }
+    });
+    let req = v["required"].as_array_mut().expect("required is an array");
+    req.insert(0, json!("schema_version"));
+    v
 }
 
 /// Version 2: version 1 plus `schema_version` (required), `rubato`, and
@@ -145,7 +186,6 @@ pub fn json_schema_v2() -> Value {
     v["properties"]["rubato"] = json!({"type": "string", "enum": Rubato::NAMES});
     let req = v["required"].as_array_mut().expect("required is an array");
     req.insert(0, json!("schema_version"));
-    debug_assert_eq!(SCHEMA_LATEST, SCHEMA_V2);
     v
 }
 

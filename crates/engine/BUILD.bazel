@@ -112,6 +112,20 @@ rust_binary(
     ),
 )
 
+# Prints the arranger pass's view of a song (no model call).
+rust_binary(
+    name = "arranger_view",
+    srcs = ["examples/arranger_view.rs"],
+    edition = "2021",
+    deps = [
+        ":engine",
+        "//crates/songwriter",
+    ] + ENGINE_LOCAL_DEPS + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
 # Single harp notes through the engine's harp chain, for tools/harp_compare.py.
 rust_binary(
     name = "harpnotes",

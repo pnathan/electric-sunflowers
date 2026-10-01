@@ -17,6 +17,32 @@ use crate::usage::Generation;
 /// fields, so version 1 readers still read version 2.
 pub const SIDECAR_VERSION: u32 = 2;
 
+/// The arranger pass of a render (`sunflower write --arrange`,
+/// `sunflower rearrange`): a model read the song and the rule-based
+/// arrangement and edited it. The saved arrangement file is then the
+/// recording's source; the engine made no model call.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ArrangerInfo {
+    /// The arranger's own summary of what it changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// Usage, cost and timing of the arranger's call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<Generation>,
+    /// The `<stem>.arrangement.json` the audio was played from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arrangement: Option<String>,
+    /// Edits that changed the arrangement.
+    #[serde(default)]
+    pub edits_applied: usize,
+    /// Repairs made to the reply, one line each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repairs: Vec<String>,
+    /// The producer's extra guidance (`rearrange --note`), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 /// The `<stem>.render.json` sidecar. Every field is optional: a song
 /// without the new fields (a solo song rendered before this feature)
 /// still reads and writes one. Unknown JSON fields are ignored.
@@ -58,6 +84,9 @@ pub struct RenderSidecar {
     pub stems: Option<String>,
     #[serde(default)]
     pub created: Option<String>,
+    /// Present when an arranger pass edited the arrangement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arranger: Option<ArrangerInfo>,
 }
 
 impl RenderSidecar {
@@ -94,6 +123,9 @@ impl RenderSidecar {
             mix: s("mix"),
             stems: s("stems"),
             created: s("created"),
+            arranger: v
+                .get("arranger")
+                .and_then(|a| serde_json::from_value::<ArrangerInfo>(a.clone()).ok()),
         }
     }
 
@@ -173,6 +205,14 @@ mod tests {
             mix: None,
             stems: None,
             created: Some("2026-09-28T14:03:07Z".into()),
+            arranger: Some(ArrangerInfo {
+                summary: Some("Kick on every beat.".into()),
+                generation: Some(generation()),
+                arrangement: Some("/tmp/porch-light.arrangement.json".into()),
+                edits_applied: 2,
+                repairs: vec!["edit 1: velocity 7 clamped to 0..1".into()],
+                note: None,
+            }),
         };
         let path = tmp_path("round-trip.render.json");
         side.write(&path).unwrap();
