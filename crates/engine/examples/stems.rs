@@ -5,7 +5,9 @@
 //! (wall time per stage). `--song duet` additionally writes lead_b.wav and
 //! notes_b.json for singer B.
 //!
-//! Usage: cargo run --release -p engine --example stems -- --seed S --out DIR [--song demo|duet]
+//! Usage: cargo run --release -p engine --example stems -- --seed S --out DIR [--song demo|duet|SONG.json] [--style KEY]
+//! A song path renders that song (with `--style`, that style applied) in
+//! place of the demo.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -51,6 +53,8 @@ fn run() -> Result<(), String> {
     let mut seed: u64 = 1234;
     let mut out: Option<PathBuf> = None;
     let mut duet = false;
+    let mut file: Option<String> = None;
+    let mut style: Option<String> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -64,12 +68,16 @@ fn run() -> Result<(), String> {
                 duet = match v.as_str() {
                     "demo" => false,
                     "duet" => true,
-                    _ => return Err(format!("bad --song {v}; expected demo or duet")),
+                    _ => {
+                        file = Some(v);
+                        false
+                    }
                 };
             }
+            "--style" => style = Some(args.next().ok_or("--style needs a value")?),
             _ => {
                 return Err(format!(
-                    "unknown argument {a}; usage: stems --seed S --out DIR [--song demo|duet]"
+                    "unknown argument {a}; usage: stems --seed S --out DIR [--song demo|duet|SONG.json] [--style KEY]"
                 ))
             }
         }
@@ -96,7 +104,17 @@ fn run() -> Result<(), String> {
         let (prepared, stems) = render_with(song, seed, VoiceChoice::default(), &NoProgress);
         (song, prepared, stems)
     } else {
-        let song = demo_song();
+        let song: &song::Song = match &file {
+            None => demo_song(),
+            Some(path) => {
+                let json = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+                let (mut s, _) = song::wire::normalize_str(&json).map_err(|e| e.to_string())?;
+                if let Some(k) = &style {
+                    songwriter::styles::apply_style(k, &mut s).map_err(|e| e.to_string())?;
+                }
+                Box::leak(Box::new(s))
+            }
+        };
         let (prepared, stems) = render(song, seed, None, &NoProgress);
         (song, prepared, stems)
     };
@@ -142,12 +160,23 @@ fn run() -> Result<(), String> {
     }
 
     if !duet {
-        // The lead's phones per note, for tools/voicescan.py.
+        // The lead's notes as sung, for tools/voicescan.py: lateness on each
+        // onset, then the phrasing's sustain and end length, as
+        // `voice::render_phrases` applies them before it plans.
         let arr = arrange::arrange(song, &prepared, seed);
-        let ph: Vec<serde_json::Value> = arr
+        let st = voice::VoiceSettings::from(&arr.vocals.lead.style);
+        let late: Vec<song::events::VocalNote> = arr
             .vocals
             .lead
             .notes
+            .iter()
+            .map(|n| song::events::VocalNote {
+                t0: n.t0 + st.lateness,
+                ..n.clone()
+            })
+            .collect();
+        let sung = voice::phrase_notes(&late, &st.phrasing);
+        let ph: Vec<serde_json::Value> = sung
             .iter()
             .map(|n| {
                 let ps: Vec<String> = n.phones.iter().map(|p| p.to_string()).collect();
@@ -155,31 +184,29 @@ fn run() -> Result<(), String> {
             })
             .collect();
         // The planned segments (class, span) of the lead, for voicescan.py.
-        let st = voice::VoiceSettings::from(&arr.vocals.lead.style);
         let vp = st.apply(voice::voice_params(arr.vocals.lead.voice));
-        let plan: Vec<serde_json::Value> =
-            voice::articulation::plan_segments(&arr.vocals.lead.notes, &vp, &st)
-                .iter()
-                .filter_map(|(sp, sg)| {
-                    use voice::articulation::Segment as S;
-                    let k = match sg {
-                        S::Fricative { av, .. } => {
-                            if *av > 0.05 {
-                                "vfric"
-                            } else {
-                                "fric"
-                            }
+        let plan: Vec<serde_json::Value> = voice::articulation::plan_segments(&sung, &vp, &st)
+            .iter()
+            .filter_map(|(sp, sg)| {
+                use voice::articulation::Segment as S;
+                let k = match sg {
+                    S::Fricative { av, .. } => {
+                        if *av > 0.05 {
+                            "vfric"
+                        } else {
+                            "fric"
                         }
-                        S::Burst { .. } => "burst",
-                        S::Aspiration { .. } => "asp",
-                        S::Breath { .. } => "breath",
-                        S::Nasal { .. } => "nasal",
-                        S::Closure { .. } => "closure",
-                        _ => return None,
-                    };
-                    Some(serde_json::json!([k, sp.t0, sp.t1]))
-                })
-                .collect();
+                    }
+                    S::Burst { .. } => "burst",
+                    S::Aspiration { .. } => "asp",
+                    S::Breath { .. } => "breath",
+                    S::Nasal { .. } => "nasal",
+                    S::Closure { .. } => "closure",
+                    _ => return None,
+                };
+                Some(serde_json::json!([k, sp.t0, sp.t1]))
+            })
+            .collect();
         let p = out.join("plan.json");
         std::fs::write(
             &p,

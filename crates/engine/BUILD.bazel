@@ -95,7 +95,10 @@ rust_binary(
     name = "stems",
     srcs = ["examples/stems.rs"],
     edition = "2021",
-    deps = [":engine"] + ENGINE_LOCAL_DEPS + all_crate_deps(normal = True),
+    deps = [
+        ":engine",
+        "//crates/songwriter",
+    ] + ENGINE_LOCAL_DEPS + all_crate_deps(normal = True),
 )
 
 # Vocal balance probe against the accompaniment (see CLAUDE.md open issue 1).
