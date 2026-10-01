@@ -77,9 +77,10 @@ struct Store {
     tracks: Mutex<[Option<ProcessedStem>; N_TRACKS]>,
 }
 
-/// Gain on a choir stem that sings word lines (+2.5 dB): at the plain pad
-/// level the words sat 2-3 dB under the band by ear.
-const CHOIR_WORDS_LIFT: f32 = 1.333_521;
+/// Gain on a choir stem that sings word lines: the lead strip gain over
+/// the choir strip gain (1.25 / 0.36, +10.8 dB), so sung words sit level
+/// with the lead. The owner asked for par by ear.
+const CHOIR_WORDS_LIFT: f32 = 3.472_222;
 
 impl Store {
     /// Runs `id`'s strip over `audio` and keeps the result.
