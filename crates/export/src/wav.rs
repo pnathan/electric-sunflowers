@@ -3,7 +3,7 @@
 //! Layout (Microsoft/IBM "Multimedia Programming Interface and Data
 //! Specifications 1.0", 1991): `RIFF` size `WAVE`, `fmt ` (16 bytes for PCM,
 //! 18 with cbSize = 0 for IEEE float, format tag 3), `fact` (float only, as
-//! the spec requires for non-PCM data), `LIST`/`INFO` (INAM, IART, ICMT,
+//! the spec requires for non-PCM data), `LIST`/`INFO` (INAM, IART, ICMT, ISFT,
 //! ICRD, IGNR; NUL-terminated, word-aligned), then `data`. Every size is
 //! known before the first byte, so the file is written once, in order.
 //! 24-bit PCM uses the plain PCM format tag 1 with a block align of 6, which
@@ -44,6 +44,7 @@ fn list_info(meta: &Meta) -> Vec<u8> {
         (b"ICMT", meta.comment.as_str()),
         (b"ICRD", meta.date.as_str()),
         (b"IGNR", meta.style.as_str()),
+        (b"ISFT", crate::VOICE_NOTICE),
     ] {
         if value.is_empty() {
             continue;

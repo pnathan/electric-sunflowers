@@ -15,6 +15,10 @@ mod wav;
 
 pub use dither::{quantize, Tpdf};
 
+/// Written into every file (Vorbis PERFORMER, WAV ISFT): the singer is
+/// synthetic and is not a person (CLAUDE.md, voice rule).
+pub const VOICE_NOTICE: &str = "Synthetic voice: Electric Sunflowers engine. No human singer.";
+
 /// Tags written into the file as Vorbis comments (Ogg, FLAC) or a WAV
 /// LIST/INFO chunk.
 #[derive(Clone, Debug, Default)]
@@ -40,13 +44,14 @@ impl Meta {
     }
 
     /// Vorbis comment pairs (TAG, value); empty values are skipped, except
-    /// the artist, which defaults.
+    /// the artist, which defaults, and the performer, always `VOICE_NOTICE`.
     fn tags(&self) -> Vec<(&'static str, &str)> {
         let mut t = vec![];
         if !self.title.is_empty() {
             t.push(("TITLE", self.title.as_str()));
         }
         t.push(("ARTIST", self.artist_or_default()));
+        t.push(("PERFORMER", VOICE_NOTICE));
         for (k, v) in [
             ("COMMENT", &self.comment),
             ("DATE", &self.date),

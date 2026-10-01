@@ -121,6 +121,8 @@ fn wav_headers_for_all_sample_types() {
             "2026",
             "IGNR",
             "cowboy",
+            "ISFT",
+            export::VOICE_NOTICE,
         ] {
             assert!(text.contains(s), "LIST/INFO lacks {s}");
         }
@@ -462,6 +464,7 @@ fn ogg_has_header_and_tags() {
         "COMMENT=a liner note for the format test",
         "DATE=2026",
         "GENRE=cowboy",
+        "PERFORMER=Synthetic voice: Electric Sunflowers engine. No human singer.",
     ] {
         assert!(text.contains(s), "Ogg lacks {s}");
     }
