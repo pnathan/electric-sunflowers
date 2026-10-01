@@ -124,6 +124,12 @@ pub const FIRST_ONSET: f64 = 0.3;
 pub const CODA_SHARE: f64 = 0.4;
 /// Longest CV transition, s (locus to vowel).
 pub const CV_TRANSITION: f64 = 0.05;
+/// Longest CV transition after a velar, s. A back place needs a longer, visible
+/// F2 and F3 glide from a high, merged start (the velar pinch), or the stop
+/// is heard as /t/ (issue 22).
+pub const VELAR_CV_TRANSITION: f64 = 0.08;
+/// Velar burst band centre, Hz (every vowel context; bandwidth is in the table).
+const VELAR_BURST_HZ: f64 = 1800.0;
 /// Steps of a CV transition.
 const CV_STEPS: usize = 5;
 /// Stop burst length, s (not scaled per voice).
@@ -368,12 +374,17 @@ impl Scale {
     }
 
     /// Where the CV transition of stop or affricate `c` starts, before
-    /// vowel `vf` (scaled). Velar: F1 250 Hz, F2 1.1 vowel F2 up to 2300
-    /// Hz, F3 the vowel's.
+    /// vowel `vf` (scaled). Velar: F1 250 Hz, F2 and F3 merged high (F2 the
+    /// larger of 2500 Hz and 1.05 vowel F2, F3 100 Hz above it, at least
+    /// 2550 Hz).
     fn locus(&self, c: &Consonant, vf: Formants3) -> Formants3 {
         match c.locus {
             Locus::At(loc) => self.of(loc),
-            Locus::Velar => [250.0 * self.f1s, 2300.0f64.min(vf[1] * 1.1), vf[2]],
+            Locus::Velar => [
+                250.0 * self.f1s,
+                2500.0f64.max(vf[1] * 1.05),
+                2550.0f64.max(vf[1] * 1.05 + 100.0),
+            ],
         }
     }
 }
@@ -472,7 +483,17 @@ pub fn plan_syllables(
         let vlen = coda_start - s.vowel_start;
         let mut n_start = s.vowel_start;
         if let (Some(loc), NucKind::Vowel) = (locus, vt[0].kind) {
-            let tt = CV_TRANSITION.min(vlen * 0.4);
+            let velar = s
+                .onset
+                .last()
+                .and_then(|&ph| consonant(ph))
+                .is_some_and(|c| c.locus == Locus::Velar);
+            let tt = if velar {
+                VELAR_CV_TRANSITION
+            } else {
+                CV_TRANSITION
+            }
+            .min(vlen * 0.4);
             for j in 0..CV_STEPS {
                 let a = (j as f64 + 0.5) / CV_STEPS as f64;
                 let e = 1.0 - (1.0 - a).powf(1.6);
@@ -604,12 +625,9 @@ fn consonant_segments(
             let av = if c.voiced { amp * 0.1 } else { 0.0 };
             plan.put(t0, cl, Segment::Closure { f: cf, av });
             if c.class == ConsClass::Stop {
-                // Velar bursts follow the vowel: high for front vowels, low
-                // for back.
                 let ff = match c.locus {
                     Locus::At(_) => c.ff,
-                    Locus::Velar if vf[1] > 1500.0 => 3000.0,
-                    Locus::Velar => 1800.0,
+                    Locus::Velar => VELAR_BURST_HZ,
                 };
                 let af = if coda { 0.4 } else { 0.7 } * amp * BURST_GAIN;
                 plan.put(

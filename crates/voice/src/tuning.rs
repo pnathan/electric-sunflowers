@@ -20,6 +20,43 @@ pub const BURST_GAIN: f64 = 0.8;
 /// Frication band-pass output gain, added after the tract.
 pub const FRICATION_GAIN: f64 = 2.2;
 
+/// High-frequency voiced bed (issue 22): white noise shaped by the glottal
+/// flow, high-passed (4th order, corner `HF_BRANCH_HZ`) and added after the
+/// cascade at `HF_BRANCH_GAIN` (0 turns it off). The cascade leaves vowels
+/// dark above 4 kHz, so every noise consonant stands out as a spike (median
+/// rise over its surroundings 30 dB; real singers 14 dB). A bed of voiced hiss
+/// fills the gap. A high-passed copy of the source pulse did the same but
+/// sounded buzzy.
+pub const HF_BRANCH_HZ: f64 = 3800.0;
+pub const HF_BRANCH_GAIN: f64 = 0.0;
+
+/// Scale on the F1-F3 bandwidths (1 is the preset: 60 + 80 breath, 90, 130
+/// Hz). Wider formants fill the valleys between harmonics; real voices show
+/// valleys 3 to 6 dB shallower than the engine's (issue 22).
+pub const BW_SCALE: f64 = 1.0;
+
+/// Vibrato variation, per note (issue 22): the rate varies by
+/// +-`VIB_RATE_VAR` and the depth by +-`VIB_DEPTH_VAR` (fractions, drawn
+/// from the note's onset time, so a render stays deterministic), and the
+/// slow rate wobble gets a second, incommensurate sine of
+/// `VIB_WOBBLE2` (fraction of the rate). All 0 is today's steady vibrato.
+pub const VIB_RATE_VAR: f64 = 0.0;
+pub const VIB_DEPTH_VAR: f64 = 0.0;
+pub const VIB_WOBBLE2: f64 = 0.0;
+
+/// Depth (0..1) of the glottal-flow modulation of the noise in voiced
+/// fricatives (dh v z zh); 0 is unmodulated noise (issue 22).
+pub const VFRIC_MOD: f64 = 0.85;
+
+/// Multiplier on the Q of the frication and burst band-pass (1 is today).
+/// A narrower band puts less noise in the upper skirt, so a velar burst
+/// (centre 2.3 kHz) stops sounding like an alveolar one (issue 22).
+pub const FRIC_Q_SCALE: f64 = 1.0;
+
+/// Extra bandwidth (Hz) of F2 and F3 in a nasal (1 nasal = 170 and 220 today).
+pub const NAS_B2_HZ: f64 = 170.0;
+pub const NAS_B3_HZ: f64 = 220.0;
+
 /// High shelf after the cascade: +16 dB at 5.2 kHz, Q 0.7 (CLAUDE.md, "Voice"). It
 /// replaced a parallel high-frequency branch, which filled the vowels'
 /// spectral valleys.

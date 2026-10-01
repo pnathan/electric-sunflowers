@@ -141,6 +141,59 @@ fn run() -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", p.display()))?;
     }
 
+    if !duet {
+        // The lead's phones per note, for tools/voicescan.py.
+        let arr = arrange::arrange(song, &prepared, seed);
+        let ph: Vec<serde_json::Value> = arr
+            .vocals
+            .lead
+            .notes
+            .iter()
+            .map(|n| {
+                let ps: Vec<String> = n.phones.iter().map(|p| p.to_string()).collect();
+                serde_json::json!({ "t0": n.t0, "t1": n.t1, "phones": ps })
+            })
+            .collect();
+        // The planned segments (class, span) of the lead, for voicescan.py.
+        let st = voice::VoiceSettings::from(&arr.vocals.lead.style);
+        let vp = st.apply(voice::voice_params(arr.vocals.lead.voice));
+        let plan: Vec<serde_json::Value> =
+            voice::articulation::plan_segments(&arr.vocals.lead.notes, &vp, &st)
+                .iter()
+                .filter_map(|(sp, sg)| {
+                    use voice::articulation::Segment as S;
+                    let k = match sg {
+                        S::Fricative { av, .. } => {
+                            if *av > 0.05 {
+                                "vfric"
+                            } else {
+                                "fric"
+                            }
+                        }
+                        S::Burst { .. } => "burst",
+                        S::Aspiration { .. } => "asp",
+                        S::Breath { .. } => "breath",
+                        S::Nasal { .. } => "nasal",
+                        S::Closure { .. } => "closure",
+                        _ => return None,
+                    };
+                    Some(serde_json::json!([k, sp.t0, sp.t1]))
+                })
+                .collect();
+        let p = out.join("plan.json");
+        std::fs::write(
+            &p,
+            serde_json::to_string(&plan).map_err(|e| e.to_string())? + "\n",
+        )
+        .map_err(|e| format!("{}: {e}", p.display()))?;
+        let p = out.join("phones.json");
+        std::fs::write(
+            &p,
+            serde_json::to_string(&ph).map_err(|e| e.to_string())? + "\n",
+        )
+        .map_err(|e| format!("{}: {e}", p.display()))?;
+    }
+
     let t = Instant::now();
     let mut written = Vec::new();
     let mut blocks = serde_json::Map::new();
