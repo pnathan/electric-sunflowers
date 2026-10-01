@@ -77,6 +77,10 @@ struct Store {
     tracks: Mutex<[Option<ProcessedStem>; N_TRACKS]>,
 }
 
+/// Gain on a choir stem that sings word lines (+2.5 dB): at the plain pad
+/// level the words sat 2-3 dB under the band by ear.
+const CHOIR_WORDS_LIFT: f32 = 1.333_521;
+
 impl Store {
     /// Runs `id`'s strip over `audio` and keeps the result.
     fn put(&self, id: TrackId, audio: Stem) {
@@ -91,6 +95,9 @@ impl Store {
         let Some(mut stem) = run_strip(id.strip(), audio) else {
             return;
         };
+        if !key.is_empty() {
+            stem.level *= CHOIR_WORDS_LIFT;
+        }
         stem.key = key;
         lock(&self.tracks)[id.index()] = Some(stem);
     }
