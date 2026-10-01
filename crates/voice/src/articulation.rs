@@ -122,6 +122,12 @@ pub const DEFAULT_NUCLEUS: Phoneme = Phoneme::Aa;
 pub const FIRST_ONSET: f64 = 0.3;
 /// Share of the note the coda may take.
 pub const CODA_SHARE: f64 = 0.4;
+/// Longest VC transition (vowel toward a coda consonant's locus), s, its
+/// largest share of the vowel, and how far toward the locus it moves.
+const VC_TRANSITION: f64 = 0.045;
+const VC_SHARE: f64 = 0.3;
+const VC_DEPTH: f64 = 0.7;
+
 /// Longest CV transition, s (locus to vowel).
 pub const CV_TRANSITION: f64 = 0.05;
 /// Longest CV transition after a velar, s. A back place needs a longer, visible
@@ -461,7 +467,12 @@ pub fn plan_syllables(
             .onset
             .last()
             .and_then(|&ph| consonant(ph))
-            .filter(|c| matches!(c.class, ConsClass::Stop | ConsClass::Affricate))
+            .filter(|c| {
+                matches!(
+                    c.class,
+                    ConsClass::Stop | ConsClass::Affricate | ConsClass::Fricative
+                )
+            })
             .map(|c| sc.locus(c, vf0));
 
         // Coda timing.
@@ -532,6 +543,29 @@ pub fn plan_syllables(
             }
         }
 
+        // VC transition: the last of the vowel moves toward the locus of a
+        // coda stop, affricate or fricative (the mirror of the CV
+        // transition), so a final consonant is heard in the vowel too.
+        let vc = s.coda.first().and_then(|&ph| consonant(ph)).filter(|c| {
+            matches!(
+                c.class,
+                ConsClass::Stop | ConsClass::Affricate | ConsClass::Fricative
+            )
+        });
+        if let (Some(c), Some(NucKind::Vowel)) = (vc, vt.last().map(|v| v.kind)) {
+            let loc = sc.locus(c, vfl);
+            let tt = VC_TRANSITION.min(vlen * VC_SHARE);
+            let t_a = coda_start - tt;
+            for j in 0..CV_STEPS {
+                let a = (j as f64 + 0.5) / CV_STEPS as f64;
+                let e = a.powf(1.6);
+                let f = [0, 1, 2].map(|q| vfl[q] + (loc[q] - vfl[q]) * e * VC_DEPTH);
+                let t0 = t_a + tt * j as f64 / CV_STEPS as f64;
+                let t1 = t_a + tt * (j as f64 + 1.0) / CV_STEPS as f64;
+                plan.put(t0, t1, Segment::Vowel { f, av: amp });
+            }
+        }
+
         // Coda consonants.
         t = coda_start;
         for (&ph, &d) in s.coda.iter().zip(&s.coda_dur) {
@@ -594,11 +628,12 @@ fn consonant_segments(
         }
         ConsClass::Fricative => {
             let av = if c.voiced { amp * c.vv } else { 0.0 };
+            let loc = sc.locus(c, vf);
             plan.put(
                 t0,
                 t1,
                 Segment::Fricative {
-                    f: vf,
+                    f: [0, 1, 2].map(|i| loc[i] * 0.6 + vf[i] * 0.4),
                     av,
                     af: c.af * amp,
                     ff: c.ff,

@@ -138,6 +138,7 @@ fn sheet_marks_singers_only_in_a_duet() {
 /// Re-pinned to `0x2d030fff1f41fca4` for the issue 22 voice changes (baritone
 /// source, /ao/, velar stops, /dh/ /ih/ /m/), which change the lead on purpose.
 /// Re-pinned to `0xba3f74081ab6aa8e` with the string bass thump merged in.
+/// Re-pinned to `0xac0a6a74395bc476` for fricative loci and VC transitions.
 #[test]
 fn solo_demo_mix_is_bit_identical() {
     let song = demo_song();
@@ -145,7 +146,7 @@ fn solo_demo_mix_is_bit_identical() {
     let m = mix(&stems, &song.band, 1234);
     let h = fnv1a(&mix_bytes(&m.l, &m.r));
     assert_eq!(
-        h, 0xba3f74081ab6aa8e,
+        h, 0xac0a6a74395bc476,
         "solo demo mix checksum changed: {h:#x}"
     );
 }

@@ -96,6 +96,10 @@ const fn son(class: ConsClass, formants: [f64; 3], av: f64, dur: f64) -> Consona
     }
 }
 
+const fn at(c: Consonant, locus: Locus) -> Consonant {
+    Consonant { locus, ..c }
+}
+
 const fn fric(ff: f64, bw: f64, af: f64, voiced: bool, dur: f64) -> Consonant {
     Consonant {
         class: ConsClass::Fricative,
@@ -170,6 +174,8 @@ pub const CONSONANTS: [Option<Consonant>; Phoneme::COUNT] = {
     let bilabial = Locus::At([250.0, 900.0, 2200.0]);
     let alveolar = Locus::At([250.0, 1750.0, 2700.0]);
     let postalveolar = Locus::At([250.0, 1900.0, 2600.0]);
+    let labiodental = Locus::At([250.0, 1100.0, 2350.0]);
+    let dental = Locus::At([250.0, 1500.0, 2600.0]);
     let mut t = [None; Phoneme::COUNT];
     t[P::L as usize] = Some(son(Sonorant, [360.0, 1050.0, 2700.0], 0.72, 0.055));
     t[P::R as usize] = Some(son(Sonorant, [420.0, 1250.0, 1650.0], 0.78, 0.06));
@@ -178,17 +184,20 @@ pub const CONSONANTS: [Option<Consonant>; Phoneme::COUNT] = {
     t[P::M as usize] = Some(son(Nasal, [280.0, 1100.0, 2300.0], 0.55, 0.085));
     t[P::N as usize] = Some(son(Nasal, [280.0, 1650.0, 2600.0], 0.55, 0.06));
     t[P::Ng as usize] = Some(son(Nasal, [280.0, 2100.0, 2700.0], 0.5, 0.065));
-    t[P::S as usize] = Some(fric(6500.0, 3500.0, 0.62, false, 0.095));
-    t[P::Z as usize] = Some(fric(6000.0, 3500.0, 0.38, true, 0.075));
-    t[P::Sh as usize] = Some(fric(3100.0, 1800.0, 0.62, false, 0.095));
-    t[P::Zh as usize] = Some(fric(2900.0, 1800.0, 0.38, true, 0.07));
-    t[P::F as usize] = Some(fric(5500.0, 7000.0, 0.24, false, 0.08));
-    t[P::V as usize] = Some(fric(5000.0, 6000.0, 0.16, true, 0.06));
-    t[P::Th as usize] = Some(fric(5500.0, 6000.0, 0.18, false, 0.075));
-    // Voiced "th" is mostly voicing.
+    // Fricatives carry the locus of their place (`docs/engine-design.md`,
+    // consonants): the formants sit near it under the noise and move to the
+    // vowel after it, as after a stop.
+    t[P::S as usize] = Some(at(fric(6500.0, 3500.0, 0.62, false, 0.095), alveolar));
+    t[P::Z as usize] = Some(at(fric(6000.0, 3500.0, 0.38, true, 0.075), alveolar));
+    t[P::Sh as usize] = Some(at(fric(3100.0, 1800.0, 0.62, false, 0.095), postalveolar));
+    t[P::Zh as usize] = Some(at(fric(2900.0, 1800.0, 0.38, true, 0.07), postalveolar));
+    t[P::F as usize] = Some(at(fric(5500.0, 7000.0, 0.24, false, 0.08), labiodental));
+    t[P::V as usize] = Some(at(fric(5000.0, 6000.0, 0.16, true, 0.06), labiodental));
+    t[P::Th as usize] = Some(at(fric(5500.0, 6000.0, 0.18, false, 0.075), dental));
+    // Voiced "th" is mostly voicing; its dental transition carries it.
     t[P::Dh as usize] = Some(Consonant {
         vv: 0.6,
-        ..fric(4500.0, 5000.0, 0.10, true, 0.065)
+        ..at(fric(4500.0, 5000.0, 0.10, true, 0.065), dental)
     });
     t[P::Hh as usize] = Some(Consonant {
         class: ConsClass::Aspirate,
