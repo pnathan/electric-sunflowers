@@ -133,8 +133,11 @@ fn sheet_marks_singers_only_in_a_duet() {
 /// (`arrange::vocals::plan`, `engine::render`/`render_with`,
 /// `mixset::default_for`) landed, with a throwaway example running the
 /// same render-then-mix call over `demo_song()` at seed 1234 (built, run,
-/// then removed with the worktree). Re-captured as `0x5653e453bad5edaf`
-/// after the string bass thump (`9dc62349`), an intended sound change.
+/// then removed with the worktree).
+///
+/// Re-pinned to `0x2d030fff1f41fca4` for the issue 22 voice changes (baritone
+/// source, /ao/, velar stops, /dh/ /ih/ /m/), which change the lead on purpose.
+/// Re-pinned to `0xba3f74081ab6aa8e` with the string bass thump merged in.
 #[test]
 fn solo_demo_mix_is_bit_identical() {
     let song = demo_song();
@@ -142,7 +145,7 @@ fn solo_demo_mix_is_bit_identical() {
     let m = mix(&stems, &song.band, 1234);
     let h = fnv1a(&mix_bytes(&m.l, &m.r));
     assert_eq!(
-        h, 0x5653e453bad5edaf,
+        h, 0xba3f74081ab6aa8e,
         "solo demo mix checksum changed: {h:#x}"
     );
 }

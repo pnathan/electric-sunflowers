@@ -46,6 +46,7 @@ use crate::articulation::{plan_syllables, syllables, Segment, Span, Syllable};
 use crate::params::VoiceParams;
 use crate::phrasing::{phrase_notes, PhrasingParams};
 use crate::synth::VoiceSettings;
+use crate::tuning::{VIB_DEPTH_VAR, VIB_RATE_VAR, VIB_WOBBLE2};
 
 /// Control frames per second.
 pub const FRAME_RATE: f64 = SR_F / HOP as f64;
@@ -86,6 +87,20 @@ const VIBRATO_FLOOR: f32 = 1e-6;
 /// Vibrato rate wobble: depth and angular rate (rad/s).
 const RATE_WOBBLE: f64 = 0.06;
 const RATE_WOBBLE_W: f64 = 0.7;
+/// Angular rate (rad/s) of the second rate-wobble sine (`VIB_WOBBLE2`).
+const RATE_WOBBLE2_W: f64 = 1.9;
+
+/// A deterministic value in [-1, 1] from `x` and a `salt` (splitmix64 of
+/// the bits of `x`).
+fn unit_hash(x: f64, salt: u64) -> f64 {
+    let mut z = x
+        .to_bits()
+        .wrapping_add(salt.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    (z >> 11) as f64 / (1u64 << 52) as f64 - 1.0
+}
 /// Pitch drift walk: step, velocity leak, position leak, limit (semitones).
 const DRIFT: (f64, f64, f64, f64) = (0.004, 0.985, 0.998, 0.12);
 
@@ -333,6 +348,8 @@ pub struct Vibrato {
     pub phase: f64,
     /// Envelope scratch.
     env: Vec<f32>,
+    /// Per-frame rate factor scratch.
+    rate_k: Vec<f32>,
 }
 
 impl Vibrato {
@@ -342,6 +359,7 @@ impl Vibrato {
             rate,
             phase,
             env: Vec::new(),
+            rate_k: Vec::new(),
         }
     }
 
@@ -351,12 +369,19 @@ impl Vibrato {
         let env = &mut self.env;
         env.clear();
         env.resize(midi.len(), 0.0);
+        let rk = &mut self.rate_k;
+        rk.clear();
+        rk.resize(midi.len(), 1.0);
         for n in notes {
             if n.t1 - n.t0 < VIBRATO_MIN_NOTE {
                 continue;
             }
             let a = Window::frame(n.t0 + VIBRATO_DELAY);
+            // Each note's own rate and depth, from its onset time.
+            let r = 1.0 + VIB_RATE_VAR * unit_hash(n.t0, 1);
+            let v = 1.0 + VIB_DEPTH_VAR * unit_hash(n.t0, 2);
             let d = self.depth
+                * v
                 * if n.phrase_end {
                     VIBRATO_PHRASE_END
                 } else {
@@ -365,6 +390,7 @@ impl Vibrato {
             for i in w.clip(a.max(0), Window::frame(n.t1)) {
                 env[i] =
                     (d * smoothstep(0.0, VIBRATO_RISE * FRAME_RATE, (w.abs(i) - a) as f64)) as f32;
+                rk[i] = r as f32;
             }
         }
         zero_phase_smooth(env, one_pole_coeff_tau(SMOOTH_VIBRATO, FRAME_RATE));
@@ -376,8 +402,11 @@ impl Vibrato {
         let (sw, cw) = (RATE_WOBBLE_W / FRAME_RATE).sin_cos();
         let (mut ws, mut wc) = (w.start as f64 * RATE_WOBBLE_W / FRAME_RATE).sin_cos();
         let mut ph = self.phase;
-        for (m, &e) in midi.iter_mut().zip(env.iter()) {
-            ph += dph * (1.0 + RATE_WOBBLE * ws);
+        let (sw2, cw2) = (RATE_WOBBLE2_W / FRAME_RATE).sin_cos();
+        let (mut ws2, mut wc2) = (w.start as f64 * RATE_WOBBLE2_W / FRAME_RATE).sin_cos();
+        for ((m, &e), &r) in midi.iter_mut().zip(env.iter()).zip(rk.iter()) {
+            ph += dph * r as f64 * (1.0 + RATE_WOBBLE * ws + VIB_WOBBLE2 * ws2);
+            (ws2, wc2) = (ws2 * cw2 + wc2 * sw2, wc2 * cw2 - ws2 * sw2);
             (ws, wc) = (ws * cw + wc * sw, wc * cw - ws * sw);
             if e > VIBRATO_FLOOR {
                 *m = (*m as f64 + e as f64 * ph.sin()) as f32;

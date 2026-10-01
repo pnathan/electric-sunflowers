@@ -150,7 +150,7 @@ impl Tract {
 
     /// Frication band for this hop: centre `ff`, bandwidth `bw` Hz.
     pub fn set_frication(&mut self, ff: f64, bw: f64) {
-        let q = (ff / bw).max(0.5);
+        let q = (ff / bw).max(0.5) * crate::tuning::FRIC_Q_SCALE;
         self.fric.set_coeffs(BiquadCoeffs::bandpass(SR_F, ff, q));
     }
 

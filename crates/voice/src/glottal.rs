@@ -289,6 +289,14 @@ pub fn lf_table(rd: f64) -> &'static LfTable {
     LF[k].get_or_init(|| LfTable::build(k as f64 / RD_STEPS))
 }
 
+/// Source level trim for `rd`. The stem is normalised to a target loudness,
+/// so a laxer source (weaker output) would raise the noise consonants by
+/// the same amount; the trim keeps the voiced-to-noise balance the presets
+/// near Rd 1.15 have. Measured on the baritone: Rd 1.7 needs x1.45.
+fn lax_trim(rd: f64) -> f64 {
+    1.0 + (0.45 / 0.55) * (rd - 1.15).max(0.0)
+}
+
 /// One mip level of a voice's interleaved table: entry i is
 /// [D lax, D tense, G lax, G tense] at table index i.
 type Row = [[f32; 4]; ROW];
@@ -358,6 +366,8 @@ pub struct GlottalSource {
     shimmer: f64,
     /// Tilt one-pole coefficient (both sections).
     tilt: f64,
+    /// Level trim for a lax Rd (see `lax_trim`).
+    trim: f64,
     st: SourceState,
 }
 
@@ -377,6 +387,7 @@ impl GlottalSource {
             jitter: jitter.max(0.0),
             shimmer: shimmer.max(0.0),
             tilt: OnePole::from_hz(tilt_hz.max(1.0), SR_F).a,
+            trim: lax_trim(rd),
             st: SourceState {
                 phase: 0.0,
                 jit: 0.0,
@@ -484,7 +495,7 @@ impl GlottalSource {
         let g = v[2] as f64 + (v[3] as f64 - v[2] as f64) * w;
         st.z[0] += self.tilt * (d * PULSE_GAIN - st.z[0]);
         st.z[1] += self.tilt * (st.z[0] - st.z[1]);
-        (st.z[1] * st.shim * SOURCE_GAIN, g)
+        (st.z[1] * st.shim * SOURCE_GAIN * self.trim, g)
     }
 
     /// One sample at fundamental `f0` Hz and voicing `av` (which sets the

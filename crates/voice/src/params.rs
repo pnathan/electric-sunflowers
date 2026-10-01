@@ -35,7 +35,7 @@ pub const fn voice_params(voice: Voice) -> VoiceParams {
     match voice {
         Voice::Baritone => VoiceParams {
             cons_scale: 1.2,
-            rd: 1.15,
+            rd: 1.7,
             fs: 1.0,
             f1s: 1.0,
             breath: 0.10,
