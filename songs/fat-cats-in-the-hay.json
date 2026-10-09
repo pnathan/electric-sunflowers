@@ -1,0 +1,188 @@
+{
+ "schema_version": 3,
+ "title": "Fat Cats in the Hay",
+ "note": "A stomp-along old-time number about three barn cats too well fed to move. Sung by a synthetic voice; the band is a fiddle, a harmony guitar and a strummed guitar.",
+ "key": "G",
+ "mode": "major",
+ "meter": "4/4",
+ "tempo": 118,
+ "guitar": "strum",
+ "voice": "baritone",
+ "sections": [
+  {
+   "type": "intro",
+   "chords": [
+    "G",
+    "C",
+    "G",
+    "D"
+   ],
+   "tune": "d8 m8 s8 m8 d8 m8 s8 d'8 | r'8 d'8 t8 d'8 s8 m8 r8 d8 | m8 r8 d8 r8 m8 s8 m4 | d4 s8 m8 d2",
+   "energy": "high"
+  },
+  {
+   "type": "verse",
+   "lines": [
+    {
+     "syl": "*Fat *cats on the *porch in the af-ter-*noon",
+     "ph": "f ae t|k ae t s|aa n|dh ax|p ao r ch|ih n|dh ax|ae f|t er|n uw n",
+     "chords": [
+      "G",
+      "C"
+     ]
+    },
+    {
+     "syl": "*snor-ing *loud as a *cel-lar *pump in *June",
+     "ph": "s n ao r|ih ng|l aw d|ae z|ax|s eh l|l er|p ah m p|ih n|jh uw n",
+     "chords": [
+      "G",
+      "D"
+     ]
+    },
+    {
+     "syl": "*one *scratch-es *his *bel-ly, *one *licks his *paw",
+     "ph": "w ah n|s k r ae ch|ih z|hh ih z|b eh l|iy|w ah n|l ih k s|hh ih z|p ao",
+     "chords": [
+      "C",
+      "G"
+     ]
+    },
+    {
+     "syl": "*nine *lives a-*piece, and *not a *sin-gle *claw",
+     "ph": "n ay n|l ay v z|ax|p iy s|ae n d|n aa t|ax|s ih n|g ax l|k l ao",
+     "chords": [
+      "D",
+      "G"
+     ]
+    }
+   ],
+   "energy": "mid"
+  },
+  {
+   "type": "chorus",
+   "lines": [
+    {
+     "syl": "*Oh, the *fat cats *sprawl in the *hay and *snore",
+     "ph": "ow|dh ax|f ae t|k ae t s|s p r ao l|ih n|dh ax|hh ey|ae n d|s n ao r",
+     "chords": [
+      "G",
+      "C"
+     ]
+    },
+    {
+     "syl": "*big as a *bar-rel and *la-zy as the *floor",
+     "ph": "b ih g|ae z|ax|b aa r|r ax l|ae n d|l ey|z iy|ae z|dh ax|f l ao r",
+     "chords": [
+      "D",
+      "G"
+     ]
+    },
+    {
+     "syl": "*Ah, the *fat cats *stretch and the *fat cats *yawn",
+     "ph": "aa|dh ax|f ae t|k ae t s|s t r eh ch|ae n d|dh ax|f ae t|k ae t s|y ao n",
+     "chords": [
+      "G",
+      "C"
+     ]
+    },
+    {
+     "syl": "*and the *mice keep *qui-et till the *dawn",
+     "ph": "ae n d|dh ax|m ay s|k iy p|k w ay|ax t|t ih l|dh ax|d ao n",
+     "chords": [
+      "D",
+      "G"
+     ]
+    }
+   ],
+   "energy": "high"
+  },
+  {
+   "type": "interlude",
+   "chords": [
+    "G",
+    "C",
+    "D",
+    "G"
+   ],
+   "tune": "s8 m8 d8 r8 m8 s8 d'8 t8 | d'8 t8 l8 s8 m8 r8 d8 r8 | m8 s8 l8 s8 d'4 s4 | m4 d4 r4 d4",
+   "energy": "high"
+  },
+  {
+   "type": "verse",
+   "lines": [
+    {
+     "syl": "*Pud-ding *weighs as *much as a *sack of *corn",
+     "ph": "p uh d|d ih ng|w ey z|ae z|m ah ch|ae z|ax|s ae k|ah v|k ao r n",
+     "chords": [
+      "G",
+      "C"
+     ]
+    },
+    {
+     "syl": "and the *mice all *look at *him with *scorn",
+     "ph": "ae n d|dh ax|m ay s|ao l|l uh k|ae t|hh ih m|w ih th|s k ao r n",
+     "chords": [
+      "G",
+      "D"
+     ]
+    },
+    {
+     "syl": "*Bis-cuit *bats a *but-ter-fly in *spring",
+     "ph": "b ih s|k ih t|b ae t s|ax|b ah t|t er|f l ay|ih n|s p r ih ng",
+     "chords": [
+      "C",
+      "G"
+     ]
+    },
+    {
+     "syl": "and he *sweeps the *barn-yard *like a *king",
+     "ph": "ae n d|hh iy|s w iy p s|dh ax|b aa r n|y aa r d|l ay k|ax|k ih ng",
+     "chords": [
+      "D",
+      "G"
+     ]
+    }
+   ],
+   "energy": "mid"
+  },
+  {
+   "type": "chorus",
+   "lines": [
+    {
+     "syl": "*Oh, the *fat cats *sprawl in the *hay and *snore",
+     "ph": "ow|dh ax|f ae t|k ae t s|s p r ao l|ih n|dh ax|hh ey|ae n d|s n ao r",
+     "chords": [
+      "G",
+      "C"
+     ]
+    },
+    {
+     "syl": "*big as a *bar-rel and *la-zy as the *floor",
+     "ph": "b ih g|ae z|ax|b aa r|r ax l|ae n d|l ey|z iy|ae z|dh ax|f l ao r",
+     "chords": [
+      "D",
+      "G"
+     ]
+    },
+    {
+     "syl": "*Ah, the *fat cats *stretch and the *fat cats *yawn",
+     "ph": "aa|dh ax|f ae t|k ae t s|s t r eh ch|ae n d|dh ax|f ae t|k ae t s|y ao n",
+     "chords": [
+      "G",
+      "C"
+     ]
+    },
+    {
+     "syl": "*and the *mice keep *qui-et till the *dawn",
+     "ph": "ae n d|dh ax|m ay s|k iy p|k w ay|ax t|t ih l|dh ax|d ao n",
+     "chords": [
+      "D",
+      "G"
+     ]
+    }
+   ],
+   "energy": "high"
+  }
+ ],
+ "arranging": "A stomp-along old-time number for a room that claps. The fiddle drives the intro and the interlude as written and answers the singer with short runs between lines; on the last chorus it doubles the tune an octave up. The strummed guitar keeps the eighths moving under every verse; the band has no drums. Energy peaks on the last chorus; nothing drops to quiet. Keep the singer on top; little ducking."
+}
