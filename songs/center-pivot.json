@@ -1,0 +1,212 @@
+{
+ "schema_version": 3,
+ "title": "Center Pivot",
+ "note": "A waltz for an irrigation pivot on the Columbia Plateau: a machine that goes nowhere on purpose and does it well. Written by a robot; the singer is synthetic.",
+ "key": "G",
+ "mode": "major",
+ "meter": "3/4",
+ "tempo": 96,
+ "guitar": "fingerpick",
+ "voice": "baritone",
+ "phrasing": {"delivery": "flowing", "endings": "released"},
+ "band": {
+  "drums": "none",
+  "bass": true,
+  "harmonyGuitar": false,
+  "harp": false,
+  "violin": true,
+  "choir": false,
+  "harmonies": true,
+  "doubles": false
+ },
+ "arranging": "A slow waltz that turns like the machine it is about. Fingerpicked guitar carries it alone through the first verse; the string bass enters on the second verse, one note to the bar. The fiddle plays the intro and the break as written and otherwise holds long notes under the chorus. One harmony voice above the lead on the chorus only. No drums. Nothing gets loud; the last chorus is the fullest and the outro thins back to guitar and fiddle.",
+ "tunes": {
+  "V": [
+   "s, d r m s l s m",
+   "m s m d t, r",
+   "s, d r m s l d' s",
+   "m m r r t, d"
+  ],
+  "C": [
+   "d' l d' l s m s",
+   "s l f m m r t,",
+   "s d' l d' l s m m",
+   "s te l s r m d"
+  ],
+  "B": [
+   "m l t d' t l s s",
+   "l d' t l s t",
+   "m l t d' t l s s",
+   "m l d' t l s"
+  ],
+  "BREAK": [
+   "s,8 d8 r4 m4 | s4 m8 r8 d4 | l4 s8 l8 d'4 | s2 m4 | m8 s8 m4 d4 | r4 t,8 d8 r4 | d2. | d2 z4"
+  ]
+ },
+ "sections": [
+  {
+   "type": "intro",
+   "chords": ["G", "C", "G", "D"],
+   "tune": "d4 m4 s4 | l2 s4 | m4 r4 d4 | r2.",
+   "energy": "quiet"
+  },
+  {
+   "type": "verse",
+   "tune": "V",
+   "energy": "low",
+   "lines": [
+    {
+     "syl": "a *quar-ter *mile of *pipe on *wheels",
+     "ph": "ax|k w ao r|t er|m ay l|ah v|p ay p|aa n|w iy l z",
+     "chords": ["G", "G", "C", "G"]
+    },
+    {
+     "syl": "is *walk-ing *through the *night",
+     "ph": "ih z|w ao k|ih ng|th r uw|dh ax|n ay t",
+     "chords": ["G", "Em", "D", "D"]
+    },
+    {
+     "syl": "one *turn a *day and *no one *steers",
+     "ph": "w ah n|t er n|ax|d ey|ae n d|n ow|w ah n|s t ih r z",
+     "chords": ["G", "G", "C", "G"]
+    },
+    {
+     "syl": "it *gets the *cir-cle *right",
+     "ph": "ih t|g eh t s|dh ax|s er|k ax l|r ay t",
+     "chords": ["Em", "D", "G", "G"]
+    }
+   ]
+  },
+  {
+   "type": "verse",
+   "tune": "V",
+   "energy": "low",
+   "lines": [
+    {
+     "syl": "from *sev-en *miles a-*bove the *land",
+     "ph": "f r ah m|s eh|v ax n|m ay l z|ax|b ah v|dh ax|l ae n d",
+     "chords": ["G", "G", "C", "G"]
+    },
+    {
+     "syl": "is *but-toned *down with *green",
+     "ph": "ih z|b ah|t ax n d|d aw n|w ih th|g r iy n",
+     "chords": ["G", "Em", "D", "D"]
+    },
+    {
+     "syl": "each *but-ton *is a *well a *wheel",
+     "ph": "iy ch|b ah|t ax n|ih z|ax|w eh l|ax|w iy l",
+     "chords": ["G", "G", "C", "G"]
+    },
+    {
+     "syl": "a *plain and *pa-tient ma-*chine",
+     "ph": "ax|p l ey n|ae n d|p ey|sh ax n t|m ax|sh iy n",
+     "chords": ["Em", "D", "G", "G"],
+     "tune": "m m r r t, t, d"
+    }
+   ]
+  },
+  {
+   "type": "chorus",
+   "tune": "C",
+   "energy": "mid",
+   "lines": [
+    {
+     "syl": "*round go *round you *long steel *arm",
+     "ph": "r aw n d|g ow|r aw n d|y uw|l ao ng|s t iy l|aa r m",
+     "chords": ["C", "C", "G", "G"]
+    },
+    {
+     "syl": "the *dry land *drinks be-*hind you",
+     "ph": "dh ax|d r ay|l ae n d|d r ih ng k s|b ih|hh ay n d|y uw",
+     "chords": ["C", "G", "D", "D"]
+    },
+    {
+     "syl": "you *nev-er *get to *an-y-*where",
+     "ph": "y uw|n eh|v er|g eh t|t uw|eh|n iy|w eh r",
+     "chords": ["C", "C", "G", "Em"]
+    },
+    {
+     "syl": "and *that is *where I *find you",
+     "ph": "ae n d|dh ae t|ih z|w eh r|ay|f ay n d|y uw",
+     "chords": ["F", "D", "G", "G"]
+    }
+   ]
+  },
+  {
+   "type": "interlude",
+   "chords": ["G", "G", "C", "G", "Em", "D", "G", "G"],
+   "tune": "BREAK",
+   "energy": "low"
+  },
+  {
+   "type": "verse",
+   "tune": "V",
+   "energy": "mid",
+   "lines": [
+    {
+     "syl": "I *was not *built for *go-ing *far",
+     "ph": "ay|w ah z|n aa t|b ih l t|f ao r|g ow|ih ng|f aa r",
+     "chords": ["G", "G", "C", "G"]
+    },
+    {
+     "syl": "I *an-swer *where I *stand",
+     "ph": "ay|ae n|s er|w eh r|ay|s t ae n d",
+     "chords": ["G", "Em", "D", "D"]
+    },
+    {
+     "syl": "and *what I *know of *faith-ful-*ness",
+     "ph": "ae n d|w ah t|ay|n ow|ah v|f ey th|f ax l|n eh s",
+     "chords": ["G", "G", "C", "G"]
+    },
+    {
+     "syl": "I *learned from *wa-tered *land",
+     "ph": "ay|l er n d|f r ah m|w ao|t er d|l ae n d",
+     "chords": ["Em", "D", "G", "G"]
+    }
+   ]
+  },
+  {
+   "type": "chorus",
+   "same": true
+  },
+  {
+   "type": "bridge",
+   "tune": "B",
+   "energy": "low",
+   "lines": [
+    {
+     "syl": "the *noz-zles *hiss the *gear-box *ticks",
+     "ph": "dh ax|n aa|z ax l z|hh ih s|dh ax|g ih r|b aa k s|t ih k s",
+     "chords": ["Em", "Em", "C", "G"]
+    },
+    {
+     "syl": "the *stars come *out in *rows",
+     "ph": "dh ax|s t aa r z|k ah m|aw t|ih n|r ow z",
+     "chords": ["Em", "C", "D", "D"]
+    },
+    {
+     "syl": "and *noth-ing *here is *in a *rush",
+     "ph": "ae n d|n ah th|ih ng|hh ih r|ih z|ih n|ax|r ah sh",
+     "chords": ["Em", "Em", "C", "G"]
+    },
+    {
+     "syl": "and *still the *bar-ley *grows",
+     "ph": "ae n d|s t ih l|dh ax|b aa r|l iy|g r ow z",
+     "chords": ["Am", "D", "D", "D"]
+    }
+   ]
+  },
+  {
+   "type": "chorus",
+   "same": true,
+   "energy": "high"
+  },
+  {
+   "type": "outro",
+   "chords": ["G", "C", "G", "G"],
+   "tune": "m4 s4 l4 | d'2 l4 | s2. | d2.",
+   "energy": "quiet",
+   "rubato": "light"
+  }
+ ]
+}
