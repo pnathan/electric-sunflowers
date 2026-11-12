@@ -244,9 +244,10 @@ fn body_groups_are_well_posed() {
 
 /// The low groups (below `F_CROSS`) of guitar and harp are the body's own:
 /// identical for every seed, starting at the lowest mode (70-80 Hz guitar,
-/// 60-70 Hz harp), each keeping at least 20% of its drawn power (measured
-/// 0.21-0.99) at a gain under 20 (measured 1.0-14.7), so their amplitudes
-/// and phases come from the draw, not from rounding.
+/// 60-70 Hz harp), each keeping at least 15% of its drawn power (measured
+/// 0.18-0.99 since the guitar row was refitted to GuitarSet) at a gain
+/// under 20 (measured 1.0-14.7), so their amplitudes and phases come from
+/// the draw, not from rounding.
 #[test]
 fn body_low_groups_are_fixed_and_well_posed() {
     for body in [Body::Guitar, Body::Harp] {
@@ -266,7 +267,7 @@ fn body_low_groups_are_fixed_and_well_posed() {
         for g in &first {
             for c in 0..2 {
                 assert!(
-                    g.kept[c] >= 0.2 && g.gain[c] < 20.0,
+                    g.kept[c] >= 0.15 && g.gain[c] < 20.0,
                     "{body:?} {:.0} Hz ch {c}: kept {:.3} gain {:.2}",
                     g.f_lo,
                     g.kept[c],
