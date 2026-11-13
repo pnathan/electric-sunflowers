@@ -50,8 +50,8 @@ pub const fn voice_params(voice: Voice) -> VoiceParams {
     match voice {
         // Baritone: fitted to the harmonic envelope of male-range vocadito
         // singers (tools/voice_target.py; engine-design 5.1). Source with
-        // capped return phase (`fa_hz`), no singer's-formant cluster, a
-        // high tilt corner and a voiced HF bed.
+        // capped return phase (`fa_hz`), a voiced HF bed and a consonant
+        // gain that restores the consonants' prominence over the bed.
         Voice::Baritone => VoiceParams {
             cons_scale: 1.2,
             rd: 1.9,
@@ -60,15 +60,15 @@ pub const fn voice_params(voice: Voice) -> VoiceParams {
             breath: 0.10,
             vib_rate: 5.1,
             vib_depth: 0.30,
-            tilt: 9000.0,
+            tilt: 6000.0,
             jitter: 0.004,
             shimmer: 0.05,
-            sf: 0.0,
-            fa_hz: 2000.0,
+            sf: 0.15,
+            fa_hz: 1400.0,
             shelf_db: 16.0,
-            hf_bed: 0.18,
+            hf_bed: 0.2,
             hf_hz: 3800.0,
-            cons_gain: 1.0,
+            cons_gain: 2.74,
         },
         Voice::Tenor => VoiceParams {
             cons_scale: 1.25,
@@ -124,11 +124,12 @@ pub const fn voice_params(voice: Voice) -> VoiceParams {
             hf_hz: 3800.0,
             cons_gain: 1.0,
         },
-        // Bass: the baritone's fitted `fa_hz`, `shelf_db` and `hf_bed`; its
-        // own `rd`, `sf` and `tilt` (not fitted).
+        // Bass: the baritone's fitted `fa_hz`, `shelf_db`, `hf_bed`, `hf_hz`
+        // and `cons_gain`; `rd` picked for the same open-vowel H1-H2; its own
+        // `sf` and `tilt` (not fitted).
         Voice::Bass => VoiceParams {
             cons_scale: 1.15,
-            rd: 1.2,
+            rd: 1.9,
             fs: 0.94,
             f1s: 0.96,
             breath: 0.1,
@@ -138,11 +139,11 @@ pub const fn voice_params(voice: Voice) -> VoiceParams {
             jitter: 0.004,
             shimmer: 0.04,
             sf: 0.35,
-            fa_hz: 2000.0,
+            fa_hz: 1400.0,
             shelf_db: 16.0,
-            hf_bed: 0.18,
+            hf_bed: 0.2,
             hf_hz: 3800.0,
-            cons_gain: 1.0,
+            cons_gain: 2.74,
         },
     }
 }

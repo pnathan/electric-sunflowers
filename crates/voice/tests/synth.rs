@@ -377,8 +377,9 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// fade_from, vibrato and glide scales, equals its old constant at the
 /// default, so the pipeline cannot diverge).
 ///
-/// Re-pinned to `0x2174120626536588` for the baritone fit to the vocadito harmonic
-/// envelope (capped return phase, `fa_hz`, `hf_bed`).
+/// Re-pinned to `0x6a43a0a7804fda19` for the baritone fit to the vocadito harmonic
+/// envelope (capped return phase, `fa_hz`, `hf_bed`, `cons_gain`).
+/// Re-pinned to `0xe65032ec29892218` for the baritone bed corner 3800 Hz and shelf 16 dB.
 #[test]
 fn demo_lead_render_is_bit_identical_at_default_phrasing() {
     let (voice, notes) = demo_lead_notes(1234);
@@ -395,7 +396,7 @@ fn demo_lead_render_is_bit_identical_at_default_phrasing() {
     let bytes: Vec<u8> = out.iter().flat_map(|x| x.to_le_bytes()).collect();
     assert_eq!(
         fnv1a(&bytes),
-        0x2174120626536588,
+        0xe65032ec29892218,
         "demo lead render changed at the default phrasing"
     );
 }
