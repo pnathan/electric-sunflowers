@@ -29,10 +29,11 @@ pub const BW_SCALE: f64 = 1.0;
 /// +-`VIB_RATE_VAR` and the depth by +-`VIB_DEPTH_VAR` (fractions, drawn
 /// from the note's onset time, so a render stays deterministic), and the
 /// slow rate wobble gets a second, incommensurate sine of
-/// `VIB_WOBBLE2` (fraction of the rate). All 0 is today's steady vibrato.
-pub const VIB_RATE_VAR: f64 = 0.0;
-pub const VIB_DEPTH_VAR: f64 = 0.0;
-pub const VIB_WOBBLE2: f64 = 0.0;
+/// `VIB_WOBBLE2` (fraction of the rate). These values are set by judgment:
+/// the real reference set has too few long notes to calibrate them.
+pub const VIB_RATE_VAR: f64 = 0.10;
+pub const VIB_DEPTH_VAR: f64 = 0.45;
+pub const VIB_WOBBLE2: f64 = 0.04;
 
 /// Depth (0..1) of the glottal-flow modulation of the noise in voiced
 /// fricatives (dh v z zh); 0 is unmodulated noise (issue 22).

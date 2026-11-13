@@ -32,8 +32,10 @@ pub enum WalkClamp {
 ///   gain 0.01, w_leak 1, limit 0.02 (F2) and 0.025 (F3), clamp Position.
 /// - Pitch wander, violin [control rate SR/16]: step 0.0004, leak 0.97,
 ///   gain 0.05, w_leak 1, limit 0.0015 (natural-log frequency), clamp Position.
-/// - Pitch drift, voice controls [HOP frames]: step 0.004, leak 0.985,
-///   gain 1, w_leak 0.998, limit 0.12 semitone, clamp Output.
+/// - Pitch drift, voice controls [HOP frames]: step 0.000173, leak 0.985,
+///   gain 1, w_leak 0.995, limit 0.30 semitone, clamp Output. The limit is
+///   3 deviations of the unclamped walk (about 0.10 semitone); the earlier
+///   values (step 0.004, w_leak 0.998, limit 0.12) saturated at the clamp.
 #[derive(Clone, Debug)]
 pub struct RandomWalk {
     pub v: f64,

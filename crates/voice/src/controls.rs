@@ -102,7 +102,7 @@ fn unit_hash(x: f64, salt: u64) -> f64 {
     (z >> 11) as f64 / (1u64 << 52) as f64 - 1.0
 }
 /// Pitch drift walk: step, velocity leak, position leak, limit (semitones).
-const DRIFT: (f64, f64, f64, f64) = (0.004, 0.985, 0.998, 0.12);
+const DRIFT: (f64, f64, f64, f64) = (0.000173, 0.985, 0.995, 0.30);
 
 /// Per-frame controls the synthesiser reads, all of one length.
 #[derive(Clone, Debug, Default)]
@@ -872,13 +872,30 @@ mod tests {
         }
     }
 
-    /// Drift stays inside its 0.12 semitone limit.
+    /// Drift stays inside its limit (`DRIFT`'s fourth field).
     #[test]
     fn drift_is_bounded() {
         let mut m = vec![60.0f32; 100_000];
         add_drift(&mut m, &mut drift_walk(), &mut Rng::from_seed(3), 0.0);
-        assert!(m.iter().all(|&x| (x - 60.0).abs() <= 0.1201));
+        let limit = (DRIFT.3 + 0.0001) as f32;
+        assert!(m.iter().all(|&x| (x - 60.0).abs() <= limit));
         assert!(m.iter().any(|&x| (x - 60.0).abs() > 0.01));
+    }
+
+    /// The unclamped walk has a deviation of about 0.10 semitone, so the
+    /// limit is about 3 deviations and rarely touched.
+    #[test]
+    fn drift_deviation_is_set_by_step_not_limit() {
+        let limit = DRIFT.3;
+        let mut walk = drift_walk();
+        let mut rng = Rng::from_seed(11);
+        let n = 400_000;
+        let xs: Vec<f64> = (0..n).map(|_| walk.step(&mut rng)).collect();
+        let mean = xs.iter().sum::<f64>() / n as f64;
+        let sd = (xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64).sqrt();
+        let at_clamp = xs.iter().filter(|x| (x.abs() - limit).abs() < 1e-6).count();
+        assert!((0.085..0.115).contains(&sd), "drift sd {sd} semitone");
+        assert!((at_clamp as f64) < 0.01 * n as f64, "{at_clamp} of {n} at the clamp");
     }
 
     /// A marked scoop starts below the note and a marked fall ends below
