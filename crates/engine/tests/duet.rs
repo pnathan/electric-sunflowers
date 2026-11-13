@@ -140,6 +140,8 @@ fn sheet_marks_singers_only_in_a_duet() {
 /// Re-pinned to `0xba3f74081ab6aa8e` with the string bass thump merged in.
 /// Re-pinned to `0xac0a6a74395bc476` for fricative loci and VC transitions.
 /// Re-pinned to `0x1f1f5921f23d51ea` for the GuitarSet-fitted guitar body row.
+/// Re-pinned to `0x76257cd73a2a1fd9` for the baritone fit to the vocadito
+/// harmonic envelope (capped return phase, `fa_hz`, `hf_bed`).
 #[test]
 fn solo_demo_mix_is_bit_identical() {
     let song = demo_song();
@@ -147,7 +149,7 @@ fn solo_demo_mix_is_bit_identical() {
     let m = mix(&stems, &song.band, 1234);
     let h = fnv1a(&mix_bytes(&m.l, &m.r));
     assert_eq!(
-        h, 0x1f1f5921f23d51ea,
+        h, 0x76257cd73a2a1fd9,
         "solo demo mix checksum changed: {h:#x}"
     );
 }

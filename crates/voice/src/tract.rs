@@ -8,7 +8,8 @@
 //!   linearly per sample, design 3.4); F4, F5 and up to four high
 //!   resonances at 5.5, 6.6, 7.7, 8.8 kHz times the voice's formant scale
 //!   are fixed per voice and designed once.
-//! - RBJ high shelf, +16 dB at 5.2 kHz, Q 0.7, after the cascade.
+//! - RBJ high shelf, `shelf_db` (16 dB for tenor, alto and soprano) at
+//!   5.2 kHz, Q 0.7, after the cascade.
 //! - Frication: white noise through an RBJ constant-peak band-pass at the
 //!   consonant's centre and bandwidth (Q = max(0.5, ff / bw)), added after
 //!   the tract with gain 2.2. The band-pass designer clamps the centre at
@@ -30,7 +31,7 @@ use dsp::resonator::{coeffs, Resonator};
 use sfcore::{HOP, SR_F};
 
 use crate::params::VoiceParams;
-use crate::tuning::{FRICATION_GAIN, SHELF_DB, SHELF_HZ, SHELF_Q};
+use crate::tuning::{FRICATION_GAIN, SHELF_HZ, SHELF_Q};
 
 /// Most high resonances above F5.
 pub const MAX_HIGH: usize = 4;
@@ -76,6 +77,8 @@ pub struct Tract {
     dc: DcBlocker,
     /// True after a reset: the next formant update jumps instead of ramping.
     fresh: bool,
+    /// Frication output gain: `FRICATION_GAIN` times the voice's `cons_gain`.
+    fric_gain: f64,
 }
 
 impl Tract {
@@ -100,11 +103,14 @@ impl Tract {
             left: 0,
             fixed,
             last_fixed: 1 + n_high,
-            shelf: Biquad::new(BiquadCoeffs::high_shelf(SR_F, SHELF_HZ, SHELF_Q, SHELF_DB)),
+            shelf: Biquad::new(BiquadCoeffs::high_shelf(
+                SR_F, SHELF_HZ, SHELF_Q, p.shelf_db,
+            )),
             fric: Biquad::default(),
             fric_y: [0.0; 2],
             dc: DcBlocker::new(DC_POLE),
             fresh: true,
+            fric_gain: FRICATION_GAIN * p.cons_gain,
         }
     }
 
@@ -231,12 +237,13 @@ impl Tract {
     pub fn finish_block<const FRIC: bool>(&mut self, tract: &[f64], fric: &[f64], out: &mut [f32]) {
         let (mut bp, mut dc) = (self.fric, self.dc);
         let mut fy = self.fric_y;
+        let fg = self.fric_gain;
         for (j, (o, &t)) in out.iter_mut().zip(tract.iter()).enumerate() {
             let mut v = t;
             if FRIC {
                 let y = bp.tick(fric[j]);
                 fy = [y, fy[0]];
-                v += y * FRICATION_GAIN;
+                v += y * fg;
             }
             *o = dc.tick(v) as f32;
         }

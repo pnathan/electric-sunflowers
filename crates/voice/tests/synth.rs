@@ -261,7 +261,7 @@ fn lead_settings_are_identity() {
 /// several mip levels (no blow-up at level changes).
 #[test]
 fn source_glide_across_levels_is_finite() {
-    let mut g = GlottalSource::new(1.05, 7000.0, 0.003, 0.03);
+    let mut g = GlottalSource::new(1.05, 7000.0, 0.0, 0.003, 0.03);
     let mut rng = Rng::stream(1, tag("test.glide"));
     let n = 4 * 44_100;
     let mut prev = 0.0;
@@ -376,6 +376,9 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// used downstream, onset_share, lead_in, swell, breath, fade_depth,
 /// fade_from, vibrato and glide scales, equals its old constant at the
 /// default, so the pipeline cannot diverge).
+///
+/// Re-pinned to `0x2174120626536588` for the baritone fit to the vocadito harmonic
+/// envelope (capped return phase, `fa_hz`, `hf_bed`).
 #[test]
 fn demo_lead_render_is_bit_identical_at_default_phrasing() {
     let (voice, notes) = demo_lead_notes(1234);
@@ -392,7 +395,7 @@ fn demo_lead_render_is_bit_identical_at_default_phrasing() {
     let bytes: Vec<u8> = out.iter().flat_map(|x| x.to_le_bytes()).collect();
     assert_eq!(
         fnv1a(&bytes),
-        0xcc99cd5baf3e34b8,
+        0x2174120626536588,
         "demo lead render changed at the default phrasing"
     );
 }

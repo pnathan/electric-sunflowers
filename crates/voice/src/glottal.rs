@@ -39,10 +39,26 @@
 //! voice's `SourceTable` interleaves the four values it reads per table
 //! index (D lax, D tense, G lax, G tense), so one read is one 16-byte load.
 //!
+//! Two table families. The legacy family is the one above. The capped
+//! family (`lf_table_capped`) computes Rk, Rg, tp and te as above, with
+//! Fant's Ra in the Rg formula, and then sets ta = min(Ra, `RA_CAP`) before
+//! epsilon and alpha are solved. Fant's regression ties Ra to Rd, so a lax
+//! table that gives the open quotient (H1-H2) also gives a return-phase
+//! corner f0 / (2 pi Ra) of 200-330 Hz at f0 = 110 Hz, about 5 dB per
+//! octave of extra tilt above it. Real singers keep the open quotient and
+//! a bright harmonic envelope together; the capped family decouples them,
+//! and the return-phase corner becomes a separate parameter, `fa_hz`.
+//!
 //! `GlottalSource` adds per-period jitter and shimmer (Gaussian, redrawn at
 //! each period start) and two cascaded one-pole low-passes for spectral
-//! tilt. Parameters that set the sound: Rd, tilt corner (Hz), jitter,
-//! shimmer (voice::params), and the loudness blend above.
+//! tilt. With `fa_hz <= 0` it is the legacy source: legacy tables, both
+//! one-poles at the tilt corner. With `fa_hz > 0` it reads the capped
+//! tables, the first one-pole is the return-phase filter with corner
+//! Fa(w) = fa_hz 2^(`FA_LOUD_OCT` (w - 0.5)) (a louder note is brighter),
+//! updated once per `run` call from the av at its start, and the second
+//! stays at the tilt corner. Parameters that set the sound: Rd, tilt corner
+//! (Hz), `fa_hz`, jitter, shimmer (voice::params), and the loudness blend
+//! above.
 
 use std::sync::OnceLock;
 
@@ -75,6 +91,10 @@ const SOURCE_GAIN: f64 = 1.6;
 const RD_LAX: f64 = 0.35;
 const RD_TENSE: f64 = 0.28;
 const RD_TENSE_MIN: f64 = 0.6;
+/// Largest return-phase time constant of the capped tables, in periods.
+pub const RA_CAP: f64 = 0.008;
+/// Octaves by which Fa moves between w = 0 and w = 1 (louder is brighter).
+pub const FA_LOUD_OCT: f64 = 1.0;
 
 /// LF timing and shape parameters for one Rd, period normalised to 1.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -100,6 +120,16 @@ pub struct LfParams {
 impl LfParams {
     /// Parameters from Rd (Fant 1995). Rd is clamped to the table range.
     pub fn from_rd(rd: f64) -> LfParams {
+        Self::from_rd_cap(rd, f64::INFINITY)
+    }
+
+    /// As `from_rd`, with the return-phase constant ta = min(Ra, `RA_CAP`)
+    /// (Rg still uses Fant's Ra).
+    pub fn from_rd_capped(rd: f64) -> LfParams {
+        Self::from_rd_cap(rd, RA_CAP)
+    }
+
+    fn from_rd_cap(rd: f64, cap: f64) -> LfParams {
         let lo = RD_INDEX_MIN as f64 / RD_STEPS;
         let hi = RD_INDEX_MAX as f64 / RD_STEPS;
         let rd = if rd.is_finite() {
@@ -112,7 +142,7 @@ impl LfParams {
         let rg = rk / (4.0 * (0.11 * rd / (0.5 + 1.2 * rk) - ra));
         let tp = 1.0 / (2.0 * rg);
         let te = tp * (1.0 + rk);
-        let ta = ra;
+        let ta = if ra > cap { cap } else { ra };
         let mut eps = 1.0 / ta;
         for _ in 0..40 {
             eps = (1.0 - (-eps * (1.0 - te)).exp()) / ta;
@@ -216,8 +246,12 @@ impl LfTable {
         &self.g
     }
 
-    fn build(rd: f64) -> LfTable {
-        let p = LfParams::from_rd(rd);
+    fn build(rd: f64, capped: bool) -> LfTable {
+        let p = if capped {
+            LfParams::from_rd_capped(rd)
+        } else {
+            LfParams::from_rd(rd)
+        };
         let mut full = vec![0.0f64; TABLE_LEN];
         for (i, v) in full.iter_mut().enumerate() {
             *v = p.eval(i as f64 / TABLE_LEN as f64);
@@ -272,6 +306,7 @@ impl LfTable {
 }
 
 static LF: [OnceLock<LfTable>; N_RD] = [const { OnceLock::new() }; N_RD];
+static LF_CAPPED: [OnceLock<LfTable>; N_RD] = [const { OnceLock::new() }; N_RD];
 
 /// Table index of `rd`: round(Rd * 40), clamped to the table range.
 pub fn rd_index(rd: f64) -> usize {
@@ -286,7 +321,13 @@ pub fn rd_index(rd: f64) -> usize {
 /// The tables for `rd` (rounded to the nearest 1/40), built on first use.
 pub fn lf_table(rd: f64) -> &'static LfTable {
     let k = rd_index(rd);
-    LF[k].get_or_init(|| LfTable::build(k as f64 / RD_STEPS))
+    LF[k].get_or_init(|| LfTable::build(k as f64 / RD_STEPS, false))
+}
+
+/// As `lf_table`, for the capped family (ta = min(Ra, `RA_CAP`)).
+pub fn lf_table_capped(rd: f64) -> &'static LfTable {
+    let k = rd_index(rd);
+    LF_CAPPED[k].get_or_init(|| LfTable::build(k as f64 / RD_STEPS, true))
 }
 
 /// Source level trim for `rd`. The stem is normalised to a target loudness,
@@ -309,10 +350,11 @@ pub struct SourceTable {
 
 impl SourceTable {
     /// Interleaves the lax (Rd + 0.35) and tense (max(0.6, Rd - 0.28))
-    /// tables of `rd`.
-    pub fn new(rd: f64) -> SourceTable {
-        let lax = lf_table(rd + RD_LAX);
-        let tense = lf_table((rd - RD_TENSE).max(RD_TENSE_MIN));
+    /// tables of `rd`, from the capped family when `capped`.
+    pub fn new(rd: f64, capped: bool) -> SourceTable {
+        let table = if capped { lf_table_capped } else { lf_table };
+        let lax = table(rd + RD_LAX);
+        let tense = table((rd - RD_TENSE).max(RD_TENSE_MIN));
         let mut data = vec![[[0.0f32; 4]; ROW]; N_LEVELS];
         for (j, row) in data.iter_mut().enumerate() {
             let (dl, dt) = (lax.level(j), tense.level(j));
@@ -355,6 +397,8 @@ struct SourceState {
     valid: (f64, f64),
     /// Tilt one-pole states.
     z: [f64; 2],
+    /// Coefficient of the first one-pole (the tilt corner, or Fa).
+    c0: f64,
 }
 
 /// LF glottal source with jitter, shimmer and spectral tilt.
@@ -364,29 +408,40 @@ pub struct GlottalSource {
     inv_width: [f64; N_LEVELS],
     jitter: f64,
     shimmer: f64,
-    /// Tilt one-pole coefficient (both sections).
+    /// Tilt one-pole coefficient (both sections when `fa_hz` <= 0, else the
+    /// second).
     tilt: f64,
+    /// Return-phase corner at w = 0.5, Hz; <= 0 is the legacy source.
+    fa_hz: f64,
     /// Level trim for a lax Rd (see `lax_trim`).
     trim: f64,
     st: SourceState,
 }
 
 impl GlottalSource {
-    /// Source for shape `rd`, tilt corner `tilt_hz` (both one-poles),
-    /// jitter and shimmer as relative standard deviations.
-    pub fn new(rd: f64, tilt_hz: f64, jitter: f64, shimmer: f64) -> GlottalSource {
+    /// Source for shape `rd`, tilt corner `tilt_hz`, return-phase corner
+    /// `fa_hz` (<= 0: the legacy source, both one-poles at the tilt
+    /// corner), jitter and shimmer as relative standard deviations.
+    pub fn new(rd: f64, tilt_hz: f64, fa_hz: f64, jitter: f64, shimmer: f64) -> GlottalSource {
         let edges = mip_edges();
         let mut inv_width = [0.0; N_LEVELS];
         for k in 0..N_LEVELS - 1 {
             inv_width[k] = 1.0 / (edges[k + 1] - edges[k]);
         }
+        let tilt = OnePole::from_hz(tilt_hz.max(1.0), SR_F).a;
+        let fa_hz = if fa_hz.is_finite() && fa_hz > 0.0 {
+            fa_hz
+        } else {
+            0.0
+        };
         GlottalSource {
-            table: SourceTable::new(rd),
+            table: SourceTable::new(rd, fa_hz > 0.0),
             edges,
             inv_width,
             jitter: jitter.max(0.0),
             shimmer: shimmer.max(0.0),
-            tilt: OnePole::from_hz(tilt_hz.max(1.0), SR_F).a,
+            tilt,
+            fa_hz,
             trim: lax_trim(rd),
             st: SourceState {
                 phase: 0.0,
@@ -396,7 +451,19 @@ impl GlottalSource {
                 band: (edges[0], inv_width[0]),
                 valid: (f64::NEG_INFINITY, edges[1]),
                 z: [0.0; 2],
+                c0: tilt,
             },
+        }
+    }
+
+    /// Set the first one-pole's coefficient from the loudness `av`: Fa(w)
+    /// for the new source; the legacy source keeps the tilt corner.
+    #[inline]
+    fn set_fa(&self, st: &mut SourceState, av: f64) {
+        if self.fa_hz > 0.0 {
+            let w = ((av - 0.42) * (1.0 / 0.6)).clamp(0.0, 1.0);
+            let fa = self.fa_hz * (FA_LOUD_OCT * (w - 0.5)).exp2();
+            st.c0 = OnePole::from_hz(fa, SR_F).a;
         }
     }
 
@@ -493,7 +560,7 @@ impl GlottalSource {
         let w = ((av - 0.42) * (1.0 / 0.6)).clamp(0.0, 1.0);
         let d = v[0] as f64 + (v[1] as f64 - v[0] as f64) * w;
         let g = v[2] as f64 + (v[3] as f64 - v[2] as f64) * w;
-        st.z[0] += self.tilt * (d * PULSE_GAIN - st.z[0]);
+        st.z[0] += st.c0 * (d * PULSE_GAIN - st.z[0]);
         st.z[1] += self.tilt * (st.z[0] - st.z[1]);
         (st.z[1] * st.shim * SOURCE_GAIN * self.trim, g)
     }
@@ -505,6 +572,7 @@ impl GlottalSource {
     /// each period start.
     pub fn tick(&mut self, f0: f64, av: f64, rng: &mut Rng) -> (f64, f64) {
         let mut st = self.st;
+        self.set_fa(&mut st, av);
         let r = self.step(&mut st, f0, av, rng);
         self.st = st;
         r
@@ -523,6 +591,7 @@ impl GlottalSource {
         mut f: impl FnMut(usize, f64, f64),
     ) {
         let mut st = self.st;
+        self.set_fa(&mut st, av.0);
         let (mut fq, mut a) = (f0.0, av.0);
         for j in 0..n {
             let (pulse, flow) = self.step(&mut st, fq, a, rng);
@@ -544,6 +613,40 @@ mod tests {
         assert_eq!(rd_index(0.0), RD_INDEX_MIN);
         assert_eq!(rd_index(9.0), RD_INDEX_MAX);
         assert_eq!(rd_index(f64::NAN), 40);
+    }
+
+    /// Amplitude of harmonic `k` of a single-cycle table row.
+    fn harmonic(row: &[f32], k: usize) -> f64 {
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (i, &v) in row[..TABLE_LEN].iter().enumerate() {
+            let a = 2.0 * std::f64::consts::PI * (k * i) as f64 / TABLE_LEN as f64;
+            re += v as f64 * a.cos();
+            im += v as f64 * a.sin();
+        }
+        (re * re + im * im).sqrt()
+    }
+
+    #[test]
+    fn capped_table_is_brighter_and_both_have_zero_mean() {
+        let rd = 1.7 + RD_LAX;
+        let (legacy, capped) = (lf_table(rd), lf_table_capped(rd));
+        // Level 2 (f0 up to 155 Hz) keeps harmonics 1..141.
+        let tilt = |t: &LfTable| {
+            let row = t.level(2);
+            20.0 * (harmonic(row, 16) / harmonic(row, 1)).log10()
+        };
+        let gain = tilt(capped) - tilt(legacy);
+        assert!(gain >= 6.0, "H16 relative to H1 gains only {gain:.1} dB");
+        for (p, t) in [
+            (LfParams::from_rd(rd), legacy),
+            (LfParams::from_rd_capped(rd), capped),
+        ] {
+            assert!(p.net_flow().abs() < 1e-6, "net flow {}", p.net_flow());
+            let row = t.level(2);
+            let mean = row[..TABLE_LEN].iter().map(|&v| v as f64).sum::<f64>() / TABLE_LEN as f64;
+            assert!(mean.abs() < 1e-4, "mean {mean}");
+        }
+        assert!((LfParams::from_rd_capped(rd).ta - RA_CAP).abs() < 1e-12);
     }
 
     #[test]

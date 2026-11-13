@@ -48,6 +48,15 @@ fn spec(a: &[f32]) -> Vec<f64> {
 }
 
 fn main() {
+    // `--voice-fit SPEC`: see `voice::parse_fit`.
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        if a == "--voice-fit" {
+            let spec = args.next().expect("--voice-fit needs a value");
+            let (v, p) = voice::parse_fit(&spec).expect("bad --voice-fit");
+            voice::set_fit_override(v, p);
+        }
+    }
     let mut sp = Vec::new();
     let mut t = 0.5f64;
     for v in VW {

@@ -45,12 +45,11 @@ use song::Voice;
 
 use crate::controls::{Articulation, ControlTracks, Window};
 use crate::glottal::GlottalSource;
-use crate::params::{voice_params, VoiceParams};
+use crate::params::{preset, VoiceParams};
 use crate::phrasing::PhrasingParams;
 use crate::tract::{Formants, Tract, MAX_HIGH};
 use crate::tuning::{
-    ASPIRATION_GAIN, BREATH_LP_HZ, BW_SCALE, HF_BRANCH_GAIN, HF_BRANCH_HZ, NAS_B2_HZ, NAS_B3_HZ,
-    TILT_SCALE, VFRIC_MOD,
+    ASPIRATION_GAIN, BREATH_LP_HZ, BW_SCALE, NAS_B2_HZ, NAS_B3_HZ, TILT_SCALE, VFRIC_MOD,
 };
 
 const SOURCE: Tag = tag("voice.source");
@@ -169,8 +168,12 @@ pub struct VoiceSynth {
     formant_rng: Rng,
     wobble: [RandomWalk; 2],
     breath_lp: OnePole,
-    /// The high-frequency voiced branch's 4th-order high-pass (`tuning::HF_BRANCH_*`).
+    /// The high-frequency voiced bed's 4th-order high-pass (corner `VoiceParams::hf_hz`).
     hf: [Biquad; 2],
+    /// Gain of the bed (`VoiceParams::hf_bed`); 0 is off.
+    hf_bed: f64,
+    /// Aspiration gain (`VoiceParams::cons_gain`).
+    cons_gain: f64,
     breath: f64,
     /// Per-frame noise buffers.
     asp: [f32; HOP],
@@ -190,7 +193,7 @@ impl VoiceSynth {
     /// applied) with `n_high` high resonances; random streams from `seed`.
     pub fn new(p: &VoiceParams, n_high: usize, seed: u64) -> VoiceSynth {
         VoiceSynth {
-            source: GlottalSource::new(p.rd, p.tilt * TILT_SCALE, p.jitter, p.shimmer),
+            source: GlottalSource::new(p.rd, p.tilt * TILT_SCALE, p.fa_hz, p.jitter, p.shimmer),
             tract: Tract::new(p, n_high.min(MAX_HIGH)),
             noise: Rng::stream(seed, NOISE),
             source_rng: Rng::stream(seed, SOURCE),
@@ -201,9 +204,11 @@ impl VoiceSynth {
             ],
             breath_lp: OnePole::from_hz(BREATH_LP_HZ, SR_F),
             hf: [
-                Biquad::new(BiquadCoeffs::highpass(SR_F, HF_BRANCH_HZ, 0.5412)),
-                Biquad::new(BiquadCoeffs::highpass(SR_F, HF_BRANCH_HZ, 1.3066)),
+                Biquad::new(BiquadCoeffs::highpass(SR_F, p.hf_hz, 0.5412)),
+                Biquad::new(BiquadCoeffs::highpass(SR_F, p.hf_hz, 1.3066)),
             ],
+            hf_bed: p.hf_bed,
+            cons_gain: p.cons_gain,
             breath: p.breath,
             asp: [0.0; HOP],
             fric: [0.0; HOP],
@@ -332,6 +337,7 @@ impl VoiceSynth {
         let mut vh = [0.0f64; HOP];
         let mut fin = [0.0f64; HOP];
         let (asp, fric) = (&self.asp, &self.fric);
+        let cons_gain = self.cons_gain;
         self.source.run(
             n,
             ramp(fr.f0),
@@ -345,7 +351,7 @@ impl VoiceSynth {
                 // HF bed: noise shaped by the glottal flow (voiced hiss, not buzz).
                 vh[j] = nz * a * (0.15 + 0.85 * flow);
                 exc[j] = pulse * a
-                    + (nz * (ah + dah * t) * 0.9 * ASPIRATION_GAIN
+                    + (nz * (ah + dah * t) * 0.9 * ASPIRATION_GAIN * cons_gain
                         + n1 * breath * a * (0.18 + 0.9 * flow))
                         * 0.55;
                 if FRIC {
@@ -357,11 +363,11 @@ impl VoiceSynth {
         );
         self.breath_lp = lp;
         self.tract.cascade_block(&mut exc[..n]);
-        if HF_BRANCH_GAIN != 0.0 {
+        if self.hf_bed != 0.0 {
             for j in 0..n {
                 let x = self.hf[0].tick(vh[j]);
                 let y = self.hf[1].tick(x);
-                exc[j] += y * HF_BRANCH_GAIN;
+                exc[j] += y * self.hf_bed;
             }
         }
         self.tract
@@ -454,7 +460,7 @@ pub fn render_phrases(
     len: usize,
     emit: impl FnMut(usize, &[f32]),
 ) {
-    let p = settings.apply(voice_params(voice));
+    let p = settings.apply(preset(voice));
     render_phrases_with(notes, &p, settings, seed, len, emit);
 }
 

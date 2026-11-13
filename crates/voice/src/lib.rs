@@ -12,6 +12,6 @@ pub mod synth;
 pub mod tract;
 pub mod tuning;
 
-pub use params::{voice_params, VoiceParams};
+pub use params::{parse_fit, set_fit_override, voice_params, VoiceParams};
 pub use phrasing::{phrase_notes, PhrasingParams};
 pub use synth::{render_phrases, VoiceSettings, VoiceSynth};

@@ -5,7 +5,10 @@
 //! (wall time per stage). `--song duet` additionally writes lead_b.wav and
 //! notes_b.json for singer B.
 //!
-//! Usage: cargo run --release -p engine --example stems -- --seed S --out DIR [--song demo|duet|SONG.json] [--style KEY]
+//! Usage: cargo run --release -p engine --example stems -- --seed S --out DIR [--song demo|duet|SONG.json] [--style KEY] [--voice-fit SPEC]
+//! `--voice-fit "fa_hz=1000,shelf_db=8,sf=0.3,tilt=3800,rd=1.7,hf_bed=0[,voice=bass]"`
+//! replaces those preset values of the voice (default baritone) for the fit
+//! of the voice model (tools/voice_target.py); not for production renders.
 //! A song path renders that song (with `--style`, that style applied) in
 //! place of the demo.
 
@@ -75,9 +78,14 @@ fn run() -> Result<(), String> {
                 };
             }
             "--style" => style = Some(args.next().ok_or("--style needs a value")?),
+            "--voice-fit" => {
+                let v = args.next().ok_or("--voice-fit needs a value")?;
+                let (voice, p) = voice::parse_fit(&v)?;
+                voice::set_fit_override(voice, p);
+            }
             _ => {
                 return Err(format!(
-                    "unknown argument {a}; usage: stems --seed S --out DIR [--song demo|duet|SONG.json] [--style KEY]"
+                    "unknown argument {a}; usage: stems --seed S --out DIR [--song demo|duet|SONG.json] [--style KEY] [--voice-fit SPEC]"
                 ))
             }
         }

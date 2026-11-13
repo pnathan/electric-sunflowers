@@ -20,16 +20,6 @@ pub const BURST_GAIN: f64 = 0.8;
 /// Frication band-pass output gain, added after the tract.
 pub const FRICATION_GAIN: f64 = 2.2;
 
-/// High-frequency voiced bed (issue 22): white noise shaped by the glottal
-/// flow, high-passed (4th order, corner `HF_BRANCH_HZ`) and added after the
-/// cascade at `HF_BRANCH_GAIN` (0 turns it off). The cascade leaves vowels
-/// dark above 4 kHz, so every noise consonant stands out as a spike (median
-/// rise over its surroundings 30 dB; real singers 14 dB). A bed of voiced hiss
-/// fills the gap. A high-passed copy of the source pulse did the same but
-/// sounded buzzy.
-pub const HF_BRANCH_HZ: f64 = 3800.0;
-pub const HF_BRANCH_GAIN: f64 = 0.0;
-
 /// Scale on the F1-F3 bandwidths (1 is the preset: 60 + 80 breath, 90, 130
 /// Hz). Wider formants fill the valleys between harmonics; real voices show
 /// valleys 3 to 6 dB shallower than the engine's (issue 22).
@@ -57,9 +47,9 @@ pub const FRIC_Q_SCALE: f64 = 1.0;
 pub const NAS_B2_HZ: f64 = 170.0;
 pub const NAS_B3_HZ: f64 = 220.0;
 
-/// High shelf after the cascade: +16 dB at 5.2 kHz, Q 0.7 (CLAUDE.md, "Voice"). It
-/// replaced a parallel high-frequency branch, which filled the vowels'
-/// spectral valleys.
-pub const SHELF_DB: f64 = 16.0;
+/// High shelf after the cascade: `VoiceParams::shelf_db` (16 dB for tenor,
+/// alto and soprano) at 5.2 kHz, Q 0.7 (CLAUDE.md, "Voice"). It replaced a
+/// parallel high-frequency branch, which filled the vowels' spectral
+/// valleys.
 pub const SHELF_HZ: f64 = 5200.0;
 pub const SHELF_Q: f64 = 0.7;
