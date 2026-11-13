@@ -162,6 +162,17 @@ fn compress_channel(buf: &mut SparseBuf, mut comp: Compressor, zeros: &mut [f32]
     }
 }
 
+/// Soft clip `y = c tanh(x / c)` of every present block, in place.
+fn soft_clip(buf: &mut SparseBuf, c: f32) {
+    for b in 0..buf.block_count() {
+        if let Some(x) = buf.block_mut_if_present(b) {
+            for v in x.iter_mut() {
+                *v = c * (*v / c).tanh();
+            }
+        }
+    }
+}
+
 /// The slapback of mono `x` (already compressed, unscaled), times `gain`.
 pub fn slapback(x: &SparseBuf, s: &Slapback, gain: f32) -> SparseBuf {
     let len = x.len();
@@ -223,6 +234,14 @@ pub fn run_strip(strip: &Strip, mut audio: Stem) -> Option<ProcessedStem> {
             compress_channel(ch, compressor(spec, level), &mut zeros);
         }
     }
+    if let Some(k) = strip.clip {
+        // The mixer scales the stem by `level`; the ceiling is `k` times the
+        // target level after that scaling.
+        let c = (k * TARGET_RMS / level) as f32;
+        for ch in audio.channels_mut() {
+            soft_clip(ch, c);
+        }
+    }
     let slap = match (&strip.slapback, &audio) {
         (Some(s), Stem::Mono(x)) => Some(slapback(x, s, s.level * level as f32)),
         _ => None,
@@ -239,6 +258,46 @@ pub fn run_strip(strip: &Strip, mut audio: Stem) -> Option<ProcessedStem> {
 mod tests {
     use super::*;
     use crate::track::{TrackId, VOCAL_COMP};
+
+    fn tone() -> Vec<f32> {
+        let mut x: Vec<f32> = (0..20_000).map(|i| 0.1 * (i as f32 * 0.05).sin()).collect();
+        x[5000] = 3.0;
+        x
+    }
+
+    #[test]
+    fn a_strip_without_a_clip_passes_samples_through() {
+        let plain = Strip {
+            eq: &[],
+            clip: None,
+            ..*TrackId::Drums.strip()
+        };
+        let x = tone();
+        let out = run_strip(&plain, Stem::Mono(SparseBuf::from_dense(&x))).expect("audible");
+        match out.audio {
+            Stem::Mono(b) => assert_eq!(b.to_dense(), x),
+            _ => panic!("mono in, mono out"),
+        }
+    }
+
+    #[test]
+    fn a_clip_ceiling_limits_peaks_and_leaves_quiet_samples_alone() {
+        let clipped = Strip {
+            eq: &[],
+            clip: Some(12.0),
+            ..*TrackId::Drums.strip()
+        };
+        let x = tone();
+        let out = run_strip(&clipped, Stem::Mono(SparseBuf::from_dense(&x))).expect("audible");
+        let ceiling = 12.0 * crate::track::TARGET_RMS as f32 / out.level;
+        let Stem::Mono(b) = out.audio else {
+            panic!("mono")
+        };
+        let y = b.to_dense();
+        assert!(y.iter().all(|v| v.abs() < ceiling));
+        assert!(y[5000] < x[5000] && y[5000] > 0.5 * ceiling.min(x[5000]));
+        assert!((y[100] - x[100]).abs() < 0.01 * x[100].abs().max(1e-3));
+    }
 
     #[test]
     fn gated_rms_ignores_silence() {

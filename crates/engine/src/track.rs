@@ -195,6 +195,9 @@ pub struct Strip {
     pub body: Option<BodyMount>,
     pub comp: Option<CompSpec>,
     pub slapback: Option<Slapback>,
+    /// Soft-clip ceiling in multiples of `TARGET_RMS`, applied after the
+    /// level normalisation (`y = c tanh(x / c)`); `None`: no clipper.
+    pub clip: Option<f64>,
 }
 
 /// Presence cut on the accompaniment that shares the voice's intelligibility
@@ -248,6 +251,10 @@ pub const VOCAL_COMP: CompSpec = CompSpec {
     above_target_db: 1.0,
 };
 
+/// Drums soft-clip ceiling, in multiples of the target level: tames the
+/// transients of the modal drums (design 5.13).
+pub const DRUM_CLIP: f64 = 12.0;
+
 /// Lead slapback: 340 ms, feedback 0.22 through a 3.2 kHz low-pass, level 0.07.
 pub const LEAD_SLAP: Slapback = Slapback {
     delay_s: 0.34,
@@ -269,6 +276,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         body: None,
         comp: Some(VOCAL_COMP),
         slapback: Some(LEAD_SLAP),
+        clip: None,
     },
     Strip {
         label: "Lead vocal B",
@@ -280,6 +288,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         body: None,
         comp: Some(VOCAL_COMP),
         slapback: Some(LEAD_SLAP),
+        clip: None,
     },
     Strip {
         label: "Melody doubles",
@@ -291,6 +300,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         body: None,
         comp: None,
         slapback: None,
+        clip: None,
     },
     Strip {
         label: "Harmony vocal",
@@ -302,6 +312,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         body: None,
         comp: Some(VOCAL_COMP),
         slapback: None,
+        clip: None,
     },
     Strip {
         label: "Backing choir",
@@ -313,6 +324,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         body: None,
         comp: None,
         slapback: None,
+        clip: None,
     },
     Strip {
         label: "Guitar",
@@ -332,6 +344,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         }),
         comp: None,
         slapback: None,
+        clip: None,
     },
     Strip {
         label: "Harmony guitar",
@@ -350,6 +363,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         }),
         comp: None,
         slapback: None,
+        clip: None,
     },
     Strip {
         label: "Bass",
@@ -361,6 +375,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         body: None,
         comp: None,
         slapback: None,
+        clip: None,
     },
     Strip {
         label: "Drums",
@@ -372,6 +387,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         body: None,
         comp: None,
         slapback: None,
+        clip: Some(DRUM_CLIP),
     },
     Strip {
         label: "Harp",
@@ -386,6 +402,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         }),
         comp: None,
         slapback: None,
+        clip: None,
     },
     Strip {
         label: "Violin",
@@ -405,6 +422,7 @@ pub const STRIPS: [Strip; N_TRACKS] = [
         }),
         comp: None,
         slapback: None,
+        clip: None,
     },
 ];
 

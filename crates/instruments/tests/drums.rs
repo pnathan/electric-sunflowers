@@ -1,11 +1,10 @@
-//! Drum voices: kick sweep end frequency, ride band-limiting against a naive
-//! square cluster, and finite, bounded output for every kind.
+//! Drum voices: determinism, variation between hits, brightness against
+//! velocity, band curves against the reference tables, levels, and finite,
+//! bounded output for every kind.
 
-use dsp::biquad::{Biquad, BiquadCoeffs};
 use dsp::fft::{RealFft, C32};
-use instruments::drums::{
-    blep_square, hit_len, render_drums, render_hit, DrumScratch, DRUM_HIT, RIDE_BASE_HZ, RIDE_SCALE,
-};
+use instruments::drum_data::{self as data, VoiceData, BANDS};
+use instruments::drums::{hit_len, render_drums, render_hit, DrumScratch, DRUM_HIT};
 use sfcore::random::Rng;
 use sfcore::SR_F;
 use song::events::{DrumHit, DrumKind};
@@ -23,80 +22,36 @@ const ALL: [DrumKind; 10] = [
     DrumKind::Ride,
 ];
 
-fn hit(kind: DrumKind) -> DrumHit {
+fn hit_at(kind: DrumKind, t: f64, vel: f32) -> DrumHit {
     DrumHit {
-        t: 0.0,
+        t,
         kind,
-        vel: 1.0,
+        vel,
         pan: -1.0,
     }
 }
 
-/// Mono voice at unit velocity: hard left, so the left gain is 1.
-fn mono(kind: DrumKind, seed: u64) -> Vec<f32> {
-    let n = hit_len(kind);
-    let [l, _] = render_drums(&[hit(kind)], seed, n);
-    l
+/// `n` consecutive hits of `kind` at velocity `vel`, 3.2 s apart, as mono
+/// slices (hard left, so the left gain is 1).
+fn hits_of(kind: DrumKind, vel: f32, n: usize, seed: u64) -> Vec<Vec<f32>> {
+    let gap = 3.2;
+    let hits: Vec<DrumHit> = (0..n).map(|k| hit_at(kind, k as f64 * gap, vel)).collect();
+    let len = (n as f64 * gap * SR_F) as usize;
+    let [l, _] = render_drums(&hits, seed, len);
+    let g = (gap * SR_F) as usize;
+    (0..n).map(|k| l[k * g..(k + 1) * g].to_vec()).collect()
 }
 
-#[test]
-fn kick_sweep_ends_near_47_hz() {
-    let x = mono(DrumKind::Kick, 1);
-    // Zero crossings (upward) between 0.2 s and the end.
-    let a = (0.2 * SR_F) as usize;
-    let ups: Vec<f64> = (a + 1..x.len())
-        .filter(|&i| x[i - 1] < 0.0 && x[i] >= 0.0)
-        .map(|i| {
-            let (p, q) = (x[i - 1] as f64, x[i] as f64);
-            (i - 1) as f64 + p / (p - q)
-        })
-        .collect();
-    assert!(ups.len() >= 3, "{} crossings", ups.len());
-    let per = (ups[ups.len() - 1] - ups[0]) / (ups.len() - 1) as f64;
-    let f = SR_F / per;
-    println!("kick tail frequency {f:.2} Hz");
-    assert!((f - 47.0).abs() < 1.0, "kick ends at {f} Hz");
-}
-
-/// The ride with naive (aliasing) squares: same draws as the voice
-/// (six uniform start phases, then the ping noise), same filters and gains.
-fn naive_ride(seed: u64) -> Vec<f32> {
-    let n = hit_len(DrumKind::Ride);
-    let mut rng = Rng::event(seed, DRUM_HIT, 0);
-    let mut ph = [0.0f64; 6];
-    for p in ph.iter_mut() {
-        *p = rng.uniform();
-    }
-    let dt = RIDE_BASE_HZ.map(|f| f * RIDE_SCALE / SR_F);
-    let mut out = vec![0.0f32; n];
-    for v in out.iter_mut() {
-        let mut acc = 0.0;
-        for k in 0..6 {
-            ph[k] += dt[k];
-            if ph[k] >= 1.0 {
-                ph[k] -= 1.0;
-            }
-            acc += if ph[k] < 0.5 { 1.0 } else { -1.0 };
-        }
-        *v = (acc / 6.0) as f32;
-    }
-    Biquad::new(BiquadCoeffs::highpass(SR_F, 3500.0, 0.7)).process(&mut out);
-    let mut ping = vec![0.0f32; n];
-    rng.fill_bipolar(&mut ping);
-    Biquad::new(BiquadCoeffs::bandpass(SR_F, 5200.0, 4.0)).process(&mut ping);
-    for (i, (v, p)) in out.iter_mut().zip(&ping).enumerate() {
-        let t = i as f64 / SR_F;
-        *v = (*v as f64 * 0.35 * (-t / 0.7).exp() + *p as f64 * 0.6 * (-t / 0.04).exp()) as f32;
-    }
-    out
-}
-
-/// Energy of `x` (first 65536 samples, Hann window) in [f_lo, f_hi).
-fn energy_in(x: &[f32], f_lo: f64, f_hi: f64) -> f64 {
-    let n = 65536;
+/// Energy fractions of the first 0.6 s in the 1/3-octave `BANDS`.
+fn band_fractions(x: &[f32]) -> Vec<f64> {
+    let n = (0.6 * SR_F) as usize;
     let mut buf: Vec<f32> = (0..n)
         .map(|i| {
-            let w = 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / n as f64).cos();
+            let w = if i + 256 >= n {
+                0.5 + 0.5 * (std::f64::consts::PI * (i + 256 - n) as f64 / 256.0).cos()
+            } else {
+                1.0
+            };
             x.get(i).copied().unwrap_or(0.0) * w as f32
         })
         .collect();
@@ -105,81 +60,195 @@ fn energy_in(x: &[f32], f_lo: f64, f_hi: f64) -> f64 {
     let mut scratch = fft.make_scratch();
     fft.forward(&mut buf, &mut spec, &mut scratch)
         .expect("fft sizes");
-    let k0 = (f_lo / SR_F * n as f64).ceil() as usize;
-    let k1 = ((f_hi / SR_F * n as f64).ceil() as usize).min(spec.len());
-    spec[k0..k1].iter().map(|c| c.norm_sqr() as f64).sum()
+    let e: Vec<f64> = BANDS
+        .iter()
+        .map(|&c| {
+            let k0 = (c / 2f64.powf(1.0 / 6.0) / SR_F * n as f64).ceil() as usize;
+            let k1 = ((c * 2f64.powf(1.0 / 6.0) / SR_F * n as f64).ceil() as usize).min(spec.len());
+            spec[k0..k1].iter().map(|v| v.norm_sqr() as f64).sum()
+        })
+        .collect();
+    let total: f64 = e.iter().sum();
+    e.iter().map(|v| v / total.max(1e-30)).collect()
 }
 
-/// The ride's square cluster three ways over 65536 samples: naive, PolyBLEP
-/// (the voice's `blep_square`), and the additive band-limited ideal (odd
-/// harmonics `4 / (pi h)` below Nyquist). Returns the aliasing (difference
-/// from the ideal) of the naive and PolyBLEP clusters.
-fn cluster_aliasing(phase0: [f64; 6]) -> (Vec<f32>, Vec<f32>) {
-    let n = 65536;
-    let dt = RIDE_BASE_HZ.map(|f| f * RIDE_SCALE / SR_F);
-    let mut naive_err = vec![0.0f32; n];
-    let mut blep_err = vec![0.0f32; n];
-    for k in 0..6 {
-        let (mut pn, mut pb) = (phase0[k], phase0[k]);
-        let n_harm = ((0.5 / dt[k] - 1.0) / 2.0).floor() as usize + 1;
-        for i in 0..n {
-            pn += dt[k];
-            if pn >= 1.0 {
-                pn -= 1.0;
-            }
-            let naive = if pn < 0.5 { 1.0 } else { -1.0 };
-            let blep = blep_square(&mut pb, dt[k]);
-            let mut ideal = 0.0;
-            for j in 0..n_harm {
-                let h = (2 * j + 1) as f64;
-                ideal += (4.0 / (std::f64::consts::PI * h))
-                    * (2.0 * std::f64::consts::PI * h * pn).sin();
-            }
-            naive_err[i] += ((naive - ideal) / 6.0) as f32;
-            blep_err[i] += ((blep - ideal) / 6.0) as f32;
+/// Energy of `x` in [f_lo, f_hi) over its energy in [0, 20 kHz), first 3 s.
+fn share(x: &[f32], f_lo: f64, f_hi: f64) -> f64 {
+    let n = (3.0 * SR_F) as usize;
+    let mut buf: Vec<f32> = (0..n).map(|i| x.get(i).copied().unwrap_or(0.0)).collect();
+    let fft = RealFft::new(n);
+    let mut spec = vec![C32::new(0.0, 0.0); fft.spectrum_len()];
+    let mut scratch = fft.make_scratch();
+    fft.forward(&mut buf, &mut spec, &mut scratch)
+        .expect("fft sizes");
+    let bin = |f: f64| ((f / SR_F * n as f64).ceil() as usize).min(spec.len());
+    let sum = |a: usize, b: usize| -> f64 { spec[a..b].iter().map(|v| v.norm_sqr() as f64).sum() };
+    sum(bin(f_lo), bin(f_hi)) / sum(0, bin(20000.0))
+}
+
+fn rms_0p3(x: &[f32]) -> f64 {
+    let n = (0.3 * SR_F) as usize;
+    (x[..n].iter().map(|&v| v as f64 * v as f64).sum::<f64>() / n as f64).sqrt()
+}
+
+#[test]
+fn rendering_is_deterministic_for_a_seed() {
+    for kind in ALL {
+        let a = hits_of(kind, 0.7, 3, 11);
+        let b = hits_of(kind, 0.7, 3, 11);
+        assert_eq!(a, b, "{kind:?} differs between two renders of one seed");
+    }
+    for kind in [DrumKind::Kick, DrumKind::Snare, DrumKind::Ride] {
+        let a = hits_of(kind, 0.7, 2, 11);
+        let b = hits_of(kind, 0.7, 2, 12);
+        assert_ne!(a, b, "{kind:?} ignores the seed");
+    }
+}
+
+#[test]
+fn consecutive_hits_are_never_alike() {
+    for kind in [
+        DrumKind::Kick,
+        DrumKind::Snare,
+        DrumKind::Rim,
+        DrumKind::Tap,
+        DrumKind::Hat,
+        DrumKind::Tom { hz: 110.0 },
+        DrumKind::Ride,
+    ] {
+        let hits = hits_of(kind, 0.6, 8, 1234);
+        let mut worst = 0.0f64;
+        for w in hits.windows(2) {
+            let dot: f64 = w[0]
+                .iter()
+                .zip(&w[1])
+                .map(|(&a, &b)| a as f64 * b as f64)
+                .sum();
+            let na: f64 = w[0]
+                .iter()
+                .map(|&a| a as f64 * a as f64)
+                .sum::<f64>()
+                .sqrt();
+            let nb: f64 = w[1]
+                .iter()
+                .map(|&a| a as f64 * a as f64)
+                .sum::<f64>()
+                .sqrt();
+            worst = worst.max(dot / (na * nb));
+        }
+        println!("{kind:?}: worst consecutive correlation {worst:.3}");
+        assert!(worst < 0.98, "{kind:?} repeats: correlation {worst}");
+    }
+}
+
+#[test]
+fn brightness_follows_velocity() {
+    // Share of the 2 kHz octave band (1.41-2.83 kHz) over 8 hits.
+    let mean_share = |kind: DrumKind, v: f32| -> f64 {
+        let h = hits_of(kind, v, 8, 7);
+        h.iter().map(|x| share(x, 1414.0, 2828.0)).sum::<f64>() / h.len() as f64
+    };
+    let (k_soft, k_hard) = (
+        mean_share(DrumKind::Kick, 0.25),
+        mean_share(DrumKind::Kick, 0.95),
+    );
+    println!("kick 2 kHz share: soft {k_soft:.2e} hard {k_hard:.2e}");
+    assert!(k_hard > 2.0 * k_soft, "kick: {k_soft} -> {k_hard}");
+    let (t_soft, t_hard) = (
+        mean_share(DrumKind::Tap, 0.25),
+        mean_share(DrumKind::Tap, 0.95),
+    );
+    println!("tap 2 kHz share: soft {t_soft:.2e} hard {t_hard:.2e}");
+    assert!(t_hard < 0.5 * t_soft, "tap: {t_soft} -> {t_hard}");
+}
+
+/// RMS over bands (63 Hz to 12.5 kHz, table above -35 dB) of the mean dB
+/// curve of 16 hits at velocity 0.95 against the hard layer of the table.
+fn curve_error(kind: DrumKind, table: &[f64; 28]) -> (f64, f64) {
+    let hits = hits_of(kind, 0.95, 16, 5);
+    let mut mean = vec![0.0f64; 28];
+    for h in &hits {
+        for (m, f) in mean.iter_mut().zip(band_fractions(h)) {
+            *m += 10.0 * (f + 1e-12).log10() / hits.len() as f64;
         }
     }
-    (naive_err, blep_err)
+    let d: Vec<f64> = (0..28)
+        .filter(|&i| BANDS[i] >= 63.0 && BANDS[i] <= 12500.0 && table[i] > -35.0)
+        .map(|i| mean[i] - table[i])
+        .collect();
+    let rms = (d.iter().map(|v| v * v).sum::<f64>() / d.len() as f64).sqrt();
+    let worst = d
+        .iter()
+        .fold(0.0f64, |a, &v| if v.abs() > a.abs() { v } else { a });
+    (rms, worst)
 }
 
 #[test]
-fn ride_polyblep_cuts_aliasing() {
-    let (naive, blep) = cluster_aliasing([0.1, 0.3, 0.5, 0.7, 0.9, 0.2]);
-    let db =
-        |lo: f64, hi: f64| 10.0 * (energy_in(&naive, lo, hi) / energy_in(&blep, lo, hi)).log10();
-    let low = db(0.0, 3500.0);
-    let mid = db(3500.0, 10_000.0);
-    println!("ride cluster aliasing, naive / PolyBLEP: below 3.5 kHz {low:.1} dB, 3.5-10 kHz {mid:.1} dB");
-    assert!(low >= 15.0, "aliasing below 3.5 kHz only {low:.1} dB lower");
-    assert!(mid >= 8.0, "aliasing 3.5-10 kHz only {mid:.1} dB lower");
+fn band_curves_follow_their_tables() {
+    let voices: [(&str, DrumKind, &VoiceData); 6] = [
+        ("kick", DrumKind::Kick, &data::KICK),
+        ("snare", DrumKind::Snare, &data::SNARE),
+        ("rim", DrumKind::Rim, &data::RIM),
+        ("tap", DrumKind::Tap, &data::TAP),
+        ("hat", DrumKind::Hat, &data::HAT),
+        ("ride", DrumKind::Ride, &data::RIDE),
+    ];
+    for (name, kind, vd) in voices {
+        let (rms, worst) = curve_error(kind, &vd.layers[2].curve);
+        println!("{name}: curve rms {rms:.2} dB, worst {worst:+.1} dB");
+        assert!(rms < 6.0, "{name}: curve rms {rms} dB");
+    }
+    let (rms, worst) = curve_error(
+        DrumKind::Tom {
+            hz: data::TOM_F0 as f32,
+        },
+        &data::TOM.layers[2].curve,
+    );
+    println!("tom: curve rms {rms:.2} dB, worst {worst:+.1} dB");
+    assert!(rms < 6.0, "tom: curve rms {rms} dB");
+    let (rms, worst) = curve_error(DrumKind::Swish { dur: 0.5 }, &data::SWISH_CURVE);
+    println!("swish: curve rms {rms:.2} dB, worst {worst:+.1} dB");
+    assert!(rms < 6.0, "swish: curve rms {rms} dB");
 }
 
 #[test]
-fn ride_hit_energy_above_15k_below_naive() {
-    for seed in [1u64, 2, 3] {
-        let blep = mono(DrumKind::Ride, seed);
-        let naive = naive_ride(seed);
-        let db =
-            10.0 * (energy_in(&naive, 15_000.0, SR_F) / energy_in(&blep, 15_000.0, SR_F)).log10();
-        println!("seed {seed}: ride energy above 15 kHz, naive / PolyBLEP = {db:.1} dB");
-        assert!(db >= 5.0, "only {db:.1} dB below the naive squares");
+fn hard_layer_keeps_the_level_of_the_old_voices() {
+    // First-0.3-s RMS at velocity 0.95 of the oscillator voices this model
+    // replaced (mean of 8 hits); the new voices stay within 1 dB.
+    let old = [
+        (DrumKind::Kick, 0.35238),
+        (DrumKind::Snare, 0.18030),
+        (DrumKind::Rim, 0.05912),
+        (DrumKind::Tap, 0.11191),
+        (DrumKind::Hat, 0.07175),
+        (DrumKind::Tom { hz: 110.0 }, 0.43119),
+        (DrumKind::Ride, 0.05259),
+    ];
+    for (kind, want) in old {
+        let h = hits_of(kind, 0.95, 8, 1234);
+        let got = h.iter().map(|x| rms_0p3(x)).sum::<f64>() / h.len() as f64;
+        let db = 20.0 * (got / want).log10();
+        println!("{kind:?}: {got:.4} against {want:.4}: {db:+.2} dB");
+        assert!(db.abs() < 1.0, "{kind:?} is {db:+.2} dB from the old level");
     }
 }
 
 #[test]
 fn every_kind_is_finite_and_bounded() {
-    let mut scratch = DrumScratch::new();
+    let mut scratch = DrumScratch::new(3);
+    let mut peak_all = 0.0f32;
     for (j, &kind) in ALL.iter().enumerate() {
-        for seed in 0..8u64 {
+        for vel in [0.2f32, 0.6, 1.0] {
             let n = hit_len(kind);
-            let mut l = vec![0.0f32; n];
-            let mut r = vec![0.0f32; n];
-            let mut rng = Rng::event(seed, DRUM_HIT, j as u64);
+            // Room after the hit: nothing may be written past hit_len.
+            let mut l = vec![0.0f32; n + 2000];
+            let mut r = vec![0.0f32; n + 2000];
+            let mut rng = Rng::event(3, DRUM_HIT, j as u64);
             render_hit(
                 &DrumHit {
                     t: 0.0,
                     kind,
-                    vel: 1.0,
+                    vel,
                     pan: 0.0,
                 },
                 &mut rng,
@@ -187,24 +256,30 @@ fn every_kind_is_finite_and_bounded() {
                 &mut r,
                 &mut scratch,
             );
-            // Undo the centre pan gain to get the unit-velocity voice.
-            let g = std::f32::consts::FRAC_1_SQRT_2;
+            // Undo the centre pan gain and the velocity to get the voice.
+            let g = std::f32::consts::FRAC_1_SQRT_2 * vel;
             let peak = l.iter().map(|v| (v / g).abs()).fold(0.0f32, f32::max);
+            peak_all = peak_all.max(peak);
             assert!(
                 l.iter().chain(&r).all(|v| v.is_finite()),
                 "{kind:?} not finite"
             );
-            assert!(peak <= 1.5, "{kind:?} seed {seed} peak {peak}");
-            assert!(peak > 0.01, "{kind:?} seed {seed} silent");
+            assert!(
+                l[n..].iter().chain(&r[n..]).all(|&v| v == 0.0),
+                "{kind:?} runs past its length"
+            );
+            assert!(peak <= 8.0, "{kind:?} vel {vel} peak {peak}");
+            assert!(peak > 0.01, "{kind:?} vel {vel} silent");
         }
     }
+    println!("largest unit-velocity peak {peak_all:.2}");
 }
 
 #[test]
 fn bad_input_does_not_panic() {
     let mut l = vec![0.0f32; 1000];
     let mut r = vec![0.0f32; 1000];
-    let mut scratch = DrumScratch::new();
+    let mut scratch = DrumScratch::new(1);
     let mut rng = Rng::from_seed(1);
     let odd = [
         DrumHit {
@@ -249,6 +324,12 @@ fn bad_input_does_not_panic() {
             vel: 1.0,
             pan: 0.0,
         },
+        DrumHit {
+            t: 0.0,
+            kind: DrumKind::Snare,
+            vel: 7.0,
+            pan: 0.0,
+        },
     ];
     for h in &odd {
         render_hit(h, &mut rng, &mut l, &mut r, &mut scratch);
@@ -272,4 +353,31 @@ fn render_drums_places_hits_and_pans() {
     assert!(l.iter().all(|v| v.abs() < 1e-6), "hard right leaks left");
     // Same seed, same output.
     assert_eq!(render_drums(&hits, 9, len), [l, r]);
+}
+
+#[test]
+fn no_hits_is_silence() {
+    // `DrumKit::None` plans no hits (arrange) and the engine makes no drum
+    // stem for it (engine/tests/render_test.rs); here, no hits render zeros.
+    let [l, r] = render_drums(&[], 1, 5000);
+    assert!(l.iter().chain(&r).all(|v| *v == 0.0));
+}
+
+#[test]
+fn hits_past_the_song_end_are_clipped_safely() {
+    // A hit that starts near the end, one that starts before the start and
+    // one past the end: the stem keeps its length, nothing panics, and the
+    // part inside the stem is the head of the hit.
+    let len = 3000usize;
+    for kind in ALL {
+        let t_end = (len - 100) as f64 / SR_F;
+        let hits = [
+            hit_at(kind, t_end, 0.9),
+            hit_at(kind, -0.05, 0.9),
+            hit_at(kind, len as f64 / SR_F + 1.0, 0.9),
+        ];
+        let [l, r] = render_drums(&hits, 2, len);
+        assert_eq!((l.len(), r.len()), (len, len));
+        assert!(l.iter().chain(&r).all(|v| v.is_finite()), "{kind:?}");
+    }
 }

@@ -107,7 +107,7 @@ pub fn apply_body(mount: BodyMount, seed: u64, len: usize, x: &[f32]) -> [Sparse
 /// hit-length scratch pair, then added at `sample_at(hit.t)`.
 fn drums(hits: &[DrumHit], seed: u64, len: usize) -> Option<Stem> {
     let mut stem = [SparseBuf::new(len), SparseBuf::new(len)];
-    let mut scratch = DrumScratch::new();
+    let mut scratch = DrumScratch::new(seed);
     let (mut l, mut r) = (Vec::new(), Vec::new());
     for (k, hit) in hits.iter().enumerate() {
         if !hit.t.is_finite() {
