@@ -146,6 +146,7 @@ fn sheet_marks_singers_only_in_a_duet() {
 /// Re-pinned to `0xb081333da1213470` for per-note vibrato variation and wider pitch drift.
 /// Re-pinned to `0x0605732c687cfde1` for per-note vibrato variation and the revised pitch drift (step 0.004, position leak 0.995).
 /// Re-pinned to `0xb1f18927136289e8` for the drift walk at step 0.000173, limit 0.30 (unclamped deviation 0.10 semitone).
+/// Re-pinned to `0xbec41bdd8aea5791` for frequency-dependent inter-channel coherence of the bodies.
 #[test]
 fn solo_demo_mix_is_bit_identical() {
     let song = demo_song();
@@ -153,7 +154,7 @@ fn solo_demo_mix_is_bit_identical() {
     let m = mix(&stems, &song.band, 1234);
     let h = fnv1a(&mix_bytes(&m.l, &m.r));
     assert_eq!(
-        h, 0xb1f18927136289e8,
+        h, 0xbec41bdd8aea5791,
         "solo demo mix checksum changed: {h:#x}"
     );
 }

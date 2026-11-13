@@ -33,6 +33,21 @@
 //! 1/3 octave holds only 6 (at 80 Hz) to 20 modes, too few for their sum to
 //! be statistically stable; above it the count is constant at about 21.
 //!
+//! Stereo coherence. Independent channel draws give correlation 0 at every
+//! frequency (measured stems, demo seed 1234: guitar -0.02, harp -0.05,
+//! harmony guitar -0.18 on this machine's measure): a diffuse image that cancels in mono. One
+//! instrument under a stereo pair is one source, most coherent where the body
+//! is small against the wavelength. With z = a e^(j ph) the mode's complex
+//! amplitude, the left keeps z_L and the right is
+//! `z_R = rho z_L + sqrt(1 - rho^2) z_I`, z_I the independent right draw
+//! (above `F_CROSS`) or j z_L (below), and `rho(f)` (`coherence`) is 1 up to
+//! `COH_LO_HZ` (100 Hz), falls linearly in log frequency to `COH_MIN` (0.35)
+//! at `COH_HI_HZ` (1 kHz) and stays there. The draws and their order are
+//! unchanged; the group step and DC removal and the energy scaling act on
+//! z_R as before. Whole-file stem correlation, demo seed 1234, before and
+//! after: guitar 0.01 to 0.77, harp -0.05 to 0.60, harmony guitar -0.18 to
+//! 0.21, violin 0.40 to 0.64. The left channel is unchanged.
+//!
 //! Stable band levels. Random modes whose bandwidth f/Q is 2-4% of f
 //! overlap and interfere, so the band level of a free draw scatters by
 //! about 3 dB at every frequency (measured over 32 seeds, 1/3 octave). Two
@@ -114,6 +129,22 @@ const GROUPS_PER_OCT: f64 = 12.0;
 /// kept power fraction is 0.105 and the largest gain 51 (a group whose
 /// modes cancel in time); tests/body.rs bounds them at 0.05 and 100.
 pub const MIN_GROUP: usize = 3;
+/// Inter-channel coherence is 1 at and below this frequency, Hz.
+pub const COH_LO_HZ: f64 = 100.0;
+/// Inter-channel coherence reaches `COH_MIN` at this frequency, Hz.
+pub const COH_HI_HZ: f64 = 1000.0;
+/// Inter-channel coherence at and above `COH_HI_HZ`.
+pub const COH_MIN: f64 = 0.35;
+
+/// Coherence rho of a mode's two channel amplitudes at `f` Hz: 1 up to
+/// `COH_LO_HZ`, falling linearly in log frequency to `COH_MIN` at
+/// `COH_HI_HZ`, `COH_MIN` above. The right amplitude is
+/// `rho z_L + sqrt(1 - rho^2) z_I`.
+pub fn coherence(f: f64) -> f64 {
+    let t = (f / COH_LO_HZ).log2() / (COH_HI_HZ / COH_LO_HZ).log2();
+    (1.0 - (1.0 - COH_MIN) * t).clamp(COH_MIN, 1.0)
+}
+
 /// Crossover between the fixed low modes and the per-seed modes, Hz.
 pub const F_CROSS: f64 = 300.0;
 
@@ -220,16 +251,19 @@ impl Body {
             let power = 10f64.powf(self.level_db(f) / 10.0);
             let a0 = (power * df / tau).sqrt();
             let m = n.min((tau * SR_F * MODE_TAUS).ceil() as usize);
-            let (amp, ph) = if low {
-                // One amplitude; the right channel in quadrature.
-                let a = a0 * r.gauss();
-                let p = r.uniform() * TAU;
-                ([a, a], [p, p + 0.5 * PI])
+            // Left: z_L = a e^(j ph). Independent right draw z_I: below
+            // F_CROSS j z_L (ph + pi/2), above it the right channel's own.
+            let (al, pl) = (a0 * r.gauss(), r.uniform() * TAU);
+            let (ai, pq) = if low {
+                (al, pl + 0.5 * PI)
             } else {
-                let (al, pl) = (a0 * r.gauss(), r.uniform() * TAU);
-                let (ar, pr) = (a0 * r.gauss(), r.uniform() * TAU);
-                ([al, ar], [pl, pr])
+                (a0 * r.gauss(), r.uniform() * TAU)
             };
+            let rho = coherence(f);
+            let k = (1.0 - rho * rho).sqrt();
+            let re = rho * al * pl.cos() + k * ai * pq.cos();
+            let im = rho * al * pl.sin() + k * ai * pq.sin();
+            let (amp, ph) = ([al, re.hypot(im)], [pl, im.atan2(re)]);
             modes.push(Mode {
                 f,
                 tau,
@@ -508,3 +542,18 @@ pub static BODY_CURVES: [[f64; 86]; 3] = [
         -40.8, -43.6, -46.5,
     ],
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coherence_has_three_regions() {
+        assert_eq!(coherence(80.0), 1.0);
+        assert_eq!(coherence(COH_LO_HZ), 1.0);
+        let mid = coherence((COH_LO_HZ * COH_HI_HZ).sqrt());
+        assert!((mid - (1.0 + COH_MIN) / 2.0).abs() < 1e-12, "mid {mid}");
+        assert!((coherence(COH_HI_HZ) - COH_MIN).abs() < 1e-12);
+        assert_eq!(coherence(8000.0), COH_MIN);
+    }
+}
